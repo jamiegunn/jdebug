@@ -1,0 +1,164 @@
+#!/usr/bin/env bash
+#
+# jdebug — the front door for the JVM debug kit. Cluster-agnostic: works
+# against ANY Spring Boot pod on ANY cluster the ambient kubectl context
+# points at (KUBECONFIG / kubectl config use-context — no auto-rewriting).
+# Every command takes -n <ns> -l <selector> [--container <name>] [pod];
+# defaults: namespace "default", any pod, container "app" (or the
+# JDEBUG_NAMESPACE / JDEBUG_SELECTOR / JDEBUG_CONTAINER env vars).
+#
+# Run with NO arguments (or `tui`) for the interactive menu; `wizard` jumps
+# straight into a guided, symptom-driven capture flow.
+#
+#   Triage (runbook steps 1–4)
+#     status        pod status, restarts, recent events
+#     health        actuator health, incl. per-subsystem + liveness/readiness
+#     top           kubectl top pods + HPA state
+#     logs          stream logs from all replicas         (tail-logs.sh)
+#     log-level     runtime logger change: log-level <logger> <LEVEL>
+#
+#   Capture (three tiers — actuator, jattach, jdk)
+#     threads       thread dump. With no --via it AUTO-DEGRADES actuator → jattach
+#                   → jdk (announcing each fallback); --via <tier> forces one.
+#     heap          heap dump — PAUSES THE JVM, needs --confirm; same tiers/auto.
+#     jcmd          any jcmd command via jattach: jcmd "GC.heap_info"
+#
+#   Actuator path defaults to http://localhost:8080/actuator (in the pod).
+#   Override with --actuator-base <url> or $ACTUATOR_BASE when it differs
+#   (custom management port/base-path, e.g. --actuator-base http://localhost:9001/manage).
+#
+#   Memory / bundle (runbook steps 5–6)
+#     memory        RSS vs JVM anatomy, reconciled        (memory-report.sh)
+#     snapshot      one-shot offline-analysis bundle      (snapshot.sh)
+#
+#   Setup
+#     install-jattach   pre-stage jattach into the pod before an incident
+#     push-local        copy the in-pod tool (jdebug-local) into the pod, for
+#                       when you'll have a shell but no kubectl (JRE-only image)
+#
+# Examples:
+#   jdebug threads                        # actuator, this repo's app
+#   jdebug heap --confirm --via jattach
+#   jdebug snapshot -n prod -l app=payments
+#   jdebug jcmd "VM.native_memory summary"
+#
+# No kubectl inside the pod? See jdebug-local (a single POSIX-sh file that runs
+# the same captures from within the container): jdebug push-local, then in the
+# pod `sh /tmp/jdebug-local help`.
+
+set -uo pipefail
+# Resolve through symlinks so `jdebug` works when symlinked onto PATH (install.sh).
+_src="${BASH_SOURCE[0]}"
+while [ -L "$_src" ]; do _d="$(cd -P "$(dirname "$_src")" && pwd)"; _src="$(readlink "$_src")"; [[ $_src == /* ]] || _src="$_d/$_src"; done
+D="$(cd -P "$(dirname "$_src")" && pwd)"
+# shellcheck source=lib/common.sh
+source "$D/lib/common.sh"
+
+JDEBUG_VERSION="1.0.0"
+
+usage_top() { sed -n '2,/^set /p' "$0" | sed '$d' | sed 's/^# \{0,1\}//'; }
+
+cmd="${1:-}"; shift 2>/dev/null || true
+
+# Extract --via <tier> (threads/heap) and --actuator-base <url>; pass the rest on.
+VIA="actuator"; VIA_EXPLICIT=0
+: "${ACTUATOR_BASE:=http://localhost:8080/actuator}"; export ACTUATOR_BASE
+ARGS=()
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --via)           VIA="$2"; VIA_EXPLICIT=1; shift 2 ;;
+        --actuator-base) ACTUATOR_BASE="$2"; export ACTUATOR_BASE; shift 2 ;;
+        *)     ARGS+=("$1"); shift ;;
+    esac
+done
+# bash 3.2 (stock macOS) empty-array guard
+fwd() { "$@" ${ARGS[@]+"${ARGS[@]}"}; }
+
+triage_parse() { parse_common_args ${ARGS[@]+"${ARGS[@]}"}; }
+
+# run_tier <tier> <threads|heap> — invoke exactly one capture tier.
+run_tier() {
+    case "$1" in
+        actuator) fwd "$D/capture/actuator.sh" "$2" ;;
+        jattach)  fwd "$D/capture/jattach.sh"  "$2" ;;
+        jdk)      if [[ "$2" == threads ]]; then fwd "$D/capture/jdk-threads.sh"; else fwd "$D/capture/jdk-heap.sh"; fi ;;
+        *) err "unknown --via '$1' (actuator|jattach|jdk)"; exit 64 ;;
+    esac
+}
+# capture <threads|heap> — an explicit --via runs only that tier; otherwise DEGRADE
+# AUTOMATICALLY actuator → jattach → jdk, announcing each fallback to the terminal.
+capture() {
+    if [[ "$VIA_EXPLICIT" == 1 ]]; then run_tier "$VIA" "$1"; return $?; fi
+    if run_tier actuator "$1"; then return 0; fi
+    info "⚠ actuator tier failed — auto-falling back to jattach (needs no actuator)…"
+    if run_tier jattach "$1"; then return 0; fi
+    info "⚠ jattach tier failed — auto-falling back to an ephemeral JDK container…"
+    if run_tier jdk "$1"; then return 0; fi
+    err "all capture tiers failed (actuator → jattach → jdk); see the errors above."
+    return 1
+}
+
+case "$cmd" in
+    tui|menu|"")     exec "$D/ui/tui.sh" ;;
+    wizard|guide)    exec "$D/ui/tui.sh" wizard ;;
+
+    status)
+        triage_parse
+        show_cmd kubectl -n "$NAMESPACE" get pods -l "$SELECTOR" -o wide
+        kubectl -n "$NAMESPACE" get pods -l "$SELECTOR" -o wide
+        echo
+        show_cmd kubectl -n "$NAMESPACE" get events --sort-by=.lastTimestamp "| tail -15"
+        kubectl -n "$NAMESPACE" get events --sort-by=.lastTimestamp 2>/dev/null | tail -15
+        ;;
+
+    health)
+        triage_parse
+        POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
+        # curl-or-wget in the pod, against $ACTUATOR_BASE (adjustable via
+        # --actuator-base). Not pod_fetch: health must show the 503-with-body a
+        # DOWN status returns, so no curl -f here.
+        hfetch() { kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- sh -c "if command -v curl >/dev/null 2>&1; then curl -sS '$1'; else wget -qO- '$1'; fi"; }
+        show_cmd "kubectl -n $NAMESPACE exec $POD -c $APP_CONTAINER -- sh -c '<curl-or-wget> $ACTUATOR_BASE/health'"
+        if command -v python3 >/dev/null 2>&1; then
+            hfetch "$ACTUATOR_BASE/health" | python3 -m json.tool
+        else
+            hfetch "$ACTUATOR_BASE/health"; echo
+        fi
+        for probe in liveness readiness; do
+            printf '%-10s: ' "$probe"
+            hfetch "$ACTUATOR_BASE/health/$probe"; echo
+        done
+        ;;
+
+    top)
+        triage_parse
+        show_cmd kubectl -n "$NAMESPACE" top pods
+        kubectl -n "$NAMESPACE" top pods 2>/dev/null || echo "  (metrics-server not answering)"
+        echo
+        show_cmd kubectl -n "$NAMESPACE" get hpa
+        kubectl -n "$NAMESPACE" get hpa 2>/dev/null || echo "  (no HPA in $NAMESPACE)"
+        ;;
+
+    threads)  capture threads ;;
+    heap)     capture heap ;;
+
+    jcmd)            fwd "$D/capture/jattach.sh" jcmd ;;
+    memory)          fwd "$D/observe/memory-report.sh" ;;
+    snapshot)        fwd "$D/observe/snapshot.sh" ;;
+    logs)            fwd "$D/observe/tail-logs.sh" ;;
+    log-level)       fwd "$D/observe/set-log-level.sh" ;;
+    install-jattach) fwd "$D/capture/jattach.sh" install ;;
+
+    push-local)
+        triage_parse
+        POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
+        show_cmd kubectl -n "$NAMESPACE" cp "$D/jdebug-local" "$POD:/tmp/jdebug-local" -c "$APP_CONTAINER"
+        kubectl -n "$NAMESPACE" cp "$D/jdebug-local" "$POD:/tmp/jdebug-local" -c "$APP_CONTAINER" \
+            && info "staged jdebug-local at $POD:/tmp/jdebug-local — now: kubectl -n $NAMESPACE exec -it $POD -c $APP_CONTAINER -- sh /tmp/jdebug-local help" \
+            || err "cp failed (no tar in the pod? paste the script into the shell instead)"
+        ;;
+
+    -h|--help)       usage_top ;;
+    -V|--version)    echo "jdebug $JDEBUG_VERSION" ;;
+    *) echo "unknown command: $cmd"; echo; usage_top; exit 64 ;;
+esac

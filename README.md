@@ -1,0 +1,122 @@
+# jdebug — JVM debug kit for Kubernetes
+
+Capture and analyze JVM diagnostics from a pod **without a JDK in the image**.
+`jdebug` drives thread/heap capture, memory anatomy, an offline snapshot bundle,
+log tailing, and runtime log-level changes against **any Spring Boot / JVM pod**,
+over `kubectl`. It is self-contained — no assumptions about a particular app,
+namespace, or cluster; it uses whatever `kubectl` context is active.
+
+## Why
+
+Production JVM images are often JRE-only (no `jstack`/`jmap`/`jcmd`), and you may
+not be allowed to `kubectl debug` a JDK sidecar in. `jdebug` prefers the tools
+that work anyway, and falls back only when it has to.
+
+**Three capture tiers** (in preference order):
+1. **actuator** (default) — Spring Boot's `/actuator/threaddump` + `/actuator/heapdump`. Works JRE-only, no binary needed.
+2. **jattach** — an ~80 KB static binary that speaks the Hotspot attach protocol, for the full `jcmd` surface (`GC.heap_info`, `VM.native_memory`, `JFR`, …). **Auto-downloaded** from GitHub releases and cached (see below); no manual placement.
+3. **jdk** — last resort: an ephemeral JDK container via `kubectl debug` for `jstack`/`jmap`.
+
+## Install
+
+```sh
+./install.sh                 # symlink `jdebug` into ~/.local/bin
+./install.sh --prefix ~/bin
+./install.sh --uninstall
+```
+Or run it in place: `./jdebug <cmd>`. (The CLI resolves symlinks, so the
+symlink install works from anywhere on PATH.)
+
+## Usage
+
+```sh
+jdebug -n <namespace> -l <selector> <command> [--container <name>]
+
+jdebug health                                  # actuator health + per-subsystem
+jdebug status                                  # pod status + events
+jdebug top                                     # top pods + HPA
+jdebug memory                                  # cgroup RSS vs JVM heap/non-heap, reconciled
+jdebug threads   [--via actuator|jattach|jdk]  # thread dump (default: actuator)
+jdebug heap      [--via actuator|jattach|jdk]  # heap dump — PAUSES the JVM (needs --confirm)
+jdebug jcmd "GC.heap_info"                     # any jcmd via jattach
+jdebug snapshot  [--heap]                      # offline bundle (metrics, threads, memory, jcmd)
+jdebug logs                                    # stream logs from all replicas
+jdebug log-level <logger> <LEVEL>              # runtime level change via actuator
+jdebug install-jattach                         # pre-stage jattach in the pod
+
+jdebug wizard                                  # guided, symptom-driven capture flow
+jdebug                                         # interactive menu (opens with a mode chooser)
+```
+
+**Guided diagnosis.** New to the toolkit or the JVM? `jdebug wizard` (also `▶ w`
+in the menu) asks what you're seeing — OOMKilled, slow/hung, high CPU, creeping
+memory, GC pauses, or "not sure" — then runs the right capture sequence for that
+symptom and names the analyzer to open next. Destructive steps (heap dumps) ask
+first.
+
+Every command takes `-n/--namespace`, `-l/--selector`, `--container`, `--help`.
+
+## Target selection
+
+Defaults come from flags, then env, then built-ins:
+
+| | flag | env | default |
+|---|---|---|---|
+| namespace | `-n` | `JDEBUG_NAMESPACE` | `default` |
+| selector | `-l` | `JDEBUG_SELECTOR` | *(any pod in the namespace)* |
+| container | `--container` | `JDEBUG_CONTAINER` | `app` |
+| kube context | — | `KUBECONFIG` / kubectl | ambient |
+
+## jattach binary
+
+Auto-downloaded from `github.com/jattach/jattach` releases (matched to the pod's
+arch), `kubectl cp`'d into the pod, and cached at
+`${XDG_CACHE_HOME:-~/.cache}/jdebug/`. For air-gapped clusters, pre-place a copy
+and pass `--binary /path/to/jattach` (or set `$JATTACH_BINARY`). Override the
+version with `$JATTACH_VERSION`.
+
+## No kubectl inside the pod? (`jdebug-local`)
+
+`jdebug` is an **operator-side** tool — it drives the pod from *outside* via
+`kubectl exec`, so it needs kubectl + a kube context. When you only have a shell
+*inside* the container (JRE-only image, no kubectl — e.g. `kubectl exec -it`, a
+debug sidecar, or `nsenter` from the node), use **`jdebug-local`**: a single
+POSIX-`sh` file that runs the same captures against `localhost:8080/actuator`,
+`/tmp/jattach`, and `/proc` — nothing off-box.
+
+Get it in:
+```sh
+jdebug push-local                     # kubectl cp it to <pod>:/tmp/jdebug-local
+# or: kubectl cp jdebug-local <ns>/<pod>:/tmp/jdebug-local -c app
+# or: just paste the file into the pod shell
+```
+Then, inside the pod:
+```sh
+sh /tmp/jdebug-local help             # comprehensive help; `help <cmd>` for detail
+sh /tmp/jdebug-local memory
+sh /tmp/jdebug-local threads > /tmp/threads.txt
+sh /tmp/jdebug-local jcmd "GC.heap_info"      # needs jattach staged (jdebug install-jattach)
+sh /tmp/jdebug-local snapshot --heap
+```
+The `jdk` tier isn't available in-pod (it needs `kubectl debug` from outside);
+the actuator + jattach + memory tiers all work.
+
+## Requirements
+
+`kubectl` + `curl` on your PATH (plus `python3` for `jdebug memory`), a
+reachable kube context, and a pod that runs as the same uid your `kubectl exec`
+lands as (jattach attaches same-uid). All actuator-backed commands use whatever
+HTTP client is **in the pod** — `curl` or busybox `wget` — so they work against
+a stock JRE-alpine image with nothing added.
+
+Secured actuators: the toolkit assumes the actuator answers unauthenticated on
+localhost inside the pod. If yours requires a token, the actuator tier will
+fail cleanly — capture via the jattach tier instead (`--via jattach`), which
+needs no actuator at all.
+
+Heap dumps and `snapshot --heap` **pause the JVM** — they require `--confirm` and
+should be treated as destructive in production.
+
+## License
+
+0BSD — do whatever you want with it; no attribution required, no warranty given.
