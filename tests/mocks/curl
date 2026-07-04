@@ -1,0 +1,28 @@
+#!/bin/sh
+# Test double for curl, good enough for jdebug-local's http_get calls:
+# understands -o <file> and treats the last argument as the URL, then emits a
+# fixture body based on the URL path. MOCK_HTTP=fail simulates no server.
+[ "${MOCK_HTTP:-ok}" = fail ] && { echo 'curl: (7) Failed to connect' >&2; exit 7; }
+
+out=""
+url=""
+prev=""
+for a in "$@"; do
+    [ "$prev" = "-o" ] && out="$a"
+    prev="$a"
+    url="$a"
+done
+
+emit() {
+    case "$url" in
+        */health)                     printf '{"status":"UP","components":{"db":{"status":"UP"}}}' ;;
+        */metrics/jvm.memory.used*)   printf '{"name":"jvm.memory.used","measurements":[{"statistic":"VALUE","value":123456789}]}' ;;
+        */metrics/jvm.threads.live*)  printf '{"name":"jvm.threads.live","measurements":[{"statistic":"VALUE","value":42}]}' ;;
+        */metrics)                    printf '{"names":["jvm.memory.used","jvm.gc.pause","process.cpu.usage","system.cpu.usage","http.server.requests"]}' ;;
+        */threaddump)                 printf 'Full thread dump mock JVM\n"main" #1 prio=5\n' ;;
+        */heapdump)                   printf 'JAVA PROFILE 1.0.2 mock heap bytes' ;;
+        *)                            printf '{}' ;;
+    esac
+}
+
+if [ -n "$out" ]; then emit > "$out"; else emit; fi

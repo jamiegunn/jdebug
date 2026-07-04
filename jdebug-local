@@ -168,7 +168,8 @@ cmd_metrics() {
         http_get "$ACTUATOR_BASE/metrics/$1" || actuator_fail; echo
     else
         _m=$(http_get "$ACTUATOR_BASE/metrics") || actuator_fail
-        printf '%s' "$_m" | tr ',' '\n' | sed -n 's/.*"\(jvm[^"]*\|process[^"]*\|system[^"]*\)".*/  \1/p' | sort -u
+        # three expressions, not \| alternation — BSD sed (macOS bare metal) has no \|
+        printf '%s' "$_m" | tr ',' '\n' | sed -n 's/.*"\(jvm[^"]*\)".*/  \1/p; s/.*"\(process[^"]*\)".*/  \1/p; s/.*"\(system[^"]*\)".*/  \1/p' | sort -u
     fi
 }
 

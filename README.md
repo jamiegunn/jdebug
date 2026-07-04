@@ -124,6 +124,17 @@ needs no actuator at all.
 Heap dumps and `snapshot --heap` **pause the JVM** — they require `--confirm` and
 should be treated as destructive in production.
 
+## Tests
+
+```sh
+tests/run-tests.sh
+```
+
+Self-contained (no framework, no cluster): `tests/mocks/{kubectl,curl}` fake the
+cluster and the in-pod HTTP, driven by `MOCK_*` env vars. The suite exercises
+the CLI, both tools' error messages, the confirm gates, the TUI menus/wizard/
+help, the session log, and the plain-language cluster diagnostics.
+
 ## License
 
 0BSD — do whatever you want with it; no attribution required, no warranty given.

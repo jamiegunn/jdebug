@@ -61,8 +61,13 @@ box() { printf '%s╔═══════════════════�
         printf '%s╚══════════════════════════════════════════════════════════════╝%s\n' "$B" "$OFF"; }
 hr() { printf '%s────────────────────────────────────────────────────────────────%s\n' "$DIM" "$OFF"; }
 pause() {
-    printf '\n%sPress Enter for the menu — this output stays in your scrollback and is saved to%s\n' "$DIM" "$OFF"
-    printf '%s%s%s ' "$DIM" "$SESSION_LOG" "$OFF"; read -r _ || bye
+    if [[ -f "$SESSION_LOG" ]]; then
+        printf '\n%sPress Enter for the menu — this output stays in your scrollback and is saved to%s\n' "$DIM" "$OFF"
+        printf '%s%s%s ' "$DIM" "$SESSION_LOG" "$OFF"
+    else
+        printf '\n%sPress Enter for the menu…%s ' "$DIM" "$OFF"
+    fi
+    read -r _ || bye
 }
 confirm() { printf '%s%s%s [y/N] ' "$YL" "$1" "$OFF"; local a; read -r a || return 1; [[ "$a" == y || "$a" == Y || "$a" == yes ]]; }
 run() {
@@ -83,7 +88,8 @@ choose_mode() {
     printf '   %s1%s  %sRemote%s      operator machine → %skubectl exec%s into a pod  %s(needs kubectl + a context)%s\n' "$GN" "$OFF" "$B" "$OFF" "$CY" "$OFF" "$DIM" "$OFF"
     printf '   %s2%s  %sIn-pod%s      a shell INSIDE the pod, no kubectl        %s(JRE-only image is fine)%s\n' "$GN" "$OFF" "$B" "$OFF" "$DIM" "$OFF"
     printf '   %s3%s  %sBare metal%s  a JVM on THIS host, no Kubernetes at all\n' "$GN" "$OFF" "$B" "$OFF"
-    printf '\n  %sModes 2 & 3 talk to localhost actuator + a local jattach + /proc (via jdebug-local).%s\n' "$DIM" "$OFF"
+    printf '\n  %sNot sure? If you normally type kubectl to reach the app, pick 1.%s\n' "$B" "$OFF"
+    printf '  %sModes 2 & 3 talk to localhost actuator + a local jattach + /proc (via jdebug-local).%s\n' "$DIM" "$OFF"
     printf '  %sNote: this menu needs bash. A stock JRE/busybox pod has none — for those, run the%s\n' "$YL" "$OFF"
     printf '  %ssingle-file  jdebug-local  CLI in the pod instead:  sh /tmp/jdebug-local help%s\n' "$YL" "$OFF"
     printf '\n  %s> %s' "$B" "$OFF"; local m; read -r m
@@ -103,7 +109,7 @@ header_remote() {
     printf '  %smode%s      %s  %s(m to switch)%s\n' "$B" "$OFF" "$(mode_label)" "$DIM" "$OFF"
     printf '  %scontext%s   %s%s%s  %s\n' "$B" "$OFF" "$GN" "${ctx:-<none — is KUBECONFIG set?>}" "$OFF" "$reach"
     printf '  %starget%s    namespace  %s%s%s\n' "$B" "$OFF" "$GN" "$NAMESPACE" "$OFF"
-    printf '            selector   %s%s%s\n' "$GN" "$SELECTOR" "$OFF"
+    printf '            selector   %s%s%s\n' "$GN" "${SELECTOR:-<any pod — press t to narrow to your app>}" "$OFF"
     printf '            container  %s%s%s\n' "$GN" "$APP_CONTAINER" "$OFF"
     printf '            pod        %s%s%s\n' "$GN" "${POD_PIN:-<auto: first match — pick one under t>}" "$OFF"
     printf '  %sactuator%s  %s%s%s\n' "$B" "$OFF" "$GN" "$ACTUATOR_BASE" "$OFF"
@@ -133,6 +139,66 @@ ask_via() {
     printf '  %s    jdk       temporary JDK debug container (last resort, needs cluster permission)%s\n' "$DIM" "$OFF"
     printf '  [Enter] auto (recommended) / [o] actuator / [j] jattach / [d] jdk: '
     local v; read -r v; case "$v" in j|J) VIA_FLAG="--via jattach" ;; d|D) VIA_FLAG="--via jdk" ;; o|O) VIA_FLAG="--via actuator" ;; *) VIA_FLAG="" ;; esac; }
+
+# ask_jcmd — nobody fresh out of college knows jcmd commands by heart; offer
+# the five useful ones and still accept anything typed.
+ask_jcmd() {
+    JCMD_PICK=""
+    printf '  %sThe useful jcmd commands:%s\n' "$DIM" "$OFF"
+    printf '   %s1%s  GC.heap_info               how full is the heap, which collector    %ssafe%s\n' "$GN" "$OFF" "$GN" "$OFF"
+    printf '   %s2%s  VM.native_memory summary   off-heap breakdown %s(needs NMT enabled)%s   %ssafe%s\n' "$GN" "$OFF" "$DIM" "$OFF" "$GN" "$OFF"
+    printf '   %s3%s  Thread.print -l            thread dump via the attach socket        %ssafe%s\n' "$GN" "$OFF" "$GN" "$OFF"
+    printf '   %s4%s  VM.flags                   the flags the JVM actually started with  %ssafe%s\n' "$GN" "$OFF" "$GN" "$OFF"
+    printf '   %s5%s  JFR.start duration=60s filename=/tmp/rec.jfr   60s profiling recording\n' "$GN" "$OFF"
+    printf '  pick 1-5, type any jcmd command, or Enter to cancel: '
+    local v; read -r v
+    case "$v" in
+        1) JCMD_PICK="GC.heap_info" ;;
+        2) JCMD_PICK="VM.native_memory summary" ;;
+        3) JCMD_PICK="Thread.print -l" ;;
+        4) JCMD_PICK="VM.flags" ;;
+        5) JCMD_PICK="JFR.start duration=60s filename=/tmp/rec.jfr" ;;
+        *) JCMD_PICK="$v" ;;
+    esac
+}
+
+# show_help — the glossary + workflow screen ('h'). Assumes zero prior K8s/JVM
+# knowledge: every word the menus use is explained here in plain language.
+show_help() {
+    box "jdebug help — the words, the workflow, the safety rules"
+    cat <<EOF
+
+  ${B}THE WORDS${OFF}
+    pod          one running copy of the app (a container, roughly). Replicas = several pods.
+    namespace    a folder for pods; your app lives in one (header shows which you target)
+    selector     a label filter like app=payments that picks YOUR app's pods out of the namespace
+    container    pods can hold several containers; we talk to the app's one (usually "app")
+    actuator     Spring Boot's built-in admin endpoints over HTTP — health, metrics, dumps.
+                 Safest way in; everything tries it first.
+    thread dump  a snapshot of what every thread is doing — THE tool for slow/hung/high-CPU.
+                 Safe, instant, no impact.
+    heap dump    every object in memory written to a file — THE tool for leaks/OOM.
+                 ${RD}Pauses the app while it writes${OFF} — that's why it always asks first.
+    jattach      an ~80 KB helper binary we place in the pod to talk to the JVM directly
+                 when actuator can't. jcmd = the JVM's admin commands, sent through it.
+    heap vs RSS  heap = memory the JVM manages; RSS = everything the container really uses.
+                 The gap (buffers, metaspace, threads) is what 'memory' (option 4) explains.
+
+  ${B}A GOOD FIRST 10 MINUTES${OFF}
+    1. ${GN}status${OFF} — is anything restarting or stuck? read the hints under the output
+    2. ${GN}health${OFF} — is a dependency (db/queue) DOWN? chase that system first
+    3. ${GN}w${OFF} wizard — tell it the symptom; it runs the right captures and says what's next
+    4. ${GN}d${OFF} — see what you captured and what tool opens each file
+
+  ${B}THE SAFETY RULES${OFF}
+    · everything is read-only except: ${RD}heap dumps pause the app${OFF}, log-level adds log volume
+    · anything risky asks you first — answering n is always safe
+    · every capture is saved under dumps/ and every command's output goes to the
+      session log — you can't lose evidence by pressing the wrong key
+    · heap dumps can contain real user data: treat them like production data
+
+EOF
+}
 retarget() {
     # Context first — everything else depends on which cluster we're talking to.
     local ctxs cur v
@@ -161,9 +227,10 @@ retarget() {
     else
         printf '  %sno kube contexts found — set KUBECONFIG or create one, then come back%s\n' "$YL" "$OFF"
     fi
+    printf '\n  %sEnter keeps the [current] value.%s\n' "$DIM" "$OFF"
     printf '  namespace       [%s]: ' "$NAMESPACE";     read -r v; [[ -n "$v" ]] && NAMESPACE="$v"
-    printf '  label selector  [%s]: ' "$SELECTOR";      read -r v; [[ -n "$v" ]] && SELECTOR="$v"
-    printf '  container       [%s]: ' "$APP_CONTAINER"; read -r v; [[ -n "$v" ]] && APP_CONTAINER="$v"
+    printf '  label selector  [%s]  %s(e.g. app=payments · blank = any pod)%s: ' "${SELECTOR:-}" "$DIM" "$OFF"; read -r v; [[ -n "$v" ]] && SELECTOR="$v"
+    printf '  container       [%s]  %s(the app container name in the pod)%s: ' "$APP_CONTAINER" "$DIM" "$OFF"; read -r v; [[ -n "$v" ]] && APP_CONTAINER="$v"
     printf '  actuator base   [%s]: ' "$ACTUATOR_BASE"; read -r v; [[ -n "$v" ]] && ACTUATOR_BASE="$v"
     export NAMESPACE SELECTOR APP_CONTAINER ACTUATOR_BASE
     CLUSTER_TS=-999   # namespace/selector may point at a different cluster state — re-probe
@@ -383,7 +450,7 @@ menu_remote() {
    ${GN}8${OFF}  logs        live log stream from every replica         ${GN}safe${OFF}
    ${GN}9${OFF}  log-level   turn logging up/down without a restart     ${YL}adds log volume${OFF}
 
-  ${B}MORE${OFF}  ${GN}d${OFF} view captures · ${GN}i${OFF} stage jattach · ${GN}p${OFF} push in-pod tool · ${GN}t${OFF} target · ${GN}m${OFF} mode · ${GN}q${OFF} quit
+  ${B}MORE${OFF}  ${GN}h${OFF} help/glossary · ${GN}d${OFF} view captures · ${GN}i${OFF} stage jattach · ${GN}p${OFF} push in-pod tool · ${GN}t${OFF} target · ${GN}m${OFF} mode · ${GN}q${OFF} quit
 EOF
     printf '\n  %s> %s' "$B" "$OFF"
 }
@@ -403,7 +470,7 @@ menu_local() {
    ${GN}6${OFF}  jcmd        advanced JVM commands (GC, JFR, native)    ${YL}needs jattach${OFF}
    ${GN}7${OFF}  snapshot    grab EVERYTHING in one offline bundle      ${GN}safe${OFF}${DIM} · heap optional${OFF}
 
-  ${B}MORE${OFF}  ${GN}d${OFF} view captures · ${GN}i${OFF} stage jattach · ${GN}s${OFF} settings · ${GN}m${OFF} mode · ${GN}q${OFF} quit
+  ${B}MORE${OFF}  ${GN}h${OFF} help/glossary · ${GN}d${OFF} view captures · ${GN}i${OFF} stage jattach · ${GN}s${OFF} settings · ${GN}m${OFF} mode · ${GN}q${OFF} quit
 EOF
     printf '\n  %s> %s' "$B" "$OFF"
 }
@@ -417,12 +484,13 @@ dispatch_remote() {
         4)  run "$DBG" memory ${POD_PIN:+"$POD_PIN"} ;;
         5)  ask_via; run "$DBG" threads $VIA_FLAG ${POD_PIN:+"$POD_PIN"} ;;
         6)  ask_via; confirm "heap dump PAUSES the JVM (destructive in production) — proceed?" && run "$DBG" heap $VIA_FLAG --confirm ${POD_PIN:+"$POD_PIN"} ;;
-        7)  printf '  jcmd command (e.g. GC.heap_info, VM.native_memory summary): '; read -r jc; [[ -n "$jc" ]] && run "$DBG" jcmd "$jc" ${POD_PIN:+"$POD_PIN"} ;;
+        7)  ask_jcmd; [[ -n "$JCMD_PICK" ]] && run "$DBG" jcmd "$JCMD_PICK" ${POD_PIN:+"$POD_PIN"} ;;
         8)  printf '  %sstreaming — Ctrl-C to stop%s\n' "$DIM" "$OFF"; run "$DBG" logs ;;
         9)  printf '  logger (e.g. com.example.debugdemo, ROOT): '; read -r lg
             printf '  level (TRACE|DEBUG|INFO|WARN|ERROR|OFF): '; read -r lv
             [[ -n "$lg" && -n "$lv" ]] && run "$DBG" log-level "$lg" "$lv" ;;
         10) if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run "$DBG" snapshot --heap --confirm ${POD_PIN:+"$POD_PIN"}; else run "$DBG" snapshot ${POD_PIN:+"$POD_PIN"}; fi ;;
+        h|H) show_help ;;
         d|D) run "$DBG" dumps ;;
         i|I) run "$DBG" install-jattach ${POD_PIN:+"$POD_PIN"} ;;
         p|P) run "$DBG" push-local ${POD_PIN:+"$POD_PIN"} ;;
@@ -443,9 +511,10 @@ dispatch_local() {
         5)  jattach_fallback_check
             confirm "heap dump PAUSES the JVM (destructive in production) — proceed?" && run sh "$LOCAL" heap --confirm ;;
         6)  [[ -x "$JATTACH_BIN" ]] || { confirm "jcmd REQUIRES jattach and it is not staged — download now (~80 KB)?" && stage_jattach_local; }
-            printf '  jcmd command (e.g. GC.heap_info, VM.native_memory summary): '; read -r jc; [[ -n "$jc" ]] && run sh "$LOCAL" jcmd "$jc" ;;
+            ask_jcmd; [[ -n "$JCMD_PICK" ]] && run sh "$LOCAL" jcmd "$JCMD_PICK" ;;
         7)  jattach_fallback_check
             if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run sh "$LOCAL" snapshot --heap; else run sh "$LOCAL" snapshot; fi ;;
+        h|H) show_help ;;
         d|D) run sh "$LOCAL" dumps ;;
         i|I) run stage_jattach_local ;;
         s|S) local_settings ;;

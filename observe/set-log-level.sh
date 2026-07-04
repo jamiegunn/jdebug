@@ -28,7 +28,8 @@ if [[ ${#REMAINING_ARGS[@]} -lt 2 ]]; then
 fi
 
 LOGGER="${REMAINING_ARGS[0]}"
-LEVEL="${REMAINING_ARGS[1]}"
+# Accept lowercase levels ("debug") — juniors type them; Spring wants uppercase.
+LEVEL="$(printf '%s' "${REMAINING_ARGS[1]}" | tr '[:lower:]' '[:upper:]')"
 
 case "$LEVEL" in
     TRACE|DEBUG|INFO|WARN|ERROR|OFF) ;;
