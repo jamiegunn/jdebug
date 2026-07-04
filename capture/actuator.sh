@@ -94,6 +94,7 @@ case "$ACTION" in
             exit 1
         fi
         info "wrote $LOCAL_PATH ($(wc -l <"$LOCAL_PATH" | tr -d ' ') lines)"
+        info "analyze: upload it to https://fastthread.io (flags deadlocks, blocked pools, hot loops) or open in VisualVM"
         ;;
     heap)
         OUT_DIR="${OUT_DIR:-$JDEBUG_DUMPS/heap}"

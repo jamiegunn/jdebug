@@ -40,6 +40,7 @@ jdebug threads   [--via actuator|jattach|jdk]  # thread dump (default: actuator)
 jdebug heap      [--via actuator|jattach|jdk]  # heap dump — PAUSES the JVM (needs --confirm)
 jdebug jcmd "GC.heap_info"                     # any jcmd via jattach
 jdebug snapshot  [--heap]                      # offline bundle (metrics, threads, memory, jcmd)
+jdebug dumps                                   # list captured evidence + how to analyze each
 jdebug logs                                    # stream logs from all replicas
 jdebug log-level <logger> <LEVEL>              # runtime level change via actuator
 jdebug install-jattach                         # pre-stage jattach in the pod

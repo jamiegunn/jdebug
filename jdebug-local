@@ -22,6 +22,21 @@ err()  { printf 'error: %s\n' "$*" >&2; }
 have() { command -v "$1" >/dev/null 2>&1; }
 ts()   { date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%s; }
 
+# out_hint <path> — tell the user exactly how to get a capture off this box.
+# In a pod we can fill in the kubectl cp for them: hostname = pod name, and
+# the namespace is mounted at the serviceaccount path. On bare metal the file
+# is already on this machine.
+out_hint() {
+    if [ -r /var/run/secrets/kubernetes.io/serviceaccount/namespace ]; then
+        _ns=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace 2>/dev/null)
+        _pod=$(hostname 2>/dev/null || cat /etc/hostname 2>/dev/null || echo '<pod>')
+        echo "pull it to your machine — run this OUTSIDE the pod:"
+        echo "    kubectl -n ${_ns:-<namespace>} cp $_pod:$1 ./${1##*/}    (add -c <container> if the pod has several)"
+    else
+        echo "saved on this machine: $1"
+    fi
+}
+
 # find the JVM pid: pgrep, else scan /proc/*/comm, else PID 1.
 jvm_pid() {
     if [ -n "${JVM_PID:-}" ]; then echo "$JVM_PID"; return; fi
@@ -101,13 +116,17 @@ cmd_heap() {
     [ "${1:-}" = "--confirm" ] || { err "heap dump PAUSES the JVM (destructive in prod). Re-run: jdebug-local heap --confirm"; exit 2; }
     out="$OUT_DIR/heap-$(ts).hprof"
     if http_get "$ACTUATOR_BASE/heapdump" "$out"; then
-        echo "wrote $out  ($(wc -c <"$out" 2>/dev/null || echo '?') bytes) — pull it out with: kubectl cp <pod>:$out ./"
+        echo "wrote $out  ($(wc -c <"$out" 2>/dev/null || echo '?') bytes)"
+        out_hint "$out"
+        echo "analyze: Eclipse MAT -> File -> Open Heap Dump -> 'Leak Suspects' (or VisualVM)"
         return 0
     fi
     err "⚠ actuator heapdump unreachable at $ACTUATOR_BASE — auto-falling back to jattach…"
     if [ -x "$JATTACH_BIN" ]; then
         "$JATTACH_BIN" "$(jvm_pid)" jcmd "GC.heap_dump $out"
-        echo "wrote $out (via jattach) — pull it out with: kubectl cp <pod>:$out ./"
+        echo "wrote $out (via jattach)"
+        out_hint "$out"
+        echo "analyze: Eclipse MAT -> File -> Open Heap Dump -> 'Leak Suspects' (or VisualVM)"
     else actuator_fail "GC.heap_dump $out"; fi
 }
 
@@ -175,8 +194,37 @@ cmd_snapshot() {
         done
     else echo "(jattach not staged — skipped jcmd; see: jdebug-local help jcmd)" >"$dir/jcmd-SKIPPED.txt"; fi
     [ "$heap" = 1 ] && { echo "heap dump (pauses JVM)..."; http_get "$ACTUATOR_BASE/heapdump" "$dir/heap.hprof" 2>/dev/null || true; }
-    ( cd "$OUT_DIR" && tar czf "$dir.tar.gz" "$(basename "$dir")" 2>/dev/null ) && echo "bundle: $dir.tar.gz" || echo "bundle dir: $dir"
-    echo "pull it out with: kubectl cp <pod>:$dir.tar.gz ./"
+    if ( cd "$OUT_DIR" && tar czf "$dir.tar.gz" "$(basename "$dir")" 2>/dev/null ); then
+        echo "bundle: $dir.tar.gz"
+        out_hint "$dir.tar.gz"
+    else
+        echo "bundle dir: $dir"
+        out_hint "$dir"
+    fi
+    echo "inside: start with memory.txt and threads.txt (threads -> https://fastthread.io)"
+}
+
+cmd_dumps() {
+    echo "captures in $OUT_DIR (see also: OUT_DIR env to change where they go):"
+    _found=0
+    for f in "$OUT_DIR"/heap-*.hprof "$OUT_DIR"/jdebug-snapshot-*.tar.gz; do
+        [ -e "$f" ] || continue
+        _found=1
+        printf '  %s  (%s bytes)\n' "$f" "$(wc -c <"$f" 2>/dev/null | tr -d ' ')"
+        out_hint "$f" | sed 's/^/      /'
+    done
+    for d in "$OUT_DIR"/jdebug-snapshot-*; do
+        [ -d "$d" ] || continue
+        _found=1
+        printf '  %s/  (snapshot directory)\n' "$d"
+    done
+    if [ "$_found" = 0 ]; then
+        echo "  none yet. heap and snapshot save files here; threads prints to your"
+        echo "  terminal — save it with:  jdebug-local threads > $OUT_DIR/threads.txt"
+    else
+        echo
+        echo "analyze: *.hprof -> Eclipse MAT ('Leak Suspects') · threads *.txt -> https://fastthread.io"
+    fi
 }
 
 # --- help -------------------------------------------------------------------
@@ -204,6 +252,7 @@ COMMANDS
   metrics [name]      list JVM/process/system metrics, or print one metric
   jcmd <command>      any jcmd via jattach, e.g. "GC.heap_info"     [needs jattach]
   snapshot [--heap]   bundle health+threads+memory+jcmd into /tmp for offline use
+  dumps               list captures made so far + exactly how to pull them out
   help [command]      comprehensive help, or per-command detail
 
 CAPTURE TIERS
@@ -315,6 +364,7 @@ case "$cmd" in
     metrics)  cmd_metrics "$@" ;;
     jcmd)     cmd_jcmd "$@" ;;
     snapshot) cmd_snapshot "$@" ;;
+    dumps|captures) cmd_dumps ;;
     help)     [ $# -gt 0 ] && help_cmd "$1" || usage_full ;;
     -h|--help|"") usage_full ;;
     *) err "unknown command: $cmd"; echo; usage_full >&2; exit 64 ;;

@@ -31,7 +31,12 @@ box() { printf '%s╔═══════════════════�
 hr() { printf '%s────────────────────────────────────────────────────────────────%s\n' "$DIM" "$OFF"; }
 pause() { printf '\n%sPress Enter to return to the menu…%s ' "$DIM" "$OFF"; read -r _ || exit 0; }
 confirm() { printf '%s%s%s [y/N] ' "$YL" "$1" "$OFF"; local a; read -r a || return 1; [[ "$a" == y || "$a" == Y || "$a" == yes ]]; }
-run() { printf '\n%s$ %s%s\n\n' "$CY" "$*" "$OFF"; "$@"; printf '\n%s[exit %s]%s\n' "$DIM" "$?" "$OFF"; }
+run() {
+    printf '\n%s$ %s%s\n\n' "$CY" "$*" "$OFF"; "$@"; local rc=$?
+    if [[ $rc -eq 0 ]]; then printf '\n%s✓ done%s\n' "$GN" "$OFF"
+    else printf '\n%s✗ that didn'\''t work (exit %s) — the messages above say why and what to try next%s\n' "$RD" "$rc" "$OFF"; fi
+    return $rc
+}
 
 choose_mode() {
     clear 2>/dev/null || printf '\n\n'
@@ -78,7 +83,12 @@ header_local() {
 
 # --- utilities --------------------------------------------------------------
 # Default (Enter) = auto: actuator → jattach → jdk. Explicit choices force one tier.
-ask_via() { printf '  tier: [Enter] auto (actuator→jattach→jdk) / [j]attach / [d] JDK / [o] actuator-only: '
+ask_via() {
+    printf '  %sThere are three ways to capture — auto tries them safest-first and tells you which worked:%s\n' "$DIM" "$OFF"
+    printf '  %s    actuator  ask the app itself over HTTP (safest, needs Spring Boot actuator)%s\n' "$DIM" "$OFF"
+    printf '  %s    jattach   tiny helper binary placed in the pod (works without actuator)%s\n' "$DIM" "$OFF"
+    printf '  %s    jdk       temporary JDK debug container (last resort, needs cluster permission)%s\n' "$DIM" "$OFF"
+    printf '  [Enter] auto (recommended) / [o] actuator / [j] jattach / [d] jdk: '
     local v; read -r v; case "$v" in j|J) VIA_FLAG="--via jattach" ;; d|D) VIA_FLAG="--via jdk" ;; o|O) VIA_FLAG="--via actuator" ;; *) VIA_FLAG="" ;; esac; }
 retarget() {
     printf '  namespace       [%s]: ' "$NAMESPACE";     local v; read -r v; [[ -n "$v" ]] && NAMESPACE="$v"
@@ -141,57 +151,77 @@ jattach_fallback_check() {
     confirm "download jattach now (~80 KB, github.com/jattach) so the fallback works?" && stage_jattach_local
 }
 
-# --- guided diagnosis wizard (remote mode) ----------------------------------
+# --- guided diagnosis wizard (works in every mode) ---------------------------
 # Each symptom maps to a diagnostic recipe: explain the plan, run the right
 # capture sequence against the current target, then name the next step.
 wiz_say() { printf '  %s%s%s\n' "$CY" "$*" "$OFF"; }
 wiz_hd()  { printf '\n  %s— %s —%s\n\n' "$B" "$*" "$OFF"; }
+# wrun <verb> [args] — run a capture verb against the current mode's backend.
+# The remote CLI and jdebug-local share verbs (health/memory/threads/heap/
+# jcmd/snapshot); top and status need kubectl, so local modes skip them.
+wrun() {
+    if [[ "$MODE" == 1 ]]; then run "$DBG" "$@"
+    else case "$1" in
+            top|status) wiz_say "(skipping '$1' — it needs kubectl, so it only works in remote mode)" ;;
+            *) run sh "$LOCAL" "$@" ;;
+         esac
+    fi
+}
 wiz_oom() {
     wiz_hd "OOMKilled / memory restarts"
-    wiz_say "Is it heap or off-heap? Memory anatomy first, then the right dump."
-    run "$DBG" memory
-    wiz_say "heap ≈ limit → heap pressure/leak (heap dump + MAT)"
-    wiz_say "heap low, RSS high → off-heap: metaspace / direct / native (NMT)"
-    confirm "capture a HEAP DUMP now? (pauses the JVM)" && run "$DBG" heap --confirm
-    confirm "capture native memory (NMT) via jattach?" && run "$DBG" jcmd "VM.native_memory summary"
-    wiz_say "Next → $JDEBUG_DUMPS/heap/*.hprof in Eclipse MAT (Leak Suspects); NMT shows off-heap growth."
+    wiz_say "First question: is the memory going into the Java heap, or somewhere else?"
+    wiz_say "The memory report reconciles what the kernel sees vs what the JVM admits to:"
+    wrun memory
+    wiz_say "How to read it:  heap ≈ limit        → heap pressure or a leak → heap dump + MAT"
+    wiz_say "                 heap low, RSS high  → off-heap: metaspace / buffers / native (NMT)"
+    confirm "capture a HEAP DUMP now? (⚠ pauses the app for seconds-to-minutes)" && wrun heap --confirm
+    confirm "capture native-memory detail (NMT, via jattach — safe)?" && wrun jcmd "VM.native_memory summary"
+    wiz_say "Next → open the .hprof in Eclipse MAT and run 'Leak Suspects'."
+    wiz_say "       press d in the menu to see every capture and where it lives."
 }
 wiz_slow() {
     wiz_hd "Slow / hung / high latency"
-    wiz_say "Thread dump — look for threads BLOCKED on a pool (HikariCP acquire) or a deadlock."
-    run "$DBG" threads
-    wiz_say "And health — a DOWN subsystem (db/mq/redis) explains stalls:"
-    run "$DBG" health
-    wiz_say "Next → feed $JDEBUG_DUMPS/threads/*.txt to fastthread.io (flags deadlocks & identical stacks)."
+    wiz_say "A thread dump shows what every thread is doing — look for threads BLOCKED"
+    wiz_say "waiting on a pool (db connections) or a deadlock. Safe, no pause:"
+    wrun threads
+    wiz_say "And the app's own health checks — a DOWN dependency (db/queue/cache) explains stalls:"
+    wrun health
+    wiz_say "Next → upload the threads .txt to https://fastthread.io — it flags deadlocks"
+    wiz_say "       and identical stacks automatically. (d in the menu lists your captures)"
 }
 wiz_cpu() {
-    wiz_hd "High CPU / HPA scaling"
-    wiz_say "Two thread dumps a few seconds apart — the stack RUNNABLE in both is the hot loop."
-    run "$DBG" threads
-    run "$DBG" threads
-    run "$DBG" top
-    wiz_say "Next → diff the two dumps; the persistently-RUNNABLE stack is your CPU."
-    wiz_say "       or profile: jdebug jcmd \"JFR.start duration=60s filename=/tmp/r.jfr\""
+    wiz_hd "High CPU / autoscaler scaling up"
+    wiz_say "Two thread dumps a few seconds apart — a stack that is RUNNABLE in both"
+    wiz_say "is your hot loop. Both are safe and instant:"
+    wrun threads
+    wrun threads
+    wrun top
+    wiz_say "Next → diff the two dumps; the persistently-RUNNABLE stack is eating your CPU."
+    wiz_say "       Deeper: a 60s flight recording — jcmd \"JFR.start duration=60s filename=/tmp/r.jfr\""
 }
 wiz_leak() {
     wiz_hd "Memory creeping up (suspected leak)"
-    wiz_say "A leak = retained objects growing. Baseline heap dump now, another after load, diff in MAT."
-    confirm "take the BASELINE heap dump now? (pauses the JVM)" && run "$DBG" heap --confirm
-    wiz_say "Next → run load, wait, re-run this option for a 2nd dump; MAT → compare dominator trees."
+    wiz_say "A leak = objects that survive and accumulate. The play: baseline heap dump now,"
+    wiz_say "a second one after more load, then diff them in Eclipse MAT."
+    confirm "take the BASELINE heap dump now? (⚠ pauses the app)" && wrun heap --confirm
+    wiz_say "Next → let the app run/take traffic, come back, re-run this option for dump #2,"
+    wiz_say "       then MAT → open both → 'compare to another heap dump' (dominator trees)."
 }
 wiz_gc() {
     wiz_hd "GC pauses climbing"
-    wiz_say "Heap occupancy + collector state:"
-    run "$DBG" jcmd "GC.heap_info"
-    run "$DBG" memory
-    wiz_say "Next → pauses climbing with heap near full → allocation pressure or a leak → heap dump + MAT."
-    wiz_say "       trend /actuator/metrics/jvm.gc.pause over time (Prometheus/Grafana)."
+    wiz_say "Checking how full the heap is and how the collector is coping:"
+    wrun jcmd "GC.heap_info"
+    wrun memory
+    wiz_say "Next → pauses climbing while the heap stays near-full = allocation pressure or"
+    wiz_say "       a leak → take a heap dump (option 4 here, or the OOM flow) and open in MAT."
 }
 wiz_all() {
     wiz_hd "Not sure — capture everything"
-    wiz_say "Full offline bundle: threads + health + memory + jcmd (+ optional heap)."
-    if confirm "include a HEAP DUMP? (pauses the JVM)"; then run "$DBG" snapshot --heap --confirm; else run "$DBG" snapshot; fi
-    wiz_say "Next → $JDEBUG_DUMPS/snapshot-* : MAT (hprof) · fastthread.io (threads.txt) · editor (jcmd)."
+    wiz_say "One bundle with threads + health + memory + JVM internals, so you (or a"
+    wiz_say "colleague) can analyze offline without touching production again."
+    if confirm "include a HEAP DUMP in the bundle? (⚠ pauses the app)"; then wrun snapshot --heap --confirm; else wrun snapshot; fi
+    wiz_say "Next → in the bundle: memory-report/memory.txt first, threads.txt → fastthread.io,"
+    wiz_say "       heap.hprof → Eclipse MAT. (d in the menu lists your captures)"
 }
 wizard() {
     while true; do
@@ -200,12 +230,13 @@ wizard() {
         printf '\n'
         printf '   %s1%s  Pod %sOOMKilled%s / restarts on memory\n'   "$GN" "$OFF" "$B" "$OFF"
         printf '   %s2%s  %sSlow%s / hung / high latency\n'           "$GN" "$OFF" "$B" "$OFF"
-        printf '   %s3%s  %sHigh CPU%s / HPA scaling up\n'            "$GN" "$OFF" "$B" "$OFF"
+        printf '   %s3%s  %sHigh CPU%s / autoscaler adding pods\n'    "$GN" "$OFF" "$B" "$OFF"
         printf '   %s4%s  Memory %screeping up%s over time (leak)\n'  "$GN" "$OFF" "$B" "$OFF"
         printf '   %s5%s  %sGC pauses%s climbing\n'                   "$GN" "$OFF" "$B" "$OFF"
         printf '   %s6%s  Not sure — %scapture everything%s\n'        "$GN" "$OFF" "$B" "$OFF"
         printf '   %sb%s  back\n'                                     "$GN" "$OFF"
-        printf '\n  %starget: %s / %s · destructive steps ask first%s\n' "$DIM" "$NAMESPACE" "$SELECTOR" "$OFF"
+        local tgt; if [[ "$MODE" == 1 ]]; then tgt="$NAMESPACE / ${SELECTOR:-<any pod>}"; else tgt="this machine (localhost)"; fi
+        printf '\n  %starget: %s · anything that could hurt the app asks you first%s\n' "$DIM" "$tgt" "$OFF"
         printf '\n  %s> %s' "$B" "$OFF"; local s; read -r s
         case "$s" in
             1) wiz_oom ;; 2) wiz_slow ;; 3) wiz_cpu ;; 4) wiz_leak ;; 5) wiz_gc ;; 6) wiz_all ;;
@@ -220,34 +251,45 @@ wizard() {
 menu_remote() {
     header_remote
     cat <<EOF
-  ${B}${CY}▶ w${OFF}  ${B}GUIDED DIAGNOSIS${OFF} ${DIM}— tell me the symptom, I run the right capture sequence${OFF}
+  ${B}${CY}▶ w${OFF}  ${B}GUIDED DIAGNOSIS${OFF} ${DIM}— describe the symptom, it runs the right captures.${OFF} ${B}Start here.${OFF}
 
-  ${B}TRIAGE${OFF}                      ${B}CAPTURE${OFF} ${DIM}(pick tier at prompt)${OFF}
-   ${GN}1${OFF} pod status + events      ${GN}5${OFF} thread dump ${DIM}(actuator)${OFF}
-   ${GN}2${OFF} actuator health          ${GN}6${OFF} heap dump ${RD}(actuator · pauses JVM)${OFF}
-   ${GN}3${OFF} top pods + HPA           ${GN}7${OFF} jcmd … ${DIM}(GC.heap_info, NMT, JFR)${OFF}
+  ${B}LOOK AROUND${OFF}  ${GN}all safe · read-only${OFF}
+   ${GN}1${OFF}  status      are the pods up? restarts, recent events
+   ${GN}2${OFF}  health      the app's own health checks (db, queue, disk…)
+   ${GN}3${OFF}  top         CPU + memory per pod, autoscaler state
+   ${GN}4${OFF}  memory      memory anatomy — container total vs JVM heap/non-heap
 
-  ${B}MEMORY / METRICS${OFF}            ${B}LOGS${OFF}
-   ${GN}4${OFF} memory anatomy           ${GN}8${OFF} tail logs (all replicas)
-     ${DIM}(RSS vs heap/nonheap)${OFF}    ${GN}9${OFF} set log level
+  ${B}CAPTURE EVIDENCE${OFF}  ${DIM}files land in dumps/ — press${OFF} ${GN}d${OFF} ${DIM}to browse them${OFF}
+   ${GN}5${OFF}  threads     what is every thread doing right now?      ${GN}safe · instant${OFF}
+   ${GN}6${OFF}  heap        every object in memory, for leak hunting   ${RD}⚠ pauses the app${OFF}
+   ${GN}7${OFF}  jcmd        advanced JVM commands (GC, JFR, native)    ${YL}mostly safe${OFF}
+   ${GN}10${OFF} snapshot    grab EVERYTHING in one offline bundle      ${GN}safe${OFF}${DIM} · heap optional${OFF}
 
-  ${B}SNAPSHOT${OFF}                    ${B}UTILITIES${OFF}
-   ${GN}10${OFF} incident snapshot        ${GN}i${OFF} stage jattach   ${GN}p${OFF} push in-pod tool
-                                ${GN}t${OFF} target  ${GN}m${OFF} mode  ${GN}q${OFF} quit
+  ${B}LOGS${OFF}
+   ${GN}8${OFF}  logs        live log stream from every replica         ${GN}safe${OFF}
+   ${GN}9${OFF}  log-level   turn logging up/down without a restart     ${YL}adds log volume${OFF}
+
+  ${B}MORE${OFF}  ${GN}d${OFF} view captures · ${GN}i${OFF} stage jattach · ${GN}p${OFF} push in-pod tool · ${GN}t${OFF} target · ${GN}m${OFF} mode · ${GN}q${OFF} quit
 EOF
     printf '\n  %s> %s' "$B" "$OFF"
 }
 menu_local() {
     header_local
     cat <<EOF
-  ${B}TRIAGE${OFF}                      ${B}CAPTURE${OFF}
-   ${GN}1${OFF} actuator health          ${GN}4${OFF} thread dump ${DIM}(→ stdout)${OFF}
-   ${GN}2${OFF} metrics                  ${GN}5${OFF} heap dump ${RD}(pauses JVM)${OFF}
-   ${GN}3${OFF} memory anatomy           ${GN}6${OFF} jcmd … ${DIM}(needs jattach)${OFF}
+  ${B}${CY}▶ w${OFF}  ${B}GUIDED DIAGNOSIS${OFF} ${DIM}— describe the symptom, it runs the right captures.${OFF} ${B}Start here.${OFF}
 
-  ${B}SNAPSHOT${OFF}                    ${B}UTILITIES${OFF}
-   ${GN}7${OFF} offline bundle           ${GN}i${OFF} stage jattach   ${GN}s${OFF} settings
-                                ${GN}m${OFF} mode   ${GN}q${OFF} quit
+  ${B}LOOK AROUND${OFF}  ${GN}all safe · read-only${OFF}
+   ${GN}1${OFF}  health      the app's own health checks (db, queue, disk…)
+   ${GN}2${OFF}  metrics     browse JVM/process metrics, or print one value
+   ${GN}3${OFF}  memory      memory anatomy — container total vs JVM heap/non-heap
+
+  ${B}CAPTURE EVIDENCE${OFF}  ${DIM}files land in ${OUT_DIR:-/tmp} — press${OFF} ${GN}d${OFF} ${DIM}to browse them${OFF}
+   ${GN}4${OFF}  threads     what is every thread doing right now?      ${GN}safe · instant${OFF}
+   ${GN}5${OFF}  heap        every object in memory, for leak hunting   ${RD}⚠ pauses the app${OFF}
+   ${GN}6${OFF}  jcmd        advanced JVM commands (GC, JFR, native)    ${YL}needs jattach${OFF}
+   ${GN}7${OFF}  snapshot    grab EVERYTHING in one offline bundle      ${GN}safe${OFF}${DIM} · heap optional${OFF}
+
+  ${B}MORE${OFF}  ${GN}d${OFF} view captures · ${GN}i${OFF} stage jattach · ${GN}s${OFF} settings · ${GN}m${OFF} mode · ${GN}q${OFF} quit
 EOF
     printf '\n  %s> %s' "$B" "$OFF"
 }
@@ -267,6 +309,7 @@ dispatch_remote() {
             printf '  level (TRACE|DEBUG|INFO|WARN|ERROR|OFF): '; read -r lv
             [[ -n "$lg" && -n "$lv" ]] && run "$DBG" log-level "$lg" "$lv" ;;
         10) if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run "$DBG" snapshot --heap --confirm; else run "$DBG" snapshot; fi ;;
+        d|D) run "$DBG" dumps ;;
         i|I) run "$DBG" install-jattach ;;
         p|P) run "$DBG" push-local ;;
         t|T) retarget ;;
@@ -277,6 +320,7 @@ dispatch_remote() {
 }
 dispatch_local() {
     case "$1" in
+        w|W) wizard ;;
         1)  run sh "$LOCAL" health ;;
         2)  run sh "$LOCAL" metrics ;;
         3)  jattach_fallback_check; run sh "$LOCAL" memory ;;
@@ -287,6 +331,7 @@ dispatch_local() {
             printf '  jcmd command (e.g. GC.heap_info, VM.native_memory summary): '; read -r jc; [[ -n "$jc" ]] && run sh "$LOCAL" jcmd "$jc" ;;
         7)  jattach_fallback_check
             if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run sh "$LOCAL" snapshot --heap; else run sh "$LOCAL" snapshot; fi ;;
+        d|D) run sh "$LOCAL" dumps ;;
         i|I) run stage_jattach_local ;;
         s|S) local_settings ;;
         m|M) choose_mode ;;

@@ -209,6 +209,7 @@ case "$ACTION" in
         kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
             "$JATTACH_REMOTE_PATH" "$JVM_PID" jcmd "Thread.print -l" > "$LOCAL_PATH"
         info "wrote $LOCAL_PATH ($(wc -l <"$LOCAL_PATH") lines)"
+        info "analyze: upload it to https://fastthread.io (flags deadlocks, blocked pools, hot loops) or open in VisualVM"
         ;;
     heap)
         OUT_DIR="${OUT_DIR:-$JDEBUG_DUMPS/heap}"
@@ -222,6 +223,7 @@ case "$ACTION" in
         kubectl -n "$NAMESPACE" cp "$POD:$REMOTE_PATH" "$LOCAL_PATH" -c "$APP_CONTAINER"
         kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- rm -f "$REMOTE_PATH" || true
         info "wrote $LOCAL_PATH ($(du -h "$LOCAL_PATH" | cut -f1))"
+        info "analyze: Eclipse MAT → File → Open Heap Dump → 'Leak Suspects' (or VisualVM)"
         ;;
     jcmd)
         info "running jcmd '$JCMD_ARG' on PID $JVM_PID"

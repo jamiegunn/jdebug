@@ -122,3 +122,4 @@ if ! head -c 12 "$LOCAL_PATH" 2>/dev/null | grep -q "JAVA PROFILE"; then
     exit 1
 fi
 info "wrote $LOCAL_PATH ($(du -h "$LOCAL_PATH" | cut -f1 | tr -d ' '))"
+info "analyze: Eclipse MAT → File → Open Heap Dump → 'Leak Suspects' (or VisualVM)"

@@ -35,6 +35,14 @@ case "$LEVEL" in
     *) err "invalid LEVEL: $LEVEL (TRACE|DEBUG|INFO|WARN|ERROR|OFF)"; exit 64 ;;
 esac
 
+# Warn about the classic foot-gun: ROOT at DEBUG/TRACE turns every library's
+# chatter on, on every replica — log volume can explode.
+case "$LOGGER:$LEVEL" in
+    ROOT:DEBUG|ROOT:TRACE)
+        info "⚠ $LEVEL on ROOT is VERY noisy (every library, every replica) — fine briefly,"
+        info "  but remember to set it back:  jdebug log-level ROOT INFO" ;;
+esac
+
 PODS="$(resolve_pods)"
 if [[ -z "$PODS" ]]; then
     err "no pods matched selector=$SELECTOR namespace=$NAMESPACE"
@@ -52,3 +60,6 @@ while IFS= read -r pod; do
         sh -c "$(pod_fetch "$ACTUATOR_BASE/loggers/$LOGGER")")"
     info "  -> $EFFECTIVE"
 done <<< "$PODS"
+
+info "done — the change is live now (no restart) but is NOT persistent: a pod"
+info "restart resets it. Revert anytime:  jdebug log-level $LOGGER INFO"

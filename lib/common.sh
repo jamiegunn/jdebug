@@ -107,13 +107,21 @@ resolve_pods() {
 }
 
 # resolve_one_pod [explicit-name] — a single pod (explicit, or first match).
+# When several pods match and none was named, say so: capturing from a healthy
+# replica while a sick one sits next to it is a classic wrong-diagnosis trap.
 resolve_one_pod() {
     local explicit="${1:-}"
     if [[ -n "$explicit" ]]; then echo "$explicit"; return; fi
-    local pod; pod="$(resolve_pods | head -n1)"
-    if [[ -z "$pod" ]]; then
+    local pods; pods="$(resolve_pods)"
+    if [[ -z "$pods" ]]; then
         err "no pod matched namespace=$NAMESPACE selector='${SELECTOR:-<any>}' — pass -n/-l"
         exit 2
+    fi
+    local pod n; pod="$(printf '%s\n' "$pods" | head -n1)"
+    n="$(printf '%s\n' "$pods" | grep -c .)"
+    if [[ "$n" -gt 1 ]]; then
+        info "$n pods match — using $pod. If you meant another (e.g. the restarting one), add its name:"
+        printf '%s\n' "$pods" | sed 's/^/           /' >&2
     fi
     echo "$pod"
 }
