@@ -20,8 +20,9 @@
 # The actuator base URL inside the pod defaults to
 # http://localhost:8080/actuator — override with $ACTUATOR_BASE.
 #
-# Output: ./dumps/threads/<pod>-actuator-thread-<ts>.{txt,json}
-#         ./dumps/heap/<pod>-actuator-heap-<ts>.hprof
+# Output (under the kit's dumps/ dir — override with $OUT_DIR):
+#         dumps/threads/<pod>-actuator-thread-<ts>.{txt,json}
+#         dumps/heap/<pod>-actuator-heap-<ts>.hprof
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -68,7 +69,7 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 
 case "$ACTION" in
     threads)
-        OUT_DIR="${OUT_DIR:-./dumps/threads}"
+        OUT_DIR="${OUT_DIR:-$JDEBUG_DUMPS/threads}"
         ensure_dir "$OUT_DIR"
         if [[ $AS_JSON -eq 1 ]]; then
             LOCAL_PATH="$OUT_DIR/${POD}-actuator-thread-$TS.json"
@@ -95,7 +96,7 @@ case "$ACTION" in
         info "wrote $LOCAL_PATH ($(wc -l <"$LOCAL_PATH" | tr -d ' ') lines)"
         ;;
     heap)
-        OUT_DIR="${OUT_DIR:-./dumps/heap}"
+        OUT_DIR="${OUT_DIR:-$JDEBUG_DUMPS/heap}"
         ensure_dir "$OUT_DIR"
         LOCAL_PATH="$OUT_DIR/${POD}-actuator-heap-$TS.hprof"
         info "heap dump via actuator (pod=$POD) — this PAUSES the JVM"

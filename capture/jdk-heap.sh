@@ -26,7 +26,7 @@
 # Usage:
 #   ./jdk-heap.sh --confirm [-n namespace] [-l selector] [--container name] [pod-name]
 #
-# Output: ./dumps/heap/<pod>-jdk-heap-<ts>.hprof
+# Output: <kit>/dumps/heap/<pod>-jdk-heap-<ts>.hprof  (override: $OUT_DIR)
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -53,7 +53,7 @@ fi
 
 POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
 
-OUT_DIR="${OUT_DIR:-./dumps/heap}"
+OUT_DIR="${OUT_DIR:-$JDEBUG_DUMPS/heap}"
 ensure_dir "$OUT_DIR"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 DEBUG_CONTAINER="jmap-$(date +%s)"       # RFC 1123: lowercase alnum + '-' only

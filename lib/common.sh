@@ -15,6 +15,13 @@ set -euo pipefail
 # kit works the same whether it's run from a repo checkout or installed on PATH.
 : "${JDEBUG_CACHE_DIR:=${XDG_CACHE_HOME:-$HOME/.cache}/jdebug}"
 
+# Where operator-side captures (dumps, snapshots) land — under the kit itself,
+# NOT the caller's CWD, so they're always in one findable place and covered by
+# the kit's .gitignore. Override per run with $OUT_DIR, or move the root with
+# $JDEBUG_DUMPS.
+JDEBUG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+: "${JDEBUG_DUMPS:=$JDEBUG_ROOT/dumps}"
+
 # NOTE: no automatic KUBECONFIG rewriting. jdebug uses the ambient kubectl
 # context. Point it at a cluster the normal way (KUBECONFIG=... or kubectl config
 # use-context), exactly like kubectl itself.

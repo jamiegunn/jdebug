@@ -22,7 +22,7 @@
 # Usage:
 #   ./jdk-threads.sh [-n namespace] [-l selector] [--container name] [pod-name]
 #
-# Output: ./dumps/threads/<pod>-jdk-thread-<ts>.txt
+# Output: <kit>/dumps/threads/<pod>-jdk-thread-<ts>.txt  (override: $OUT_DIR)
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -35,7 +35,7 @@ require_cmd kubectl
 parse_common_args "$@"
 POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
 
-OUT_DIR="${OUT_DIR:-./dumps/threads}"
+OUT_DIR="${OUT_DIR:-$JDEBUG_DUMPS/threads}"
 ensure_dir "$OUT_DIR"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 DEBUG_CONTAINER="jstack-$(date +%s)"     # RFC 1123: lowercase alnum + '-' only

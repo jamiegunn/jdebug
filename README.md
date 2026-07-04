@@ -56,6 +56,11 @@ first.
 
 Every command takes `-n/--namespace`, `-l/--selector`, `--container`, `--help`.
 
+Captures (thread/heap dumps, snapshots) land under the kit's own `dumps/`
+directory — git-ignored, one findable place regardless of where you ran the
+command from. Override per run with `$OUT_DIR`, or move the root with
+`$JDEBUG_DUMPS`.
+
 ## Target selection
 
 Defaults come from flags, then env, then built-ins:

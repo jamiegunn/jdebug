@@ -202,7 +202,7 @@ info "JVM PID inside pod: $JVM_PID"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 case "$ACTION" in
     threads)
-        OUT_DIR="${OUT_DIR:-./dumps/threads}"
+        OUT_DIR="${OUT_DIR:-$JDEBUG_DUMPS/threads}"
         ensure_dir "$OUT_DIR"
         LOCAL_PATH="$OUT_DIR/${POD}-jattach-thread-$TS.txt"
         info "running jattach jcmd 'Thread.print -l' on PID $JVM_PID"
@@ -211,7 +211,7 @@ case "$ACTION" in
         info "wrote $LOCAL_PATH ($(wc -l <"$LOCAL_PATH") lines)"
         ;;
     heap)
-        OUT_DIR="${OUT_DIR:-./dumps/heap}"
+        OUT_DIR="${OUT_DIR:-$JDEBUG_DUMPS/heap}"
         ensure_dir "$OUT_DIR"
         REMOTE_PATH="/tmp/heap-jattach-$TS.hprof"
         LOCAL_PATH="$OUT_DIR/${POD}-jattach-heap-$TS.hprof"

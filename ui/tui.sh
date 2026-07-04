@@ -107,7 +107,7 @@ wiz_oom() {
     wiz_say "heap low, RSS high → off-heap: metaspace / direct / native (NMT)"
     confirm "capture a HEAP DUMP now? (pauses the JVM)" && run "$DBG" heap --confirm
     confirm "capture native memory (NMT) via jattach?" && run "$DBG" jcmd "VM.native_memory summary"
-    wiz_say "Next → ./dumps/heap/*.hprof in Eclipse MAT (Leak Suspects); NMT shows off-heap growth."
+    wiz_say "Next → $JDEBUG_DUMPS/heap/*.hprof in Eclipse MAT (Leak Suspects); NMT shows off-heap growth."
 }
 wiz_slow() {
     wiz_hd "Slow / hung / high latency"
@@ -115,7 +115,7 @@ wiz_slow() {
     run "$DBG" threads
     wiz_say "And health — a DOWN subsystem (db/mq/redis) explains stalls:"
     run "$DBG" health
-    wiz_say "Next → feed ./dumps/threads/*.txt to fastthread.io (flags deadlocks & identical stacks)."
+    wiz_say "Next → feed $JDEBUG_DUMPS/threads/*.txt to fastthread.io (flags deadlocks & identical stacks)."
 }
 wiz_cpu() {
     wiz_hd "High CPU / HPA scaling"
@@ -144,7 +144,7 @@ wiz_all() {
     wiz_hd "Not sure — capture everything"
     wiz_say "Full offline bundle: threads + health + memory + jcmd (+ optional heap)."
     if confirm "include a HEAP DUMP? (pauses the JVM)"; then run "$DBG" snapshot --heap --confirm; else run "$DBG" snapshot; fi
-    wiz_say "Next → ./dumps/snapshot-* : MAT (hprof) · fastthread.io (threads.txt) · editor (jcmd)."
+    wiz_say "Next → $JDEBUG_DUMPS/snapshot-* : MAT (hprof) · fastthread.io (threads.txt) · editor (jcmd)."
 }
 wizard() {
     while true; do

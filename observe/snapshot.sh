@@ -5,7 +5,7 @@
 # Everything an offline analysis (Eclipse MAT, VisualVM, fastthread.io) or a
 # colleague needs, captured in one command while the incident is live.
 #
-# Collects into ./dumps/snapshot-<ts>/ :
+# Collects into <kit>/dumps/snapshot-<ts>/ (override: $OUT_DIR) :
 #   pod.txt              kubectl describe pod (recent events at the bottom)
 #   health.json          /actuator/health
 #   metrics.json         /actuator/metrics index
@@ -63,7 +63,7 @@ fi
 
 POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
-SNAP="${OUT_DIR:-./dumps}/snapshot-$TS"
+SNAP="${OUT_DIR:-$JDEBUG_DUMPS}/snapshot-$TS"
 ensure_dir "$SNAP"
 
 PASS=0; FAIL=0
