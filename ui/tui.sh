@@ -94,6 +94,53 @@ local_settings() {
     export ACTUATOR_BASE JATTACH_BIN
 }
 
+# --- jattach staging (local modes) -------------------------------------------
+# jdebug-local auto-falls back to jattach when the actuator is unreachable, but
+# only if the binary already sits at $JATTACH_BIN — being a one-file in-pod
+# tool, it never downloads anything itself. THIS process, though, runs where
+# there usually IS egress (especially bare metal), so the menu can fetch it.
+stage_jattach_local() {
+    if [[ -x "$JATTACH_BIN" ]]; then printf '  jattach already staged at %s\n' "$JATTACH_BIN"; return 0; fi
+    local ver="${JATTACH_VERSION:-v2.2}" asset
+    case "$(uname -s)-$(uname -m)" in
+        Linux-x86_64|Linux-amd64)  asset="jattach-linux-x64.tgz" ;;
+        Linux-aarch64|Linux-arm64) asset="jattach-linux-arm64.tgz" ;;
+        Darwin-*)                  asset="jattach-macos.zip" ;;   # universal binary; bsdtar extracts zip
+        *) err "no prebuilt jattach for $(uname -s)/$(uname -m) — place one at $JATTACH_BIN yourself"; return 1 ;;
+    esac
+    local cache="$JDEBUG_CACHE_DIR/jattach-$(uname -s)-$(uname -m)-$ver"
+    if [[ ! -f "$cache" ]]; then
+        ensure_dir "$JDEBUG_CACHE_DIR"
+        local url="https://github.com/jattach/jattach/releases/download/$ver/$asset"
+        local tmp; tmp="$(mktemp -d -t jattach.XXXXXX)"
+        info "downloading $url"
+        # tar -xf auto-detects gzip (GNU + bsd) and, on macOS, zip (bsdtar).
+        { if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$tmp/$asset" "$url"; else wget -qO "$tmp/$asset" "$url"; fi; } \
+            && tar -xf "$tmp/$asset" -C "$tmp" && mv "$tmp/jattach" "$cache" && chmod +x "$cache"
+        if [[ ! -f "$cache" ]]; then
+            err "download/unpack failed — fetch $url yourself and place the binary at $JATTACH_BIN"
+            rm -rf "$tmp"; return 1
+        fi
+        rm -rf "$tmp"
+        info "cached at $cache"
+    fi
+    if cp "$cache" "$JATTACH_BIN" && chmod +x "$JATTACH_BIN"; then
+        info "staged jattach at $JATTACH_BIN"
+    else
+        err "cannot write $JATTACH_BIN — point at the cache instead: settings (s) → jattach binary → $cache"
+        return 1
+    fi
+}
+# Pre-flight for local captures: when the actuator is down AND jattach (the
+# automatic fallback) is missing, the capture is doomed — say so and offer the
+# download BEFORE running it, instead of failing with "stage it first".
+jattach_fallback_check() {
+    [[ -x "$JATTACH_BIN" ]] && return 0
+    sh "$LOCAL" health >/dev/null 2>&1 && return 0
+    printf '  %sactuator not answering at %s and jattach is not staged — this capture will fail.%s\n' "$YL" "$ACTUATOR_BASE" "$OFF"
+    confirm "download jattach now (~80 KB, github.com/jattach) so the fallback works?" && stage_jattach_local
+}
+
 # --- guided diagnosis wizard (remote mode) ----------------------------------
 # Each symptom maps to a diagnostic recipe: explain the plan, run the right
 # capture sequence against the current target, then name the next step.
@@ -199,7 +246,8 @@ menu_local() {
    ${GN}3${OFF} memory anatomy           ${GN}6${OFF} jcmd … ${DIM}(needs jattach)${OFF}
 
   ${B}SNAPSHOT${OFF}                    ${B}UTILITIES${OFF}
-   ${GN}7${OFF} offline bundle           ${GN}s${OFF} settings   ${GN}m${OFF} mode   ${GN}q${OFF} quit
+   ${GN}7${OFF} offline bundle           ${GN}i${OFF} stage jattach   ${GN}s${OFF} settings
+                                ${GN}m${OFF} mode   ${GN}q${OFF} quit
 EOF
     printf '\n  %s> %s' "$B" "$OFF"
 }
@@ -231,11 +279,15 @@ dispatch_local() {
     case "$1" in
         1)  run sh "$LOCAL" health ;;
         2)  run sh "$LOCAL" metrics ;;
-        3)  run sh "$LOCAL" memory ;;
-        4)  run sh "$LOCAL" threads ;;
-        5)  confirm "heap dump PAUSES the JVM (destructive in production) — proceed?" && run sh "$LOCAL" heap --confirm ;;
-        6)  printf '  jcmd command (e.g. GC.heap_info, VM.native_memory summary): '; read -r jc; [[ -n "$jc" ]] && run sh "$LOCAL" jcmd "$jc" ;;
-        7)  if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run sh "$LOCAL" snapshot --heap; else run sh "$LOCAL" snapshot; fi ;;
+        3)  jattach_fallback_check; run sh "$LOCAL" memory ;;
+        4)  jattach_fallback_check; run sh "$LOCAL" threads ;;
+        5)  jattach_fallback_check
+            confirm "heap dump PAUSES the JVM (destructive in production) — proceed?" && run sh "$LOCAL" heap --confirm ;;
+        6)  [[ -x "$JATTACH_BIN" ]] || { confirm "jcmd REQUIRES jattach and it is not staged — download now (~80 KB)?" && stage_jattach_local; }
+            printf '  jcmd command (e.g. GC.heap_info, VM.native_memory summary): '; read -r jc; [[ -n "$jc" ]] && run sh "$LOCAL" jcmd "$jc" ;;
+        7)  jattach_fallback_check
+            if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run sh "$LOCAL" snapshot --heap; else run sh "$LOCAL" snapshot; fi ;;
+        i|I) run stage_jattach_local ;;
         s|S) local_settings ;;
         m|M) choose_mode ;;
         q|Q|"") clear 2>/dev/null; exit 0 ;;

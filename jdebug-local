@@ -53,7 +53,9 @@ http_get() {
 need_jattach() {
     [ -x "$JATTACH_BIN" ] && return 0
     err "jattach not found at $JATTACH_BIN."
-    err "Stage it first — from OUTSIDE the pod: jdebug install-jattach   (or kubectl cp a jattach binary to $JATTACH_BIN)."
+    err "Stage it first:"
+    err "  in a pod      → from OUTSIDE: jdebug install-jattach  (or kubectl cp a binary to $JATTACH_BIN)"
+    err "  bare metal    → github.com/jattach/jattach releases → $JATTACH_BIN  (the jdebug menu can do this: option i)"
     exit 3
 }
 
@@ -73,6 +75,7 @@ actuator_fail() {
     if [ -n "${1:-}" ]; then
         err "  → or, if this app exposes no actuator at all, capture via jattach (needs none):"
         err "        jdebug-local jcmd \"$1\""
+        err "    (jattach must be staged at $JATTACH_BIN first — see: jdebug-local help jcmd)"
     fi
     exit 1
 }
