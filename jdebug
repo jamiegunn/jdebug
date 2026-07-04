@@ -104,6 +104,14 @@ capture() {
     return 1
 }
 
+# Preflight: every cluster-touching command checks connectivity first and
+# explains failures in plain language (check_cluster, lib/common.sh) rather
+# than surfacing raw kubectl TLS/connection noise mid-command.
+case "$cmd" in
+    status|health|top|metrics|threads|heap|jcmd|memory|snapshot|logs|log-level|install-jattach|push-local)
+        check_cluster || exit 3 ;;
+esac
+
 case "$cmd" in
     tui|menu|"")     exec "$D/ui/tui.sh" ;;
     wizard|guide)    exec "$D/ui/tui.sh" wizard ;;
@@ -195,6 +203,7 @@ case "$cmd" in
     heap/*.hprof      Eclipse MAT → File → Open Heap Dump → run "Leak Suspects"
     snapshot-*/       start with memory-report.txt and threads.txt; the jcmd-*.txt
                       files hold GC + native-memory detail
+    session-*.log     transcript of everything you ran in the menu (and its output)
 
   ⚠ Heap dumps contain whatever the app had in memory — possibly real user data.
     Treat them like production data; delete them when the investigation is done.

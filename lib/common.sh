@@ -130,3 +130,35 @@ resolve_one_pod() {
 ensure_dir() {
     mkdir -p "$1" || { err "cannot create directory: $1"; exit 1; }
 }
+
+# check_cluster — is the kube context actually answering? If not, translate the
+# usual kubectl failure modes into plain language and a likely fix, instead of
+# letting every later kubectl call spew TLS stack traces and memcache spam.
+# (/version is readable by anyone, so this works with any RBAC.)
+check_cluster() {
+    local out ctx
+    out="$(kubectl get --raw=/version --request-timeout=4s 2>&1 >/dev/null)" && return 0
+    ctx="$(kubectl config current-context 2>/dev/null || true)"
+    err "can't reach the Kubernetes cluster  (context: ${ctx:-<none set>})"
+    case "$out" in
+        *x509*|*certificate*)
+            err "  why: the cluster's TLS certificate isn't trusted. This almost always means the"
+            err "       cluster was recreated/restarted and your saved kubeconfig credentials went"
+            err "       stale — very common with Rancher Desktop, k3s, minikube, and kind."
+            err "  fix: restart the local cluster app (it rewrites the kubeconfig), or switch to a"
+            err "       working context:  kubectl config use-context <name>"
+            err "       (in the jdebug menu, press t — it lists your contexts and switches for you)" ;;
+        *"connection refused"*|*"i/o timeout"*|*"no such host"*|*"Unable to connect"*|*"context deadline"*)
+            err "  why: nothing answered at the cluster's address — it's off, asleep, or unreachable."
+            err "  fix: start the cluster (Rancher/Docker Desktop, VPN for remote clusters), or"
+            err "       switch to a context that is up (menu: t · shell: kubectl config use-context)" ;;
+        *"current-context"*|*"no configuration"*|*"Missing or incomplete"*)
+            err "  why: kubectl has no context selected, so it doesn't know which cluster to talk to."
+            err "  fix: pick one:  kubectl config use-context <name>   (list: kubectl config get-contexts)"
+            err "       or point KUBECONFIG at the right file." ;;
+        *)
+            err "  kubectl's own explanation (first lines):"
+            printf '%s\n' "$out" | grep -v '^E[0-9]' | head -3 | sed 's/^/    /' >&2 ;;
+    esac
+    return 1
+}

@@ -21,6 +21,36 @@ POD_PIN=""                              # mode 1: '' = auto (first match); 't' c
 : "${JATTACH_BIN:=/tmp/jattach}";                     export JATTACH_BIN
 MODE="${JDEBUG_MODE:-}"
 
+# Everything a command prints is also written here, so nothing is ever lost
+# to a redraw — the path is shown at every pause and on quit.
+SESSION_LOG="$JDEBUG_DUMPS/session-$(date +%Y%m%d-%H%M%S).log"
+
+# Ctrl-C stops the running command (e.g. a streaming `logs`) and returns to
+# the menu instead of killing the whole TUI.
+trap 'printf "\n"' INT
+
+# The screen is cleared ONCE at startup. After that everything scrolls, so
+# results stay visible above the next menu and in the terminal's scrollback.
+CLEAR_NEXT=1
+maybe_clear() {
+    if [[ -n "$CLEAR_NEXT" ]]; then clear 2>/dev/null || printf '\n\n'; CLEAR_NEXT=""
+    else printf '\n'; fi
+}
+
+# Cached cluster reachability for the header (probed at most every 20s so
+# menu redraws stay snappy; a target change forces a re-probe).
+CLUSTER_OK="" CLUSTER_TS=-999
+cluster_probe() {
+    (( SECONDS - CLUSTER_TS < 20 )) && return
+    CLUSTER_TS=$SECONDS
+    if kubectl get --raw=/version --request-timeout=3s >/dev/null 2>&1; then CLUSTER_OK=1; else CLUSTER_OK=""; fi
+}
+
+bye() {
+    [[ -f "$SESSION_LOG" ]] && printf '\n%stranscript of everything from this session: %s%s\n' "$DIM" "$SESSION_LOG" "$OFF"
+    exit 0
+}
+
 # --- colors (respect NO_COLOR / non-tty) -----------------------------------
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
     B=$'\033[1m'; DIM=$'\033[2m'; CY=$'\033[36m'; GN=$'\033[32m'; YL=$'\033[33m'; RD=$'\033[31m'; OFF=$'\033[0m'
@@ -30,17 +60,24 @@ box() { printf '%s╔═══════════════════�
         printf '%s║  %-60s║%s\n' "$B" "$1" "$OFF"
         printf '%s╚══════════════════════════════════════════════════════════════╝%s\n' "$B" "$OFF"; }
 hr() { printf '%s────────────────────────────────────────────────────────────────%s\n' "$DIM" "$OFF"; }
-pause() { printf '\n%sPress Enter to return to the menu…%s ' "$DIM" "$OFF"; read -r _ || exit 0; }
+pause() {
+    printf '\n%sPress Enter for the menu — this output stays in your scrollback and is saved to%s\n' "$DIM" "$OFF"
+    printf '%s%s%s ' "$DIM" "$SESSION_LOG" "$OFF"; read -r _ || bye
+}
 confirm() { printf '%s%s%s [y/N] ' "$YL" "$1" "$OFF"; local a; read -r a || return 1; [[ "$a" == y || "$a" == Y || "$a" == yes ]]; }
 run() {
-    printf '\n%s$ %s%s\n\n' "$CY" "$*" "$OFF"; "$@"; local rc=$?
+    printf '\n%s$ %s%s\n\n' "$CY" "$*" "$OFF"
+    mkdir -p "$(dirname "$SESSION_LOG")" 2>/dev/null
+    printf '\n$ %s\n' "$*" >> "$SESSION_LOG" 2>/dev/null
+    "$@" 2>&1 | tee -a "$SESSION_LOG"
+    local rc=${PIPESTATUS[0]}
     if [[ $rc -eq 0 ]]; then printf '\n%s✓ done%s\n' "$GN" "$OFF"
     else printf '\n%s✗ that didn'\''t work (exit %s) — the messages above say why and what to try next%s\n' "$RD" "$rc" "$OFF"; fi
     return $rc
 }
 
 choose_mode() {
-    clear 2>/dev/null || printf '\n\n'
+    maybe_clear
     box "jdebug - where is the JVM you want to debug?"
     printf '\n'
     printf '   %s1%s  %sRemote%s      operator machine → %skubectl exec%s into a pod  %s(needs kubectl + a context)%s\n' "$GN" "$OFF" "$B" "$OFF" "$CY" "$OFF" "$DIM" "$OFF"
@@ -50,17 +87,21 @@ choose_mode() {
     printf '  %sNote: this menu needs bash. A stock JRE/busybox pod has none — for those, run the%s\n' "$YL" "$OFF"
     printf '  %ssingle-file  jdebug-local  CLI in the pod instead:  sh /tmp/jdebug-local help%s\n' "$YL" "$OFF"
     printf '\n  %s> %s' "$B" "$OFF"; local m; read -r m
-    case "$m" in 1|2|3) MODE="$m" ;; q|Q) clear 2>/dev/null; exit 0 ;; *) MODE=1 ;; esac
+    case "$m" in 1|2|3) MODE="$m" ;; q|Q) bye ;; *) MODE=1 ;; esac
 }
 mode_label() { case "$MODE" in 1) echo "remote · kubectl → pod";; 2) echo "in-pod · localhost";; 3) echo "bare metal · localhost";; esac; }
 
 # --- headers ----------------------------------------------------------------
 header_remote() {
-    clear 2>/dev/null || printf '\n\n'
+    maybe_clear
     box "JVM debug kit - remote (kubectl)"
     local ctx; ctx="$(kubectl config current-context 2>/dev/null)"
+    cluster_probe
+    local reach
+    if [[ -n "$CLUSTER_OK" ]]; then reach="${GN}✓ cluster reachable${OFF}"
+    else reach="${RD}✗ can't connect — any command will explain why + the fix (or press t to switch)${OFF}"; fi
     printf '  %smode%s      %s  %s(m to switch)%s\n' "$B" "$OFF" "$(mode_label)" "$DIM" "$OFF"
-    printf '  %scontext%s   %s%s%s\n' "$B" "$OFF" "$GN" "${ctx:-<none — is KUBECONFIG set?>}" "$OFF"
+    printf '  %scontext%s   %s%s%s  %s\n' "$B" "$OFF" "$GN" "${ctx:-<none — is KUBECONFIG set?>}" "$OFF" "$reach"
     printf '  %starget%s    namespace  %s%s%s\n' "$B" "$OFF" "$GN" "$NAMESPACE" "$OFF"
     printf '            selector   %s%s%s\n' "$GN" "$SELECTOR" "$OFF"
     printf '            container  %s%s%s\n' "$GN" "$APP_CONTAINER" "$OFF"
@@ -72,7 +113,7 @@ header_remote() {
     hr
 }
 header_local() {
-    clear 2>/dev/null || printf '\n\n'
+    maybe_clear
     box "JVM debug kit - local (no kubectl)"
     local jat="not staged"; [[ -x "$JATTACH_BIN" ]] && jat="ok"
     printf '  %smode%s      %s  %s(m to switch)%s\n' "$B" "$OFF" "$(mode_label)" "$DIM" "$OFF"
@@ -93,11 +134,39 @@ ask_via() {
     printf '  [Enter] auto (recommended) / [o] actuator / [j] jattach / [d] jdk: '
     local v; read -r v; case "$v" in j|J) VIA_FLAG="--via jattach" ;; d|D) VIA_FLAG="--via jdk" ;; o|O) VIA_FLAG="--via actuator" ;; *) VIA_FLAG="" ;; esac; }
 retarget() {
-    printf '  namespace       [%s]: ' "$NAMESPACE";     local v; read -r v; [[ -n "$v" ]] && NAMESPACE="$v"
+    # Context first — everything else depends on which cluster we're talking to.
+    local ctxs cur v
+    ctxs="$(kubectl config get-contexts -o name 2>/dev/null)"
+    cur="$(kubectl config current-context 2>/dev/null)"
+    if [[ -n "$ctxs" ]]; then
+        printf '\n  %sWhich cluster? (kube contexts on this machine)%s\n' "$B" "$OFF"
+        local i=1 c
+        while IFS= read -r c; do
+            [[ -z "$c" ]] && continue
+            if [[ "$c" == "$cur" ]]; then printf '   %s%d%s  %s  %s(current)%s\n' "$GN" "$i" "$OFF" "$c" "$DIM" "$OFF"
+            else printf '   %s%d%s  %s\n' "$GN" "$i" "$OFF" "$c"; fi
+            i=$((i+1))
+        done <<< "$ctxs"
+        printf '  context [Enter keeps %s]: ' "${cur:-none}"; read -r v
+        if [[ "$v" =~ ^[0-9]+$ ]] && (( v >= 1 && v < i )); then
+            local newctx; newctx="$(printf '%s\n' "$ctxs" | sed -n "${v}p")"
+            if [[ -n "$newctx" && "$newctx" != "$cur" ]]; then
+                printf '  %sthis runs `kubectl config use-context %s` — it becomes your kubectl default in every terminal%s\n' "$YL" "$newctx" "$OFF"
+                if confirm "switch to $newctx?"; then
+                    kubectl config use-context "$newctx" >/dev/null 2>&1 && printf '  switched to %s%s%s\n' "$GN" "$newctx" "$OFF"
+                    CLUSTER_TS=-999   # re-probe reachability for the header
+                fi
+            fi
+        fi
+    else
+        printf '  %sno kube contexts found — set KUBECONFIG or create one, then come back%s\n' "$YL" "$OFF"
+    fi
+    printf '  namespace       [%s]: ' "$NAMESPACE";     read -r v; [[ -n "$v" ]] && NAMESPACE="$v"
     printf '  label selector  [%s]: ' "$SELECTOR";      read -r v; [[ -n "$v" ]] && SELECTOR="$v"
     printf '  container       [%s]: ' "$APP_CONTAINER"; read -r v; [[ -n "$v" ]] && APP_CONTAINER="$v"
     printf '  actuator base   [%s]: ' "$ACTUATOR_BASE"; read -r v; [[ -n "$v" ]] && ACTUATOR_BASE="$v"
     export NAMESPACE SELECTOR APP_CONTAINER ACTUATOR_BASE
+    CLUSTER_TS=-999   # namespace/selector may point at a different cluster state — re-probe
     pick_pod
 }
 
@@ -270,7 +339,7 @@ wiz_all() {
 }
 wizard() {
     while true; do
-        clear 2>/dev/null || printf '\n\n'
+        maybe_clear
         box "Guided diagnosis - what are you seeing?"
         printf '\n'
         printf '   %s1%s  Pod %sOOMKilled%s / restarts on memory\n'   "$GN" "$OFF" "$B" "$OFF"
@@ -359,9 +428,10 @@ dispatch_remote() {
         p|P) run "$DBG" push-local ${POD_PIN:+"$POD_PIN"} ;;
         t|T) retarget ;;
         m|M) choose_mode ;;
-        q|Q|"") clear 2>/dev/null; exit 0 ;;
-        *) return 1 ;;
+        q|Q) bye ;;
+        *) return 1 ;;   # unknown key or bare Enter: just show the menu again
     esac
+    return 0   # a FAILED action must still pause so its error stays readable
 }
 dispatch_local() {
     case "$1" in
@@ -380,14 +450,15 @@ dispatch_local() {
         i|I) run stage_jattach_local ;;
         s|S) local_settings ;;
         m|M) choose_mode ;;
-        q|Q|"") clear 2>/dev/null; exit 0 ;;
-        *) return 1 ;;
+        q|Q) bye ;;
+        *) return 1 ;;   # unknown key or bare Enter: just show the menu again
     esac
+    return 0   # a FAILED action must still pause so its error stays readable
 }
 
 # --- main loop --------------------------------------------------------------
 # `tui.sh wizard` (via `jdebug wizard`) jumps straight into the guided flow.
-if [[ "${1:-}" == wizard ]]; then MODE=1; wizard; clear 2>/dev/null; exit 0; fi
+if [[ "${1:-}" == wizard ]]; then MODE=1; wizard; bye; fi
 [[ -n "$MODE" ]] || choose_mode
 while true; do
     if [[ "$MODE" == 1 ]]; then menu_remote; read -r choice || exit 0; dispatch_remote "$choice" || continue
