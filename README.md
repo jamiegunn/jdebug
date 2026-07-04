@@ -36,6 +36,7 @@ jdebug health                                  # actuator health + per-subsystem
 jdebug status                                  # pod status + events
 jdebug top                                     # top pods + HPA
 jdebug memory                                  # cgroup RSS vs JVM heap/non-heap, reconciled
+jdebug metrics [name]                          # metric names, or one live value (trend by re-running)
 jdebug threads   [--via actuator|jattach|jdk]  # thread dump (default: actuator)
 jdebug heap      [--via actuator|jattach|jdk]  # heap dump — PAUSES the JVM (needs --confirm)
 jdebug jcmd "GC.heap_info"                     # any jcmd via jattach

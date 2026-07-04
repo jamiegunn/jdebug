@@ -14,6 +14,8 @@
 #     status        pod status, restarts, recent events
 #     health        actuator health, incl. per-subsystem + liveness/readiness
 #     top           kubectl top pods + HPA state
+#     metrics       list JVM/process metric names, or one metric's live value:
+#                   metrics jvm.gc.pause — run twice to see a trend
 #     logs          stream logs from all replicas         (tail-logs.sh)
 #     log-level     runtime logger change: log-level <logger> <LEVEL>
 #
@@ -141,6 +143,27 @@ case "$cmd" in
         echo
         show_cmd kubectl -n "$NAMESPACE" get hpa
         kubectl -n "$NAMESPACE" get hpa 2>/dev/null || echo "  (no HPA in $NAMESPACE)"
+        ;;
+
+    metrics)
+        triage_parse
+        METRIC="${REMAINING_ARGS[0]:-}"
+        POD="$(resolve_one_pod "${REMAINING_ARGS[1]:-}")"
+        mfetch() { kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- sh -c "$(pod_fetch "$1")"; }
+        mfail() { err "actuator metrics not reachable at $ACTUATOR_BASE in pod $POD (wrong port/path? secured?) — try --actuator-base"; exit 1; }
+        if [[ -n "$METRIC" ]]; then
+            show_cmd "kubectl -n $NAMESPACE exec $POD -c $APP_CONTAINER -- sh -c '<curl-or-wget> $ACTUATOR_BASE/metrics/$METRIC'"
+            if command -v python3 >/dev/null 2>&1; then
+                mfetch "$ACTUATOR_BASE/metrics/$METRIC" | python3 -m json.tool || mfail
+            else
+                mfetch "$ACTUATOR_BASE/metrics/$METRIC" || mfail; echo
+            fi
+        else
+            show_cmd "kubectl -n $NAMESPACE exec $POD -c $APP_CONTAINER -- sh -c '<curl-or-wget> $ACTUATOR_BASE/metrics'"
+            mfetch "$ACTUATOR_BASE/metrics" | tr ',' '\n' | sed -n 's/.*"\(jvm[^"]*\|process[^"]*\|system[^"]*\)".*/  \1/p' | sort -u || mfail
+            echo
+            echo "show one:  jdebug metrics <name>   (e.g. jvm.gc.pause, jvm.memory.used, process.cpu.usage)"
+        fi
         ;;
 
     threads)  capture threads ;;

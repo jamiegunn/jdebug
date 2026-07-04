@@ -16,6 +16,7 @@ set +e   # interactive loop — never die on a failed action
 DBG="$SCRIPTS_ROOT/jdebug"              # mode 1 backend (kubectl)
 LOCAL="$SCRIPTS_ROOT/jdebug-local"      # mode 2/3 backend (localhost, no kubectl)
 export NAMESPACE SELECTOR APP_CONTAINER # mode 1: 't' retargets; children inherit
+POD_PIN=""                              # mode 1: '' = auto (first match); 't' can pin one pod
 : "${ACTUATOR_BASE:=http://localhost:8080/actuator}"; export ACTUATOR_BASE
 : "${JATTACH_BIN:=/tmp/jattach}";                     export JATTACH_BIN
 MODE="${JDEBUG_MODE:-}"
@@ -63,6 +64,7 @@ header_remote() {
     printf '  %starget%s    namespace  %s%s%s\n' "$B" "$OFF" "$GN" "$NAMESPACE" "$OFF"
     printf '            selector   %s%s%s\n' "$GN" "$SELECTOR" "$OFF"
     printf '            container  %s%s%s\n' "$GN" "$APP_CONTAINER" "$OFF"
+    printf '            pod        %s%s%s\n' "$GN" "${POD_PIN:-<auto: first match — pick one under t>}" "$OFF"
     printf '  %sactuator%s  %s%s%s\n' "$B" "$OFF" "$GN" "$ACTUATOR_BASE" "$OFF"
     printf '            %s↳ press %st%s%s to change target/actuator · %sm%s%s to switch mode%s\n' "$DIM" "$OFF$GN" "$OFF" "$DIM" "$GN" "$OFF" "$DIM" "$OFF"
     printf '  %skubeconfig%s %s\n' "$B" "$OFF" "${KUBECONFIG:-"(default context)"}"
@@ -96,6 +98,41 @@ retarget() {
     printf '  container       [%s]: ' "$APP_CONTAINER"; read -r v; [[ -n "$v" ]] && APP_CONTAINER="$v"
     printf '  actuator base   [%s]: ' "$ACTUATOR_BASE"; read -r v; [[ -n "$v" ]] && ACTUATOR_BASE="$v"
     export NAMESPACE SELECTOR APP_CONTAINER ACTUATOR_BASE
+    pick_pod
+}
+
+# pick_pod — when several pods match, let the user pin one instead of silently
+# taking the first. Status + restart counts are shown because the restarting
+# pod is usually the one worth debugging.
+pick_pod() {
+    POD_PIN=""
+    local pods
+    pods="$(kubectl -n "$NAMESPACE" get pods ${SELECTOR:+-l "$SELECTOR"} \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"  "}{.status.phase}{"  restarts="}{.status.containerStatuses[0].restartCount}{"\n"}{end}' 2>/dev/null)"
+    if [[ -z "$pods" ]]; then
+        printf '  %sno pods match this target right now — captures will say so too. Check namespace/selector.%s\n' "$YL" "$OFF"
+        return
+    fi
+    local n; n="$(printf '%s\n' "$pods" | grep -c .)"
+    if [[ "$n" == 1 ]]; then
+        printf '  one pod matches — it will be used automatically: %s\n' "$(printf '%s\n' "$pods" | awk '{print $1}')"
+        return
+    fi
+    printf '\n  %s%s pods match. Which one? (a high restart count usually marks the sick one)%s\n' "$B" "$n" "$OFF"
+    local i=1 line
+    while IFS= read -r line; do
+        [[ -z "$line" ]] && continue
+        printf '   %s%d%s  %s\n' "$GN" "$i" "$OFF" "$line"
+        i=$((i+1))
+    done <<< "$pods"
+    printf '   %s0%s  auto — just use the first match each time\n' "$GN" "$OFF"
+    printf '  > '; local c; read -r c
+    if [[ "$c" =~ ^[0-9]+$ ]] && (( c >= 1 && c < i )); then
+        POD_PIN="$(printf '%s\n' "$pods" | sed -n "${c}p" | awk '{print $1}')"
+        printf '  pinned: every capture now targets %s%s%s (press t to change)\n' "$GN" "$POD_PIN" "$OFF"
+    else
+        printf '  auto — the first matching pod is used (you will be told which)\n'
+    fi
 }
 local_settings() {
     printf '  actuator base URL [%s]: ' "$ACTUATOR_BASE"; local v; read -r v; [[ -n "$v" ]] && ACTUATOR_BASE="$v"
@@ -160,7 +197,7 @@ wiz_hd()  { printf '\n  %s— %s —%s\n\n' "$B" "$*" "$OFF"; }
 # The remote CLI and jdebug-local share verbs (health/memory/threads/heap/
 # jcmd/snapshot); top and status need kubectl, so local modes skip them.
 wrun() {
-    if [[ "$MODE" == 1 ]]; then run "$DBG" "$@"
+    if [[ "$MODE" == 1 ]]; then run "$DBG" "$@" ${POD_PIN:+"$POD_PIN"}
     else case "$1" in
             top|status) wiz_say "(skipping '$1' — it needs kubectl, so it only works in remote mode)" ;;
             *) run sh "$LOCAL" "$@" ;;
@@ -196,13 +233,18 @@ wiz_cpu() {
     wrun threads
     wrun threads
     wrun top
+    wiz_say "And the JVM's own CPU number (0.0–1.0 of what it's allowed to use):"
+    wrun metrics process.cpu.usage
     wiz_say "Next → diff the two dumps; the persistently-RUNNABLE stack is eating your CPU."
     wiz_say "       Deeper: a 60s flight recording — jcmd \"JFR.start duration=60s filename=/tmp/r.jfr\""
 }
 wiz_leak() {
     wiz_hd "Memory creeping up (suspected leak)"
-    wiz_say "A leak = objects that survive and accumulate. The play: baseline heap dump now,"
-    wiz_say "a second one after more load, then diff them in Eclipse MAT."
+    wiz_say "A leak = objects that survive and accumulate. First, the number to watch"
+    wiz_say "(write down VALUE — re-run this option later; steady growth = leak):"
+    wrun metrics jvm.memory.used
+    wiz_say "The proof is two heap dumps: a baseline now, a second after more load,"
+    wiz_say "then diff them in Eclipse MAT."
     confirm "take the BASELINE heap dump now? (⚠ pauses the app)" && wrun heap --confirm
     wiz_say "Next → let the app run/take traffic, come back, re-run this option for dump #2,"
     wiz_say "       then MAT → open both → 'compare to another heap dump' (dominator trees)."
@@ -212,8 +254,11 @@ wiz_gc() {
     wiz_say "Checking how full the heap is and how the collector is coping:"
     wrun jcmd "GC.heap_info"
     wrun memory
-    wiz_say "Next → pauses climbing while the heap stays near-full = allocation pressure or"
-    wiz_say "       a leak → take a heap dump (option 4 here, or the OOM flow) and open in MAT."
+    wiz_say "The GC's own scorecard — COUNT = collections so far, TOTAL_TIME = seconds spent paused:"
+    wrun metrics jvm.gc.pause
+    wiz_say "Trend it: note TOTAL_TIME, wait a minute under load, run this option again —"
+    wiz_say "if TOTAL_TIME grows fast while the heap stays near-full, GC is thrashing."
+    wiz_say "Next → that pattern = allocation pressure or a leak → heap dump (option 4) → Eclipse MAT."
 }
 wiz_all() {
     wiz_hd "Not sure — capture everything"
@@ -298,20 +343,20 @@ dispatch_remote() {
     case "$1" in
         w|W) wizard ;;
         1)  run "$DBG" status ;;
-        2)  run "$DBG" health ;;
+        2)  run "$DBG" health ${POD_PIN:+"$POD_PIN"} ;;
         3)  run "$DBG" top ;;
-        4)  run "$DBG" memory ;;
-        5)  ask_via; run "$DBG" threads $VIA_FLAG ;;
-        6)  ask_via; confirm "heap dump PAUSES the JVM (destructive in production) — proceed?" && run "$DBG" heap $VIA_FLAG --confirm ;;
-        7)  printf '  jcmd command (e.g. GC.heap_info, VM.native_memory summary): '; read -r jc; [[ -n "$jc" ]] && run "$DBG" jcmd "$jc" ;;
+        4)  run "$DBG" memory ${POD_PIN:+"$POD_PIN"} ;;
+        5)  ask_via; run "$DBG" threads $VIA_FLAG ${POD_PIN:+"$POD_PIN"} ;;
+        6)  ask_via; confirm "heap dump PAUSES the JVM (destructive in production) — proceed?" && run "$DBG" heap $VIA_FLAG --confirm ${POD_PIN:+"$POD_PIN"} ;;
+        7)  printf '  jcmd command (e.g. GC.heap_info, VM.native_memory summary): '; read -r jc; [[ -n "$jc" ]] && run "$DBG" jcmd "$jc" ${POD_PIN:+"$POD_PIN"} ;;
         8)  printf '  %sstreaming — Ctrl-C to stop%s\n' "$DIM" "$OFF"; run "$DBG" logs ;;
         9)  printf '  logger (e.g. com.example.debugdemo, ROOT): '; read -r lg
             printf '  level (TRACE|DEBUG|INFO|WARN|ERROR|OFF): '; read -r lv
             [[ -n "$lg" && -n "$lv" ]] && run "$DBG" log-level "$lg" "$lv" ;;
-        10) if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run "$DBG" snapshot --heap --confirm; else run "$DBG" snapshot; fi ;;
+        10) if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run "$DBG" snapshot --heap --confirm ${POD_PIN:+"$POD_PIN"}; else run "$DBG" snapshot ${POD_PIN:+"$POD_PIN"}; fi ;;
         d|D) run "$DBG" dumps ;;
-        i|I) run "$DBG" install-jattach ;;
-        p|P) run "$DBG" push-local ;;
+        i|I) run "$DBG" install-jattach ${POD_PIN:+"$POD_PIN"} ;;
+        p|P) run "$DBG" push-local ${POD_PIN:+"$POD_PIN"} ;;
         t|T) retarget ;;
         m|M) choose_mode ;;
         q|Q|"") clear 2>/dev/null; exit 0 ;;
