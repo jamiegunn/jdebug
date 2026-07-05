@@ -17,6 +17,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 type panelData struct {
@@ -30,7 +31,12 @@ type panelData struct {
 	MemPct     int // -1 unknown
 	CPUUse     string
 	CPULimit   string
-	HPA        string
+	HPAName    string // autoscale (HPA)
+	HPACur     int
+	HPAMax     int
+	HPAMin     int
+	HPAFailing bool
+	HPAReason  string // plain-language why it can't scale
 	HeapUsed   string // JVM heap, live
 	HeapMax    string
 	HeapVia    string // "actuator" or "jcmd" — which route answered
@@ -119,15 +125,63 @@ func fetchPanel(t target) tea.Cmd {
 			d.HeapUsed, d.HeapMax, d.HeapVia = jvmHeap(t)
 			d.ActuatorOK = d.HeapVia == "actuator"
 		}
-		if hpa := kenum("-n", t.Namespace, "get", "hpa", "--no-headers").items; len(hpa) > 0 {
-			// columns: NAME REFERENCE TARGETS MINPODS MAXPODS REPLICAS AGE —
-			// replicas is second-to-last (the last is AGE)
-			f := strings.Fields(hpa[0])
-			if len(f) >= 6 {
-				d.HPA = f[0] + " " + f[len(f)-2] + " replicas"
+		parseHPA(ctx, t.Namespace, &d)
+		return panelMsg(d)
+	}
+}
+
+type hpaJSON struct {
+	Items []struct {
+		Metadata struct {
+			Name string `json:"name"`
+		} `json:"metadata"`
+		Spec struct {
+			Min *int `json:"minReplicas"`
+			Max int  `json:"maxReplicas"`
+		} `json:"spec"`
+		Status struct {
+			Current    int `json:"currentReplicas"`
+			Conditions []struct {
+				Type    string `json:"type"`
+				Status  string `json:"status"`
+				Reason  string `json:"reason"`
+				Message string `json:"message"`
+			} `json:"conditions"`
+		} `json:"status"`
+	} `json:"items"`
+}
+
+// parseHPA fills the autoscale fields — current/max/min, whether it's at the
+// ceiling, and whether it's actually able to scale (ScalingActive) — so the
+// panel can say more than a bare replica count.
+func parseHPA(ctx context.Context, ns string, d *panelData) {
+	out, err := exec.CommandContext(ctx, "kubectl", "-n", ns, "get", "hpa", "-o", "json").Output()
+	if err != nil {
+		return
+	}
+	var hj hpaJSON
+	if json.Unmarshal(out, &hj) != nil || len(hj.Items) == 0 {
+		return
+	}
+	h := hj.Items[0]
+	d.HPAName = h.Metadata.Name
+	d.HPACur, d.HPAMax = h.Status.Current, h.Spec.Max
+	if h.Spec.Min != nil {
+		d.HPAMin = *h.Spec.Min
+	}
+	for _, c := range h.Status.Conditions {
+		if c.Type == "ScalingActive" && c.Status == "False" {
+			d.HPAFailing = true
+			// translate the common reasons into plain language
+			switch {
+			case strings.Contains(c.Reason, "Metric"), strings.Contains(c.Message, "metrics"):
+				d.HPAReason = "can't read metrics"
+			case strings.Contains(strings.ToLower(c.Reason), "invalid"):
+				d.HPAReason = "no valid rules"
+			default:
+				d.HPAReason = c.Reason
 			}
 		}
-		return panelMsg(d)
 	}
 }
 
@@ -256,6 +310,11 @@ func (m model) suggestions() []string {
 	} else if d.Restarts > 3 && d.LastReason != "OOMKilled" {
 		s = append(s, cWarn.Render(fmt.Sprintf("! %d restarts", d.Restarts))+cMuted.Render(" → ")+cKey.Render("w")+cMuted.Render(" diagnose"))
 	}
+	if d.HPAFailing {
+		s = append(s, cWarn.Render("! autoscale blind — "+d.HPAReason)+cMuted.Render(" → ")+cKey.Render("W"))
+	} else if d.HPAMax > 0 && d.HPACur >= d.HPAMax {
+		s = append(s, cWarn.Render("! at max replicas")+cMuted.Render(" → ")+cKey.Render("W")+cMuted.Render(" workload"))
+	}
 	if len(s) == 0 {
 		if len(m.caps) == 0 {
 			s = append(s, cMuted.Render("new here? ")+cKey.Render("w")+cMuted.Render(" — describe the symptom"))
@@ -275,6 +334,30 @@ func (m model) suggestions() []string {
 // --- render -------------------------------------------------------------------
 
 const panelW = 38
+
+// hpaLine renders the autoscale row: current/max (+ min), whether it's at the
+// ceiling, or — the incident-relevant bit — whether it can scale at all.
+// Returns (text, isWarning).
+func hpaLine(d panelData) (string, bool) {
+	if d.HPAName == "" {
+		return "no HPA — replicas are fixed", false
+	}
+	if d.HPAFailing {
+		reason := d.HPAReason
+		if reason == "" {
+			reason = "not active"
+		}
+		return "✗ can't scale — " + reason, true
+	}
+	s := fmt.Sprintf("%d/%d replicas", d.HPACur, d.HPAMax)
+	if d.HPAMin > 0 {
+		s += fmt.Sprintf(" · min %d", d.HPAMin)
+	}
+	if d.HPAMax > 0 && d.HPACur >= d.HPAMax {
+		return s + " · AT MAX", true // nowhere left to scale = a real signal
+	}
+	return s, false
+}
 
 // compactStatus is the narrow-terminal stand-in for the side panel: an
 // incident-checklist header — what's happening, then what to press — shown
@@ -353,6 +436,17 @@ func (m model) panelView(w, h int, trends bool) string {
 		if d.LastReason != "" {
 			rows = append(rows, line("last exit", d.LastReason, d.LastReason == "OOMKilled"))
 		}
+		// two groups, each labelled with where the number comes from, so a
+		// junior doesn't conflate container memory with JVM heap
+		groupRule := func(label, from string) string {
+			head := " " + cFaint.Render(label) + " " + cFaint.Render(from) + " "
+			fill := w - lipgloss.Width(head)
+			if fill < 3 {
+				fill = 3
+			}
+			return head + cRule.Render(strings.Repeat("─", fill))
+		}
+		rows = append(rows, groupRule("resource", "· container, from kubectl top"))
 		// "usage of limit" — usage from kubectl top, limit from the pod spec
 		mem := dash(d.MemUse)
 		if d.NoMetrics && d.MemUse == "" {
@@ -377,19 +471,24 @@ func (m model) panelView(w, h int, trends bool) string {
 			cpu = d.CPUUse + " used · no limit set"
 		}
 		rows = append(rows, line("cpu", cpu, false))
-		rows = append(rows, line("autoscale", dash(d.HPA), false))
+		hpaStr, hpaWarn := hpaLine(d)
+		rows = append(rows, line("autoscale", hpaStr, hpaWarn))
+
+		rows = append(rows, groupRule("jvm", "· inside the process"))
 		heap := d.HeapUsed
 		switch {
 		case heap != "" && d.HeapMax != "":
-			heap += " / " + d.HeapMax + "  via " + d.HeapVia
+			heap += " / " + d.HeapMax + " · via " + d.HeapVia
 		case heap != "":
-			heap += "  via " + d.HeapVia
+			heap += " · via " + d.HeapVia
 		case d.When.IsZero():
 			heap = "–"
+		case m.local.Jattach:
+			heap = "– no actuator; capture via jattach"
 		default:
-			heap = "– needs actuator or jcmd"
+			heap = "– no route (stage jattach: i)"
 		}
-		rows = append(rows, line("jvm heap", heap, false))
+		rows = append(rows, line("heap", heap, false))
 	} else {
 		rows = append(rows, line("actuator", strings.TrimPrefix(m.t.Actuator, "http://localhost"), false))
 		jat := "missing"

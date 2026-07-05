@@ -427,9 +427,49 @@ func TestPanelExplainsLimits(t *testing.T) {
 func TestHeapUnavailableExplainsItself(t *testing.T) {
 	m := readyModel()
 	m.panel.HeapUsed, m.panel.HeapMax, m.panel.HeapVia = "", "", ""
-	v := m.panelView(46, 20, false)
-	if !strings.Contains(v, "needs actuator or jcmd") {
-		t.Fatal("a missing heap value must say why and name the routes")
+	// no route and no jattach → name the next action, not a bare dash
+	m.local.Jattach = false
+	if v := m.panelView(46, 20, false); !strings.Contains(v, "stage jattach") {
+		t.Fatalf("a missing heap value must name the next action, got:\n%s", v)
+	}
+	// with jattach staged, the fallback route is named instead
+	m.local.Jattach = true
+	if !strings.Contains(m.panelView(46, 20, false), "via jattach") {
+		t.Fatal("with jattach staged, the heap row must point at the jattach route")
+	}
+}
+
+func TestPanelSeparatesResourceFromJVM(t *testing.T) {
+	m := readyModel()
+	v := ansiStrip(m.panelView(46, 24, false))
+	if !strings.Contains(v, "resource") || !strings.Contains(v, "container") {
+		t.Error("the resource group must say it's container-level (kubectl top)")
+	}
+	if !strings.Contains(v, "jvm") || !strings.Contains(v, "process") {
+		t.Error("the jvm group must say it's inside the process")
+	}
+	// resource group comes before the jvm group
+	if strings.Index(v, "resource") > strings.Index(v, "jvm ·") {
+		t.Error("resource usage should be listed above JVM usage")
+	}
+}
+
+func TestAutoscaleLine(t *testing.T) {
+	cases := []struct {
+		d        panelData
+		want     string
+		wantWarn bool
+	}{
+		{panelData{}, "no HPA", false},
+		{panelData{HPAName: "a", HPACur: 4, HPAMax: 6, HPAMin: 2}, "4/6 replicas · min 2", false},
+		{panelData{HPAName: "a", HPACur: 6, HPAMax: 6}, "AT MAX", true},
+		{panelData{HPAName: "a", HPAFailing: true, HPAReason: "can't read metrics"}, "can't scale — can't read metrics", true},
+	}
+	for _, c := range cases {
+		got, warn := hpaLine(c.d)
+		if !strings.Contains(got, c.want) || warn != c.wantWarn {
+			t.Errorf("hpaLine(%+v) = %q,%v — want contains %q,%v", c.d, got, warn, c.want, c.wantWarn)
+		}
 	}
 }
 
