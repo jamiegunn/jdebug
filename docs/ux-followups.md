@@ -169,6 +169,29 @@ Design points:
 - Support keyboard selection in addition to click-to-open.
 - Preserve sensitive-evidence warnings for heaps and logs.
 
+## Invalid heap capture recovery
+
+**Goal:** when a `.hprof` is actually an actuator error page, login response,
+JSON error, empty file, or truncated download, the tool should explain that as
+a capture-route problem rather than sending the user toward Eclipse MAT.
+
+Current capture code validates HPROF magic, but old/kept invalid files can still
+be analyzed later. Improve the whole path:
+
+- At capture time, keep validating `JAVA PROFILE` magic and leave bad files for
+  inspection without calling them valid evidence.
+- In `analyze`, classify safe first bytes where possible: HTML error page, JSON
+  actuator error, login page, 401/403/404 response, empty/truncated file.
+- Replace generic heap-next-step copy with exact recovery guidance for invalid
+  heaps: configure actuator credentials/base path, retry `jdebug heap --via
+  jattach --confirm`, or use `--via jdk` if the app cannot serve HTTP.
+- In the captures browser, mark invalid heap files so the user does not try to
+  open them in MAT.
+- In evidence summaries, separate invalid captures from usable evidence.
+
+Test fixtures should include bad magic, HTML, JSON, empty, and valid HPROF
+headers.
+
 ## Trends transparency
 
 **Goal:** make the trends pane understandable without reading source code.
