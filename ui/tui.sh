@@ -291,7 +291,7 @@ stage_jattach_local() {
         Darwin-*)                  asset="jattach-macos.zip" ;;   # universal binary; bsdtar extracts zip
         *) err "no prebuilt jattach for $(uname -s)/$(uname -m) — place one at $JATTACH_BIN yourself"; return 1 ;;
     esac
-    local cache="$JDEBUG_CACHE_DIR/jattach-$(uname -s)-$(uname -m)-$ver"
+    local cache; cache="$JDEBUG_CACHE_DIR/jattach-$(uname -s)-$(uname -m)-$ver"
     if [[ ! -f "$cache" ]]; then
         ensure_dir "$JDEBUG_CACHE_DIR"
         local url="https://github.com/jattach/jattach/releases/download/$ver/$asset"
