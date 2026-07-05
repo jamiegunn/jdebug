@@ -57,7 +57,14 @@ analyze_hprof() {
     local f="$1"
     hd "heap dump: $f"
     if ! head -c 12 "$f" 2>/dev/null | grep -q 'JAVA PROFILE'; then
-        flag "NOT a valid hprof (bad magic) — likely an error page was captured instead; retry with --via jattach"
+        flag "NOT a valid hprof (bad magic) — this file is not a heap dump, so Eclipse MAT can't open it"
+        local cls; cls="$(classify_capture "$f")"
+        [ -n "$cls" ] && say "$cls"
+        say "this is a CAPTURE-ROUTE problem, not a heap to analyze. Recover it:"
+        say "  · secured / disabled actuator → set auth (k in the target editor), or use a no-HTTP route:"
+        say "      jdebug heap --via jattach --confirm"
+        say "  · app too wedged to serve HTTP → jdebug heap --via jdk --confirm"
+        say "  · wrong actuator URL / base path → fix it in the target editor (g/a)"
         return
     fi
     say "valid hprof, $(du -h "$f" | cut -f1 | tr -d ' ')"

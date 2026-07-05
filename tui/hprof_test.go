@@ -132,3 +132,38 @@ func TestHprofRejectsGarbage(t *testing.T) {
 		t.Fatal("a non-hprof file must be rejected, not silently parsed")
 	}
 }
+
+func TestCapturesMarkInvalidHprof(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "good.hprof"), synthHprof(), 0o644)
+	os.WriteFile(filepath.Join(dir, "bad.hprof"),
+		[]byte("<!DOCTYPE html><html><head><title>Please sign in</title></head></html>"), 0o644)
+	msg := fetchCaps(".", dir)().(capsMsg)
+	byName := map[string]capEntry{}
+	for _, c := range msg.entries {
+		byName[c.Name] = c
+	}
+	if byName["good.hprof"].Invalid {
+		t.Fatal("a valid hprof must not be marked invalid")
+	}
+	if !byName["bad.hprof"].Invalid {
+		t.Fatal("an error-page .hprof must be marked invalid in the browser")
+	}
+	if h := capHint(byName["bad.hprof"]); !strings.Contains(h, "not a heap dump") {
+		t.Fatalf("invalid hprof hint must warn, got %q", h)
+	}
+}
+
+func TestClassifyHead(t *testing.T) {
+	cases := map[string]string{
+		"<!DOCTYPE html><html>login form password":  "login page",
+		`{"status":500,"error":"Internal Server"}`:  "JSON error",
+		"HTTP/1.1 401 Unauthorized":                 "HTTP error",
+		"":                                          "empty",
+	}
+	for in, want := range cases {
+		if got := classifyHead([]byte(in)); !strings.Contains(got, want) {
+			t.Errorf("classifyHead(%q) = %q, want contains %q", in, got, want)
+		}
+	}
+}

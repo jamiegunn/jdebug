@@ -118,8 +118,33 @@ assert_has "basic: uses curl -u from pod env vars" 'curl -fsS -u "$U:$P"'
 run_case bash -c 'source lib/common.sh; pod_fetch http://x/actuator/health'
 assert_not "no auth: no Authorization header when unset" "Authorization"
 # the secured-actuator failure guidance is present in the capture script
-run_case grep -c "set auth in the target editor" capture/actuator.sh
-assert_has "actuator failure points at auth setup" "2"
+run_case grep -q "set auth in the target editor" capture/actuator.sh
+assert_rc "actuator failure points at auth setup" 0
+
+# 401-vs-absent: a FAILED actuator fetch probes the HTTP status and names the
+# precise fix (secured → auth, absent → wrong path) instead of a catch-all
+MOCK_ACTUATOR=secured run_case env JDEBUG_DUMPS="$TMP/adump" ./capture/actuator.sh threads -n default pod-a
+assert_rc  "secured actuator: threads fails" 1
+assert_has "secured actuator: names 401 + auth fix" "secured (HTTP 401)"
+assert_has "secured actuator: offers the no-HTTP route" "via jattach"
+MOCK_ACTUATOR=absent run_case env JDEBUG_DUMPS="$TMP/adump" ./capture/actuator.sh heap --confirm -n default pod-a
+assert_rc  "absent actuator: heap fails" 1
+assert_has "absent actuator: names 404 + URL fix" "not found (HTTP 404)"
+# a 200 that isn't a heap dump (secured endpoint's login page) is classified,
+# not passed off as a real capture headed for Eclipse MAT
+MOCK_ACTUATOR=badpage run_case env JDEBUG_DUMPS="$TMP/adump" ./capture/actuator.sh heap --confirm -n default pod-a
+assert_rc  "badpage: heap capture rejected" 1
+assert_has "badpage: classified as an HTML login page" "HTML login page"
+assert_has "badpage: names the recovery route" "via jattach"
+rm -rf "$TMP/adump"
+
+# classify_capture: sniff a would-be dump and name what it actually is
+run_case bash -c 'source lib/common.sh; f=$(mktemp); printf "<!DOCTYPE html><html>login password" >"$f"; classify_capture "$f"; rm -f "$f"'
+assert_has "classify: HTML login page" "HTML login page"
+run_case bash -c 'source lib/common.sh; f=$(mktemp); printf "{\"status\":500,\"error\":\"x\"}" >"$f"; classify_capture "$f"; rm -f "$f"'
+assert_has "classify: JSON actuator error" "JSON error response"
+run_case bash -c 'source lib/common.sh; f=$(mktemp); : >"$f"; classify_capture "$f"; rm -f "$f"'
+assert_has "classify: empty/truncated file" "empty file"
 
 run_case ./jdebug top
 assert_has "top explains what near-limit means" "OOM risk"
@@ -227,6 +252,8 @@ assert_not "no cloud analyzers recommended" "fastthread"
 assert_has "health: DOWN component named" "failing component(s): db"
 assert_has "hprof: valid one sanity-checked" "valid hprof"
 assert_has "hprof: invalid one flagged" "NOT a valid hprof"
+assert_has "hprof: invalid classified, not sent to MAT" "raw HTTP error response"
+assert_has "hprof: invalid gives exact recovery route" "via jattach --confirm"
 assert_has "summary counts findings" "finding(s) flagged above"
 assert_has "analyze names the next move" "Next: chase the ⚠ findings"
 

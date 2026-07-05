@@ -136,6 +136,44 @@ pod_post_json() {
     echo "if command -v curl >/dev/null 2>&1; then curl -fsS -X POST -H 'Content-Type: application/json' -d '$2' '$1'; elif command -v wget >/dev/null 2>&1; then wget -qO- --header='Content-Type: application/json' --post-data='$2' '$1'; else echo 'error: neither curl nor wget exists in this container' >&2; exit 127; fi"
 }
 
+# pod_http_status <url> — emit an sh snippet that prints ONLY the HTTP status
+# code for <url> (best-effort), so a FAILED actuator fetch can be classified as
+# secured (401/403) vs absent (404) rather than a generic "it didn't work".
+# Prints 000 when no HTTP client can determine it. Applies $ACTUATOR_AUTH like
+# pod_fetch so a correctly-authed-but-missing endpoint still reads as 404.
+pod_http_status() {
+    local url="$1" ac; ac="$(_pod_auth curl)"
+    echo "if command -v curl >/dev/null 2>&1; then curl -s -o /dev/null -w '%{http_code}' ${ac}'$url' 2>/dev/null || echo 000; elif command -v wget >/dev/null 2>&1; then wget -S -O /dev/null '$url' 2>&1 | awk '/HTTP\/[0-9]/{c=\$2} END{print (c==\"\"?\"000\":c)}'; else echo 000; fi"
+}
+
+# classify_capture <file> — sniff the first bytes of a would-be dump and name
+# what it actually looks like, so a junior isn't sent to Eclipse MAT with an
+# error page. Echoes a one-line classification, or nothing when the content
+# looks like real binary/unknown data (no confident guess). Used at capture
+# time (a 200 that isn't a dump) and by analyze on kept-around bad files.
+classify_capture() {
+    local f="$1" head
+    if [ ! -s "$f" ]; then
+        echo "empty file (0 bytes) — the download returned nothing"
+        return
+    fi
+    # strip NULs so `case` globs work on binary-ish input; sniff the head only
+    head="$(head -c 512 "$f" 2>/dev/null | tr -d '\000')"
+    case "$head" in
+        *"<!DOCTYPE html"*|*"<!doctype html"*|*"<html"*|*"<HTML"*)
+            case "$head" in
+                *login*|*Login*|*password*|*Password*|*j_spring_security*|*"sign in"*|*"Sign In"*)
+                    echo "looks like an HTML login page — the endpoint is secured (you were redirected to a login)" ;;
+                *)  echo "looks like an HTML error page — not a heap dump" ;;
+            esac ;;
+        "{"*|*'"status"'*|*'"error"'*|*'"timestamp"'*|*'"message"'*)
+            echo "looks like a JSON error response (a Spring/actuator error) — not a heap dump" ;;
+        "HTTP/"*|*"401 Unauthorized"*|*"403 Forbidden"*|*"404 "*)
+            echo "looks like a raw HTTP error response — not a heap dump" ;;
+        *)  echo "" ;;
+    esac
+}
+
 # resolve_pods — pod names matching selector in namespace (empty selector = all).
 resolve_pods() {
     if [[ -n "$SELECTOR" ]]; then

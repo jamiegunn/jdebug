@@ -6,6 +6,12 @@ The current Bubble Tea TUI supports interstitials well, but the app uses several
 
 The goal is to make temporary UI states predictable: detail cards, confirmations, pickers, help, blocked-by views, output, and mouse interactions should share a small set of rules.
 
+Every interstitial should answer three questions before the operator acts:
+
+- **Where am I?** A clear title.
+- **Why am I here?** A one-sentence intent/description.
+- **What will happen if I continue?** The exact command(s), data source, or state change that will run.
+
 ## Current Patterns
 
 ### Appended overlays
@@ -99,6 +105,13 @@ esc/q back
 enter run/select        # only where applicable
 ```
 
+Each full-screen interstitial should include:
+
+- A title, for example `ACTUATOR AUTH`, `COMMAND DETAILS`, `BLOCKED BY`, or `CAPTURES`.
+- A short intent line, for example `Choose how jdebug should authenticate to secured actuator endpoints.`
+- The action that will happen on accept, including exact command(s) where applicable.
+- A risk/source/dependency summary when the action touches the pod, JVM, cluster API, credentials, or local files.
+
 ### 2. Inline overlays
 
 Use inline overlays for small, temporary decisions:
@@ -110,11 +123,30 @@ Use inline overlays for small, temporary decisions:
 
 These should render over the screen that launched them.
 
+Each inline overlay should include:
+
+- A title or label, not just a bare prompt.
+- A one-line intent, for example `Choose the capture route for this heap dump.`
+- The command that will be executed if confirmed, or the config/state that will change.
+- The cancel path, usually `esc cancels` or `any other key cancels` for same-key confirmations.
+
 Examples:
 
 - Confirm launched from menu -> menu + confirm.
 - Confirm launched from editor -> editor + confirm.
 - Confirm launched from detail card -> detail + confirm, if that flow exists.
+
+Example confirmation copy:
+
+```text
+RE-ROLL DEPLOYMENT
+
+Intent: restart every pod in the owning Deployment.
+Will run: jdebug restart --confirm
+Risk: state-changing; in-flight requests and in-memory state on old pods are lost.
+
+Press R again to confirm · esc cancels
+```
 
 ### 3. Detail before action
 
@@ -165,10 +197,152 @@ Acceptance rule:
 - Declining returns to the source screen with state intact.
 - Accepting runs the same command/callback as today.
 
+## Actuator Auth Interstitial Needs Clearer Guidance
+
+The target editor currently exposes actuator auth as a compact field (`k auth`) and an input prompt such as:
+
+```text
+actuator auth ref — bearer:ENV_VAR  or  basic:USER_VAR:PASS_VAR
+```
+
+That is technically correct, but it is confusing for an operator. It does not explain what value goes there, where to find it, or why jdebug wants an environment-variable reference instead of the secret itself.
+
+### UX problem
+
+An operator trying to secure actuator access needs answers to four questions:
+
+- What auth formats are supported?
+- Do I paste the token/password, or the name of an environment variable?
+- How do I find the right environment variable or Secret reference?
+- What should I do if I cannot find credentials?
+
+The current one-line prompt tries to answer too much at once and does not provide examples.
+
+### Proposed screen
+
+Make actuator auth a full interstitial or guided sub-screen from the target editor, not just a single input prompt.
+
+Suggested layout:
+
+```text
+ACTUATOR AUTH
+
+Intent: choose how jdebug authenticates to secured actuator endpoints.
+
+jdebug stores a REFERENCE, not the secret value.
+The token/password should already exist inside the pod as an environment variable
+or mounted secret. jdebug asks the pod to expand it when making the actuator call.
+
+Will affect:
+    future actuator calls such as health, metrics, heap via actuator, and log-level changes
+
+Will save:
+    a reference like bearer:MANAGEMENT_TOKEN or basic:ACTUATOR_USER:ACTUATOR_PASSWORD
+    in ~/.config/jdebug/target
+
+Choose one:
+
+    1  none
+         actuator is open on localhost, or you will use jattach instead
+
+    2  bearer token from pod env var
+         example: bearer:MANAGEMENT_TOKEN
+         sends:   Authorization: Bearer $MANAGEMENT_TOKEN
+
+    3  basic auth from pod env vars
+         example: basic:ACTUATOR_USER:ACTUATOR_PASSWORD
+         sends:   -u "$ACTUATOR_USER:$ACTUATOR_PASSWORD"
+
+How to find candidates:
+
+    safe:    W workload -> Environment / Secret references
+    shell:   T terminal -> env | grep -Ei 'actuator|management|spring|token|password'
+    k8s:     kubectl -n <ns> get deploy <name> -o yaml
+
+Do not paste secret values into jdebug. Use env var names only.
+
+esc back · enter save
+```
+
+### Examples to show in the UI
+
+Bearer token:
+
+```text
+If the pod has:
+    MANAGEMENT_TOKEN=<secret value>
+
+Enter:
+    bearer:MANAGEMENT_TOKEN
+```
+
+Basic auth:
+
+```text
+If the pod has:
+    ACTUATOR_USER=<username>
+    ACTUATOR_PASSWORD=<secret value>
+
+Enter:
+    basic:ACTUATOR_USER:ACTUATOR_PASSWORD
+```
+
+Spring-style env names the user might look for:
+
+```text
+MANAGEMENT_TOKEN
+ACTUATOR_TOKEN
+ACTUATOR_USER
+ACTUATOR_PASSWORD
+SPRING_SECURITY_USER_NAME
+SPRING_SECURITY_USER_PASSWORD
+MANAGEMENT_SERVER_PORT
+MANAGEMENT_ENDPOINTS_WEB_EXPOSURE_INCLUDE
+```
+
+These are only search hints, not guaranteed names.
+
+### Safe ways to obtain the reference
+
+Prefer sources that reveal names and references, not values:
+
+- Workload/runtime context view showing env var names and Secret/ConfigMap references.
+- Deployment YAML showing `env`, `envFrom`, `secretKeyRef`, and `configMapKeyRef`.
+- Pod shell `env` search only when the operator is allowed to inspect that pod.
+- Team runbook or deployment chart values.
+
+Do not encourage copying raw Secret values into jdebug config.
+
+### Fallback guidance
+
+If the operator cannot find actuator credentials, the screen should say:
+
+```text
+No actuator credentials? You can still capture JVM evidence without HTTP:
+    threads: t -> jattach
+    heap:    H -> jattach
+    jcmd:    j
+```
+
+This keeps the user moving instead of trapping them in auth setup.
+
+### Tests
+
+Add tests for the actuator-auth interstitial:
+
+- Opening `k auth` from the target editor shows examples for `bearer:ENV_VAR` and `basic:USER_VAR:PASS_VAR`.
+- The screen explicitly says jdebug stores references, not secret values.
+- The screen lists safe ways to find env var names.
+- Saving persists only the reference string.
+- Clearing auth sets the mode back to none.
+- The fallback text mentions jattach routes when actuator credentials are unavailable.
+
 ## Suggested Tests
 
 Add tests for the interaction contract, not just rendering:
 
+- Every interstitial has a title and an intent/description line.
+- Action interstitials show the command(s), data source, or state change that accepting will trigger.
 - Confirmation launched from menu renders over menu and returns to menu on cancel.
 - Confirmation launched from editor renders over editor and returns to editor on cancel.
 - Confirmation launched from picker/detail, if supported, renders over that source screen.

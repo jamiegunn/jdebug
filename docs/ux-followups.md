@@ -47,9 +47,14 @@ mounted as env — verify with `T`, then `env | grep -i actuator`) and does NOT
 guess a default password. When actuator fetches fail, the capture scripts point
 users at this setup or at the no-HTTP jattach route.
 
-Remaining refinement: detect a 401/403 specifically (curl `-w`/`--fail-with-body`)
-to distinguish "secured" from "absent", and pre-fill the likely env-var name by
-reading the pod spec's `env`.
+401-vs-absent detection — SHIPPED. A failed actuator fetch now probes the HTTP
+status (`pod_http_status`, a `curl -w %{http_code}` / busybox `wget -S` snippet)
+and `explain_actuator_fail` names the precise next action: `401/403` → set auth
+(or jattach), `404` → wrong path/disabled (fix the URL, or jattach), no reply →
+app wedged (jattach). A 200 that isn't a dump is run through `classify_capture`.
+
+Remaining refinement: pre-fill the likely env-var name by reading the pod spec's
+`env` in the target editor's auth field.
 
 ## Operator incident workflows
 
@@ -174,28 +179,24 @@ Design points:
 - Support keyboard selection in addition to click-to-open.
 - Preserve sensitive-evidence warnings for heaps and logs.
 
-## Invalid heap capture recovery
+## Invalid heap capture recovery — SHIPPED
 
-**Goal:** when a `.hprof` is actually an actuator error page, login response,
-JSON error, empty file, or truncated download, the tool should explain that as
-a capture-route problem rather than sending the user toward Eclipse MAT.
+When a `.hprof` is actually an actuator error page, login response, JSON error,
+or empty/truncated download, the tool now explains it as a capture-route problem
+rather than sending the user toward Eclipse MAT.
 
-Current capture code validates HPROF magic, but old/kept invalid files can still
-be analyzed later. Improve the whole path:
+- Capture time still validates `JAVA PROFILE` magic and leaves bad files for
+  inspection; a 200 that isn't a dump is run through `classify_capture`
+  (`lib/common.sh`) and named (HTML login/error page · JSON error · empty).
+- `analyze` (`observe/analyze.sh`) classifies the bad file and prints exact
+  recovery — set auth (`k`), `jdebug heap --via jattach --confirm`, `--via jdk`,
+  or fix the actuator URL — instead of MAT-oriented next steps.
+- The captures browser (`captures.go`) marks invalid `.hprof` files with `⚠` in
+  a warn colour, `capHint` says "not a heap dump — a explains", and viewing one
+  shows the classification + recovery (`classifyHead` mirrors the CLI).
 
-- At capture time, keep validating `JAVA PROFILE` magic and leave bad files for
-  inspection without calling them valid evidence.
-- In `analyze`, classify safe first bytes where possible: HTML error page, JSON
-  actuator error, login page, 401/403/404 response, empty/truncated file.
-- Replace generic heap-next-step copy with exact recovery guidance for invalid
-  heaps: configure actuator credentials/base path, retry `jdebug heap --via
-  jattach --confirm`, or use `--via jdk` if the app cannot serve HTTP.
-- In the captures browser, mark invalid heap files so the user does not try to
-  open them in MAT.
-- In evidence summaries, separate invalid captures from usable evidence.
-
-Test fixtures should include bad magic, HTML, JSON, empty, and valid HPROF
-headers.
+Test fixtures cover bad magic, HTML login, JSON error, empty, and valid HPROF
+(bash `run-tests.sh` + Go `hprof_test.go`).
 
 ## Trends transparency
 

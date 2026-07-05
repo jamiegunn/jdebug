@@ -22,11 +22,46 @@ import (
 )
 
 type capEntry struct {
-	Name string
-	Size int64
-	Mod  time.Time
-	Dir  bool
-	Snap bool // directory is a snapshot bundle (has a .snapshot marker)
+	Name    string
+	Size    int64
+	Mod     time.Time
+	Dir     bool
+	Snap    bool // directory is a snapshot bundle (has a .snapshot marker)
+	Invalid bool // a .hprof that isn't a heap dump (bad magic — an error page)
+}
+
+// hprofValid reports whether a file starts with the "JAVA PROFILE" magic. A
+// .hprof that fails this is an error/login page captured from a secured or
+// wrong-path actuator — not something Eclipse MAT can open.
+func hprofValid(path string) bool {
+	f, err := os.Open(path)
+	if err != nil {
+		return false
+	}
+	defer f.Close()
+	b := make([]byte, 12)
+	n, _ := io.ReadFull(f, b)
+	return n >= 12 && strings.HasPrefix(string(b[:n]), "JAVA PROFILE")
+}
+
+// classifyHead names what a non-heap-dump capture actually looks like, mirroring
+// the CLI's classify_capture so the browser and analyze agree.
+func classifyHead(b []byte) string {
+	s := strings.ToLower(string(b))
+	switch {
+	case len(b) == 0:
+		return "the file is empty — the download returned nothing"
+	case strings.Contains(s, "<html") || strings.Contains(s, "<!doctype html"):
+		if strings.Contains(s, "login") || strings.Contains(s, "password") || strings.Contains(s, "sign in") {
+			return "it looks like an HTML login page — the endpoint is secured"
+		}
+		return "it looks like an HTML error page"
+	case strings.HasPrefix(strings.TrimSpace(s), "{") || strings.Contains(s, `"status"`) || strings.Contains(s, `"error"`):
+		return "it looks like a JSON error response (a Spring/actuator error)"
+	case strings.HasPrefix(s, "http/"):
+		return "it looks like a raw HTTP error response"
+	}
+	return "it doesn't start with the JAVA PROFILE magic"
 }
 
 type capsMsg struct {
@@ -76,6 +111,9 @@ func fetchCaps(kit, dir string) tea.Cmd {
 				}
 			} else {
 				ce.Size = info.Size()
+				if strings.HasSuffix(ce.Name, ".hprof") && !hprofValid(filepath.Join(dir, e.Name())) {
+					ce.Invalid = true
+				}
 			}
 			caps = append(caps, ce)
 		}
@@ -137,6 +175,9 @@ func capHint(ce capEntry) string {
 	case ce.Dir:
 		return "drill in"
 	case strings.HasSuffix(ce.Name, ".hprof"):
+		if ce.Invalid {
+			return "⚠ not a heap dump — a explains"
+		}
 		return "a → histogram"
 	case strings.HasSuffix(ce.Name, ".jfr"):
 		return "JDK Mission Control"
@@ -232,16 +273,28 @@ func (m model) viewFile(path string) (tea.Model, tea.Cmd) {
 
 	base := filepath.Base(path)
 	var body string
-	if isBinary(head) {
-		kind := "binary file"
-		extra := ""
-		if strings.HasPrefix(string(head), "JAVA PROFILE") || strings.HasSuffix(base, ".hprof") {
-			kind = "JVM heap dump"
-			extra = "\n\nPress a to analyze it here (class histogram — the biggest memory consumers).\n" +
-				"Deeper: Eclipse MAT → File → Open Heap Dump → 'Leak Suspects' (free, local)."
+	switch {
+	case strings.HasSuffix(base, ".hprof"):
+		// a .hprof is either a real heap dump or a captured error page; the
+		// latter must NOT be sent to Eclipse MAT, so say so plainly.
+		if strings.HasPrefix(string(head), "JAVA PROFILE") {
+			body = fmt.Sprintf("%s — JVM heap dump, %s\n(not shown as text)\n\n"+
+				"Press a to analyze it here (class histogram — the biggest memory consumers).\n"+
+				"Deeper: Eclipse MAT → File → Open Heap Dump → 'Leak Suspects' (free, local).",
+				base, fmtSize(info.Size()))
+		} else {
+			body = fmt.Sprintf("%s — ⚠ INVALID heap dump, %s\n\n"+
+				"This file is NOT a heap dump, so Eclipse MAT can't open it — %s.\n"+
+				"It's a capture-ROUTE problem, not a heap to analyze. Recover it:\n"+
+				"  · secured / disabled actuator → set auth (k), or: jdebug heap --via jattach --confirm\n"+
+				"  · app can't serve HTTP → jdebug heap --via jdk --confirm\n"+
+				"  · wrong actuator URL / base path → fix it in the target editor (g)\n\n"+
+				"Press a for the full first-pass classification.",
+				base, fmtSize(info.Size()), classifyHead(head))
 		}
-		body = fmt.Sprintf("%s — %s, %s\n(not shown as text)%s", base, kind, fmtSize(info.Size()), extra)
-	} else {
+	case isBinary(head):
+		body = fmt.Sprintf("%s — binary file, %s\n(not shown as text)", base, fmtSize(info.Size()))
+	default:
 		if _, err := f.Seek(0, io.SeekStart); err == nil {
 			data, _ := io.ReadAll(io.LimitReader(f, viewCap))
 			body = string(data)
@@ -321,6 +374,10 @@ func (m model) capsRows(w, h int) []string {
 		disp := ansi.Truncate(name, nameW, "…")
 		if ce.Snap {
 			disp = ansi.Truncate("▸ "+name, nameW, "…")
+		}
+		if ce.Invalid {
+			st = cWarn
+			disp = ansi.Truncate("⚠ "+name, nameW, "…")
 		}
 		pad := w - 1 - lipgloss.Width(disp) - lipgloss.Width(right) - 1
 		if pad < 1 {

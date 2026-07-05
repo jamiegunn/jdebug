@@ -4,6 +4,8 @@
 #   MOCK_KUBECTL   ok (default) | x509 | refused | noctx   — /version probe result
 #   MOCK_PODS      one (default) | none | multi            — pod listings
 #   MOCK_EXEC_OUT  what an in-pod `exec` prints            — default "ok"
+#   MOCK_ACTUATOR  secured|absent|badpage                  — actuator fetch outcome
+#                  (secured→401, absent→404, badpage→200 HTML login on heapdump)
 #   MOCK_LOG       file to append every invocation to (for asserting calls)
 [ -n "${MOCK_LOG:-}" ] && printf '%s\n' "$*" >> "$MOCK_LOG"
 
@@ -87,7 +89,21 @@ case "$*" in
     *"get hpa"*)
         echo 'No resources found.' ;;
     *" exec "*)
-        printf '%s\n' "${MOCK_EXEC_OUT:-ok}" ;;
+        # actuator failure simulation: the in-pod snippet carries the URL and,
+        # for a status probe, curl's %{http_code}. Match those to script 4xx.
+        case "$*" in
+            *"%{http_code}"*)  # a pod_http_status probe
+                case "${MOCK_ACTUATOR:-}" in
+                    secured) echo 401 ;; absent) echo 404 ;; *) echo 200 ;;
+                esac; exit 0 ;;
+            *heapdump*|*threaddump*)
+                case "${MOCK_ACTUATOR:-}" in
+                    secured|absent) exit 22 ;;   # curl -f style non-zero on 4xx
+                    badpage) printf '<!DOCTYPE html><html><head><title>Please sign in</title></head><body>login</body></html>' ;;
+                    *) printf '%s\n' "${MOCK_EXEC_OUT:-ok}" ;;
+                esac ;;
+            *) printf '%s\n' "${MOCK_EXEC_OUT:-ok}" ;;
+        esac ;;
     *"rollout restart"*)
         echo 'deployment.apps/app restarted' ;;
     *"rollout status"*)

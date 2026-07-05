@@ -36,6 +36,32 @@ require_cmd kubectl
 
 # In-pod HTTP goes through pod_fetch (lib/common.sh): curl, else busybox wget.
 
+# explain_actuator_fail <url> <no-http-fallback-cmd> — a failed actuator fetch
+# is ambiguous (secured? absent? app wedged?). Probe the HTTP status and give
+# the ONE precise next action instead of a catch-all. Prints to stderr.
+explain_actuator_fail() {
+    local url="$1" jhint="$2" code
+    code="$(kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
+              sh -c "$(pod_http_status "$url")" 2>/dev/null | tr -dc '0-9')"
+    case "$code" in
+        401|403)
+            err "  secured (HTTP $code): the actuator needs credentials."
+            err "    → set auth in the target editor (k): bearer:ENV_VAR or basic:USER_VAR:PASS_VAR,"
+            err "      naming the pod's OWN credential env vars (verify with T, then: env | grep -i actuator)."
+            err "    → or skip HTTP entirely: $jhint" ;;
+        404)
+            err "  not found (HTTP 404): nothing is served at this path."
+            err "    → the actuator may be disabled, on a different base path, or behind management.server.port."
+            err "    → fix the actuator URL in the target editor (g/a), or skip HTTP: $jhint" ;;
+        ""|000)
+            err "  no HTTP reply: the app isn't serving (wedged, still starting, or actuator off)."
+            err "    → skip HTTP entirely: $jhint" ;;
+        *)
+            err "  the actuator returned HTTP $code."
+            err "    → try a no-HTTP route: $jhint" ;;
+    esac
+}
+
 ACTION=""
 CONFIRMED=0
 AS_JSON=0
@@ -82,17 +108,16 @@ case "$ACTION" in
         show_cmd "kubectl -n $NAMESPACE exec $POD -c $APP_CONTAINER -- sh -c '<curl-or-wget> -H Accept:$ACCEPT $ACTUATOR_BASE/threaddump' > $LOCAL_PATH"
         if ! kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
                 sh -c "$(pod_fetch "$ACTUATOR_BASE/threaddump" "$ACCEPT")" > "$LOCAL_PATH"; then
-            err "actuator threaddump failed — actuator absent/disabled, app not serving HTTP, or secured."
-            err "  → secured (401/403)? set auth in the target editor (k): bearer:ENV_VAR or basic:USER:PASS,"
-            err "    naming the pod's own credential env vars (the secret stays in the pod)."
-            err "  → or skip actuator entirely — jattach speaks the JVM attach protocol, no HTTP:"
-            err "    jdebug threads --via jattach -n $NAMESPACE $POD"
+            err "actuator threaddump failed."
+            explain_actuator_fail "$ACTUATOR_BASE/threaddump" "jdebug threads --via jattach -n $NAMESPACE $POD"
             rm -f "$LOCAL_PATH"
             exit 1
         fi
         if [[ $AS_JSON -eq 1 ]]; then MARKER='"threads"'; else MARKER="Full thread dump"; fi
         if ! grep -q "$MARKER" "$LOCAL_PATH" 2>/dev/null; then
             err "capture looks wrong (no '$MARKER' marker) — leaving it for inspection: $LOCAL_PATH"
+            cls="$(classify_capture "$LOCAL_PATH")"
+            [ -n "$cls" ] && err "  $cls — set auth (k), check the URL, or use: jdebug threads --via jattach -n $NAMESPACE $POD"
             exit 1
         fi
         info "wrote $LOCAL_PATH ($(wc -l <"$LOCAL_PATH" | tr -d ' ') lines)"
@@ -106,15 +131,20 @@ case "$ACTION" in
         show_cmd "kubectl -n $NAMESPACE exec $POD -c $APP_CONTAINER -- sh -c '<curl-or-wget> $ACTUATOR_BASE/heapdump' > $LOCAL_PATH"
         if ! kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
                 sh -c "$(pod_fetch "$ACTUATOR_BASE/heapdump")" > "$LOCAL_PATH"; then
-            err "actuator heapdump failed — actuator absent/disabled, app not serving HTTP, or secured."
-            err "  → secured (401/403)? set auth in the target editor (k). → or skip actuator entirely:"
-            err "    jdebug heap --via jattach --confirm -n $NAMESPACE $POD"
+            err "actuator heapdump failed."
+            explain_actuator_fail "$ACTUATOR_BASE/heapdump" "jdebug heap --via jattach --confirm -n $NAMESPACE $POD"
             rm -f "$LOCAL_PATH"
             exit 1
         fi
-        # hprof files start with the magic "JAVA PROFILE 1.0.x".
+        # hprof files start with the magic "JAVA PROFILE 1.0.x". A 200 that isn't
+        # one is almost always a secured endpoint's login/error page — classify
+        # it so the user fixes the ROUTE, not chases a corrupt "heap" in MAT.
         if ! head -c 12 "$LOCAL_PATH" 2>/dev/null | grep -q "JAVA PROFILE"; then
-            err "downloaded file is not a valid hprof (bad magic) — leaving it for inspection: $LOCAL_PATH"
+            err "the actuator answered but did not return a heap dump — leaving the file for inspection: $LOCAL_PATH"
+            cls="$(classify_capture "$LOCAL_PATH")"
+            [ -n "$cls" ] && err "  $cls"
+            err "  recover the capture: set auth in the target editor (k), fix the actuator URL, or skip HTTP:"
+            err "    jdebug heap --via jattach --confirm -n $NAMESPACE $POD"
             exit 1
         fi
         info "wrote $LOCAL_PATH ($(du -h "$LOCAL_PATH" | cut -f1 | tr -d ' '))"
