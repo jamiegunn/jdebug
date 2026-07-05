@@ -22,6 +22,15 @@ case "$*" in
         printf 'ctx-a\nmock-ctx\n' ;;
     *"config use-context"*)
         echo "Switched to context." ;;
+    *"get namespaces"*)
+        printf 'default\npayments\n' ;;
+    *"labels.app"*)
+        case "${MOCK_PODS:-one}" in
+            none) exit 0 ;;
+            *)    printf 'payments\npayments\nweb\n' ;;
+        esac ;;
+    *" get pod "*jsonpath*)
+        printf 'app\nsidecar\n' ;;
     *"get pods"*jsonpath*)
         case "${MOCK_PODS:-one}" in
             none)  exit 0 ;;

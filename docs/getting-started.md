@@ -30,16 +30,18 @@ The first question is **where the JVM is**:
 
 ## 3. Point it at your app
 
-Press `t`. You'll be walked through:
+Press `t` for the target editor — each field is one keypress, and everything
+the cluster can enumerate is a live dropdown:
 
-- **context** — which cluster (numbered list, switch with confirmation)
-- **namespace / selector** — `app=payments`-style label that picks your app's pods
-- **pod** — when several replicas match, a picker lists them with restart
-  counts (*the restarting one is usually the sick one*) so you can pin the
-  right pod instead of silently getting the first
+- **c context** — your kube contexts (switching is confirmed first)
+- **n namespace** — listed from the cluster
+- **s selector** — built from the `app` labels actually on the pods there
+- **o container / p pod** — read from the pod spec; the pod picker shows
+  restart counts (*the restarting one is usually the sick one*)
 
 The header always shows exactly what you're pointed at, plus a live
-✓/✗ cluster-reachability indicator.
+✓/✗ cluster-reachability indicator. Menu keys act instantly — no Enter;
+only confirmations (heap dumps, quitting) ask for a deliberate y.
 
 ## 4. Look around — all safe, read-only
 

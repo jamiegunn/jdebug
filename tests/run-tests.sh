@@ -244,60 +244,79 @@ MOCK_PODS=multi run_case bash -c 'source lib/common.sh; resolve_one_pod'
 assert_has "resolve_one_pod picks first" "pod-a"
 assert_has "resolve_one_pod flags the sick-pod trap" "restarting one"
 
-# --- TUI ---------------------------------------------------------------------------
+# --- TUI (single-keypress navigation: keys act instantly, no Enter) -----------------
 section "TUI"
-run_input 'q\n' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_rc  "remote menu: q quits cleanly" 0
+run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_rc  "remote menu: q + confirm quits cleanly" 0
+assert_has "quit asks for confirmation" "quit jdebug?"
 assert_has "remote menu: wizard promoted" "GUIDED DIAGNOSIS"
 assert_has "remote menu: heap risk labeled" "pauses the app"
 assert_has "remote menu: help key present" "h help/glossary"
 assert_has "remote menu: doctor key present" "c check setup"
+assert_has "remote menu: snapshot on key 0" "0  snapshot"
+assert_has "remote menu: instant keys advertised" "no Enter needed"
 assert_has "remote header: reachability shown" "cluster reachable"
 assert_has "remote header: empty selector hint" "press t to narrow"
 
-MOCK_KUBECTL=x509 run_input 'q\n' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input 'qn qy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_rc  "declining the quit confirm returns to the menu" 0
+
+MOCK_KUBECTL=x509 run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "remote header: unreachable flagged" "can't connect"
 
 # THE regression test: a FAILED command must pause with its error still visible.
-MOCK_KUBECTL=x509 run_input '1\n\nq\n' env JDEBUG_MODE=1 ./ui/tui.sh
+MOCK_KUBECTL=x509 run_input '1\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "failed action: error shown" "TLS certificate isn't trusted"
 assert_has "failed action: marked failed" "that didn't work"
-assert_has "failed action: pauses (error not wiped)" "Press Enter for the menu"
+assert_has "failed action: pauses (error not wiped)" "any key for the menu"
 
-run_input '1\n\nq\n' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input '1\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "action output is tee'd to session log path" "$TMP/dumps/session-"
 grep -rq 'jdebug status' "$TMP"/dumps/session-*.log 2>/dev/null \
     && ok "session log records the command" || bad "session log records the command" "no session log with 'jdebug status'"
 
-run_input 'h\n\nq\n' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input 'h\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "help: glossary defines pod" "one running copy of the app"
 assert_has "help: heap dump risk in glossary" "Pauses the app"
 assert_has "help: first-10-minutes workflow" "A GOOD FIRST 10 MINUTES"
 assert_has "help: safety rules" "answering n is always safe"
 
-run_input 'zz\nq\n' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input 'zzqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_rc  "unknown key: no crash, menu redraws" 0
 
-run_input '\nq\n' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input '\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_rc  "bare Enter does NOT quit (q still needed)" 0
 
-run_input 'q\n' env JDEBUG_MODE=2 ./ui/tui.sh
+run_input 'qy' env JDEBUG_MODE=2 ./ui/tui.sh
 assert_has "local menu: wizard available" "GUIDED DIAGNOSIS"
 assert_has "local menu: stage jattach present" "stage jattach"
 
-run_input 'w\nb\nq\n' env JDEBUG_MODE=2 ./ui/tui.sh
+run_input 'wbqy' env JDEBUG_MODE=2 ./ui/tui.sh
 assert_has "local wizard: mode-aware target" "this machine (localhost)"
 
-run_input '7\n\nq\n' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input '7\n\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "jcmd quick-pick offered" "GC.heap_info"
 assert_has "jcmd quick-pick includes JFR" "JFR.start"
 
-MOCK_PODS=multi run_input 't\n\n\n\n\n\n0\nq\n' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "target screen: context picker" "Which cluster?"
-assert_has "target screen: current context marked" "mock-ctx  (current)"
-assert_has "target screen: pod picker on multi" "pods match. Which one?"
+# target editor: one key per field, live dropdowns from the cluster
+run_input 'tc1nbqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "target editor: field list shown" "TARGET"
+assert_has "target editor: context dropdown" "Which cluster?"
+assert_has "target editor: current context marked" "mock-ctx  (current)"
 
-run_input '1\n\nq\n' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input 'tn2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "target editor: namespace dropdown applied" "namespace   payments"
+
+run_input 'ts1bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "target editor: selector built from pod labels" "app=payments"
+
+run_input 'to2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "target editor: container from pod spec" "container   sidecar"
+
+MOCK_PODS=multi run_input 'tp0bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "target editor: pod picker on multi" "pods match. Which one?"
+
+run_input '1\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "quit shows transcript path" "transcript of everything from this session"
 
 # --- install.sh ----------------------------------------------------------------------

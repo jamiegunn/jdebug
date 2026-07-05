@@ -14,10 +14,17 @@ wizard encodes the diagnostic playbooks so you don't have to remember them.
 - **▶ w GUIDED DIAGNOSIS** — describe the symptom, it runs the right captures. Start here.
 - **LOOK AROUND** — status / health / top / memory. All safe, read-only.
 - **CAPTURE EVIDENCE** — threads (safe · instant), heap (**⚠ pauses the app**),
-  jcmd (quick-pick of the five useful commands), snapshot (everything in one bundle).
-- **LOGS** — live tail from every replica; runtime log-level changes.
+  jcmd (quick-pick of the five useful commands), `0` snapshot (everything in one bundle).
+- **LOGS** — live tail from every replica; runtime log-level changes (level is a one-key pick).
 - **MORE** — `h` help/glossary · `c` check setup (doctor) · `d` view captures ·
   `i` stage jattach · `p` push in-pod tool · `t` target · `m` mode · `q` quit.
+
+## Keys act instantly
+
+Navigation is single-keypress — no Enter. The only deliberate inputs are
+**confirmations** (destructive actions like heap dumps, and quitting — both
+ask y/N) and **free-text fields** (a namespace nobody enumerated, a custom
+actuator URL). After a command's output, any key returns to the menu.
 
 ## The header tells you everything
 
@@ -26,12 +33,33 @@ selector, container, pinned pod, and actuator URL — you always know exactly
 what a keypress will hit. An empty selector shows as
 `<any pod — press t to narrow to your app>` rather than silently meaning "whatever".
 
-## Targeting (`t`)
+## Targeting (`t`) — the field editor
 
-One screen walks through context (numbered picker; switching runs
-`kubectl config use-context` only after an explicit confirmation), namespace,
-selector, container, actuator URL — and then, if several pods match, a pod
-picker with phase and restart counts so you can pin the sick replica.
+`t` opens an editor where **each field is one keypress**, edited in place:
+
+```
+TARGET — press a letter to change a field · Enter/b back to the menu
+ c  context     ddk3s
+ n  namespace   payments
+ s  selector    app=payments
+ o  container   app
+ p  pod         <auto: first match>
+ a  actuator    http://localhost:8080/actuator
+```
+
+Everything the cluster can enumerate opens a **live dropdown** — pick by
+number, single keypress:
+
+- `c` — your kube contexts (switching runs `kubectl config use-context`,
+  confirmed first because it changes your default everywhere)
+- `n` — namespaces, listed from the cluster
+- `s` — selectors **built from the `app` labels actually on pods** in the
+  namespace; `t` types any label expression, `-` means any pod
+- `o` — containers read from the pod's spec
+- `p` — matching pods with phase and restart counts, so you can pin the
+  sick replica instead of silently getting the first
+
+Free text remains available wherever a dropdown can't know the answer.
 
 ## Output is never lost
 

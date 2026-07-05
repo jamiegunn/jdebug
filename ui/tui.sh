@@ -60,16 +60,18 @@ box() { printf '%s╔═══════════════════�
         printf '%s║  %-60s║%s\n' "$B" "$1" "$OFF"
         printf '%s╚══════════════════════════════════════════════════════════════╝%s\n' "$B" "$OFF"; }
 hr() { printf '%s────────────────────────────────────────────────────────────────%s\n' "$DIM" "$OFF"; }
+# Single keypress everywhere: navigation acts instantly; only confirmations
+# (destructive actions, quitting) demand a deliberate y.
 pause() {
     if [[ -f "$SESSION_LOG" ]]; then
-        printf '\n%sPress Enter for the menu — this output stays in your scrollback and is saved to%s\n' "$DIM" "$OFF"
+        printf '\n%sany key for the menu — this output stays in your scrollback and is saved to%s\n' "$DIM" "$OFF"
         printf '%s%s%s ' "$DIM" "$SESSION_LOG" "$OFF"
     else
-        printf '\n%sPress Enter for the menu…%s ' "$DIM" "$OFF"
+        printf '\n%sany key for the menu…%s ' "$DIM" "$OFF"
     fi
-    read -r _ || bye
+    read -rsn1 _ || bye; printf '\n'
 }
-confirm() { printf '%s%s%s [y/N] ' "$YL" "$1" "$OFF"; local a; read -r a || return 1; [[ "$a" == y || "$a" == Y || "$a" == yes ]]; }
+confirm() { printf '%s%s%s [y/N] ' "$YL" "$1" "$OFF"; local a; read -rn1 a || return 1; printf '\n'; [[ "$a" == y || "$a" == Y ]]; }
 run() {
     printf '\n%s$ %s%s\n\n' "$CY" "$*" "$OFF"
     mkdir -p "$(dirname "$SESSION_LOG")" 2>/dev/null
@@ -92,7 +94,7 @@ choose_mode() {
     printf '  %sModes 2 & 3 talk to localhost actuator + a local jattach + /proc (via jdebug-local).%s\n' "$DIM" "$OFF"
     printf '  %sNote: this menu needs bash. A stock JRE/busybox pod has none — for those, run the%s\n' "$YL" "$OFF"
     printf '  %ssingle-file  jdebug-local  CLI in the pod instead:  sh /tmp/jdebug-local help%s\n' "$YL" "$OFF"
-    printf '\n  %s> %s' "$B" "$OFF"; local m; read -r m
+    printf '\n  %s> %s' "$B" "$OFF"; local m; read -rn1 m || bye; printf '\n'
     case "$m" in 1|2|3) MODE="$m" ;; q|Q) bye ;; *) MODE=1 ;; esac
 }
 mode_label() { case "$MODE" in 1) echo "remote · kubectl → pod";; 2) echo "in-pod · localhost";; 3) echo "bare metal · localhost";; esac; }
@@ -138,7 +140,38 @@ ask_via() {
     printf '  %s    jattach   tiny helper binary placed in the pod (works without actuator)%s\n' "$DIM" "$OFF"
     printf '  %s    jdk       temporary JDK debug container (last resort, needs cluster permission)%s\n' "$DIM" "$OFF"
     printf '  [Enter] auto (recommended) / [o] actuator / [j] jattach / [d] jdk: '
-    local v; read -r v; case "$v" in j|J) VIA_FLAG="--via jattach" ;; d|D) VIA_FLAG="--via jdk" ;; o|O) VIA_FLAG="--via actuator" ;; *) VIA_FLAG="" ;; esac; }
+    local v; read -rn1 v; printf '\n'; case "$v" in j|J) VIA_FLAG="--via jattach" ;; d|D) VIA_FLAG="--via jdk" ;; o|O) VIA_FLAG="--via actuator" ;; *) VIA_FLAG="" ;; esac; }
+
+# choose_from <title> <current> <free:0|1> <options> — numbered dropdown.
+# <options> is a newline-separated string (passed as an argument, NOT stdin —
+# stdin must stay free for the selection keypress). ≤9 options select on a
+# single keypress; longer lists take a typed number. 't' types a free value
+# (when allowed); Enter/anything else keeps the current.
+# Result in $CHOICE (empty = keep current).
+choose_from() {
+    local title="$1" current="$2" free="${3:-1}" opts=() line
+    CHOICE=""
+    while IFS= read -r line; do [[ -n "$line" ]] && opts+=("$line"); done <<< "${4:-}"
+    if [[ ${#opts[@]} -eq 0 ]]; then
+        if [[ "$free" == 1 ]]; then printf '  %s [%s]: ' "$title" "$current"; IFS= read -r CHOICE; fi
+        return 0
+    fi
+    printf '\n  %s%s%s\n' "$B" "$title" "$OFF"
+    local i=1 o
+    for o in "${opts[@]}"; do
+        if [[ "$o" == "$current" ]]; then printf '   %s%d%s  %s  %s(current)%s\n' "$GN" "$i" "$OFF" "$o" "$DIM" "$OFF"
+        else printf '   %s%d%s  %s\n' "$GN" "$i" "$OFF" "$o"; fi
+        i=$((i+1))
+    done
+    [[ "$free" == 1 ]] && printf '   %st%s  type a value\n' "$GN" "$OFF"
+    printf '  %s(any other key keeps: %s)%s > ' "$DIM" "$current" "$OFF"
+    local k
+    if [[ ${#opts[@]} -le 9 ]]; then read -rn1 k; printf '\n'; else read -r k; fi
+    if [[ "$k" == t && "$free" == 1 ]]; then printf '  value: '; IFS= read -r CHOICE
+    elif [[ "$k" =~ ^[0-9]+$ ]] && (( k >= 1 && k <= ${#opts[@]} )); then CHOICE="${opts[$((k-1))]}"
+    fi
+    return 0
+}
 
 # ask_jcmd — nobody fresh out of college knows jcmd commands by heart; offer
 # the five useful ones and still accept anything typed.
@@ -150,15 +183,16 @@ ask_jcmd() {
     printf '   %s3%s  Thread.print -l            thread dump via the attach socket        %ssafe%s\n' "$GN" "$OFF" "$GN" "$OFF"
     printf '   %s4%s  VM.flags                   the flags the JVM actually started with  %ssafe%s\n' "$GN" "$OFF" "$GN" "$OFF"
     printf '   %s5%s  JFR.start duration=60s filename=/tmp/rec.jfr   60s profiling recording\n' "$GN" "$OFF"
-    printf '  pick 1-5, type any jcmd command, or Enter to cancel: '
-    local v; read -r v
+    printf '  pick 1-5 · t to type any jcmd · anything else cancels: '
+    local v; read -rn1 v; printf '\n'
     case "$v" in
         1) JCMD_PICK="GC.heap_info" ;;
         2) JCMD_PICK="VM.native_memory summary" ;;
         3) JCMD_PICK="Thread.print -l" ;;
         4) JCMD_PICK="VM.flags" ;;
         5) JCMD_PICK="JFR.start duration=60s filename=/tmp/rec.jfr" ;;
-        *) JCMD_PICK="$v" ;;
+        t|T) printf '  jcmd command: '; IFS= read -r JCMD_PICK ;;
+        *) JCMD_PICK="" ;;
     esac
 }
 
@@ -199,42 +233,59 @@ show_help() {
 
 EOF
 }
+# retarget — the TARGET editor ('t'). Each field is one keypress; fields the
+# cluster can enumerate open a live dropdown (contexts, namespaces, selectors
+# built from the pods' actual labels, containers from the pod spec, pods);
+# free text stays available everywhere. Enter/b returns to the menu.
 retarget() {
-    # Context first — everything else depends on which cluster we're talking to.
-    local ctxs cur v
-    ctxs="$(kubectl config get-contexts -o name 2>/dev/null)"
-    cur="$(kubectl config current-context 2>/dev/null)"
-    if [[ -n "$ctxs" ]]; then
-        printf '\n  %sWhich cluster? (kube contexts on this machine)%s\n' "$B" "$OFF"
-        local i=1 c
-        while IFS= read -r c; do
-            [[ -z "$c" ]] && continue
-            if [[ "$c" == "$cur" ]]; then printf '   %s%d%s  %s  %s(current)%s\n' "$GN" "$i" "$OFF" "$c" "$DIM" "$OFF"
-            else printf '   %s%d%s  %s\n' "$GN" "$i" "$OFF" "$c"; fi
-            i=$((i+1))
-        done <<< "$ctxs"
-        printf '  context [Enter keeps %s]: ' "${cur:-none}"; read -r v
-        if [[ "$v" =~ ^[0-9]+$ ]] && (( v >= 1 && v < i )); then
-            local newctx; newctx="$(printf '%s\n' "$ctxs" | sed -n "${v}p")"
-            if [[ -n "$newctx" && "$newctx" != "$cur" ]]; then
-                printf '  %sthis runs `kubectl config use-context %s` — it becomes your kubectl default in every terminal%s\n' "$YL" "$newctx" "$OFF"
-                if confirm "switch to $newctx?"; then
-                    kubectl config use-context "$newctx" >/dev/null 2>&1 && printf '  switched to %s%s%s\n' "$GN" "$newctx" "$OFF"
-                    CLUSTER_TS=-999   # re-probe reachability for the header
-                fi
-            fi
-        fi
-    else
-        printf '  %sno kube contexts found — set KUBECONFIG or create one, then come back%s\n' "$YL" "$OFF"
-    fi
-    printf '\n  %sEnter keeps the [current] value.%s\n' "$DIM" "$OFF"
-    printf '  namespace       [%s]: ' "$NAMESPACE";     read -r v; [[ -n "$v" ]] && NAMESPACE="$v"
-    printf '  label selector  [%s]  %s(e.g. app=payments · blank = any pod)%s: ' "${SELECTOR:-}" "$DIM" "$OFF"; read -r v; [[ -n "$v" ]] && SELECTOR="$v"
-    printf '  container       [%s]  %s(the app container name in the pod)%s: ' "$APP_CONTAINER" "$DIM" "$OFF"; read -r v; [[ -n "$v" ]] && APP_CONTAINER="$v"
-    printf '  actuator base   [%s]: ' "$ACTUATOR_BASE"; read -r v; [[ -n "$v" ]] && ACTUATOR_BASE="$v"
+    local k v cur
+    while true; do
+        printf '\n  %sTARGET%s — press a letter to change a field · %sEnter%s/%sb%s back to the menu\n' "$B" "$OFF" "$GN" "$OFF" "$GN" "$OFF"
+        printf '   %sc%s  context     %s%s%s\n' "$GN" "$OFF" "$GN" "$(kubectl config current-context 2>/dev/null || echo '<none>')" "$OFF"
+        printf '   %sn%s  namespace   %s%s%s\n' "$GN" "$OFF" "$GN" "$NAMESPACE" "$OFF"
+        printf '   %ss%s  selector    %s%s%s\n' "$GN" "$OFF" "$GN" "${SELECTOR:-<any pod>}" "$OFF"
+        printf '   %so%s  container   %s%s%s\n' "$GN" "$OFF" "$GN" "$APP_CONTAINER" "$OFF"
+        printf '   %sp%s  pod         %s%s%s\n' "$GN" "$OFF" "$GN" "${POD_PIN:-<auto: first match>}" "$OFF"
+        printf '   %sa%s  actuator    %s%s%s\n' "$GN" "$OFF" "$GN" "$ACTUATOR_BASE" "$OFF"
+        printf '  > '
+        read -rn1 k || break; printf '\n'
+        case "$k" in
+            c|C)
+                cur="$(kubectl config current-context 2>/dev/null)"
+                choose_from "Which cluster? (kube contexts on this machine)" "$cur" 0 \
+                    "$(kubectl config get-contexts -o name 2>/dev/null)"
+                if [[ -n "$CHOICE" && "$CHOICE" != "$cur" ]]; then
+                    printf '  %sthis runs `kubectl config use-context %s` — it becomes your kubectl default in every terminal%s\n' "$YL" "$CHOICE" "$OFF"
+                    if confirm "switch to $CHOICE?"; then
+                        kubectl config use-context "$CHOICE" >/dev/null 2>&1 && printf '  switched to %s%s%s\n' "$GN" "$CHOICE" "$OFF"
+                        CLUSTER_TS=-999; POD_PIN=""
+                    fi
+                fi ;;
+            n|N)
+                choose_from "Namespace" "$NAMESPACE" 1 \
+                    "$(kubectl get namespaces -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)"
+                [[ -n "$CHOICE" ]] && { NAMESPACE="$CHOICE"; POD_PIN=""; CLUSTER_TS=-999; } ;;
+            s|S)
+                # dropdown built from the `app` labels actually on pods here
+                choose_from "Selector — apps found in $NAMESPACE ('t' to type any label, '-' for any pod)" "${SELECTOR:-<any pod>}" 1 \
+                    "$(kubectl -n "$NAMESPACE" get pods -o jsonpath='{range .items[*]}{.metadata.labels.app}{"\n"}{end}' 2>/dev/null | grep . | sort -u | sed 's/^/app=/')"
+                if [[ "$CHOICE" == "-" ]]; then SELECTOR=""; POD_PIN=""
+                elif [[ -n "$CHOICE" ]]; then SELECTOR="$CHOICE"; POD_PIN=""; fi ;;
+            o|O)
+                local firstpod conts=""
+                firstpod="$(resolve_pods 2>/dev/null | head -n1 || true)"
+                [[ -n "$firstpod" ]] && conts="$(kubectl -n "$NAMESPACE" get pod "$firstpod" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' 2>/dev/null)"
+                choose_from "Container${firstpod:+ (in $firstpod)}" "$APP_CONTAINER" 1 "$conts"
+                [[ -n "$CHOICE" ]] && APP_CONTAINER="$CHOICE" ;;
+            p|P) pick_pod ;;
+            a|A) printf '  actuator base [%s]: ' "$ACTUATOR_BASE"; IFS= read -r v; [[ -n "$v" ]] && ACTUATOR_BASE="$v" ;;
+            b|B|"") break ;;
+            *) : ;;
+        esac
+        export NAMESPACE SELECTOR APP_CONTAINER ACTUATOR_BASE
+    done
     export NAMESPACE SELECTOR APP_CONTAINER ACTUATOR_BASE
-    CLUSTER_TS=-999   # namespace/selector may point at a different cluster state — re-probe
-    pick_pod
+    CLUSTER_TS=-999   # target changed — re-probe reachability for the header
 }
 
 # pick_pod — when several pods match, let the user pin one instead of silently
@@ -262,7 +313,8 @@ pick_pod() {
         i=$((i+1))
     done <<< "$pods"
     printf '   %s0%s  auto — just use the first match each time\n' "$GN" "$OFF"
-    printf '  > '; local c; read -r c
+    printf '  > '; local c
+    if [[ "$n" -le 9 ]]; then read -rn1 c; printf '\n'; else read -r c; fi
     if [[ "$c" =~ ^[0-9]+$ ]] && (( c >= 1 && c < i )); then
         POD_PIN="$(printf '%s\n' "$pods" | sed -n "${c}p" | awk '{print $1}')"
         printf '  pinned: every capture now targets %s%s%s (press t to change)\n' "$GN" "$POD_PIN" "$OFF"
@@ -418,7 +470,7 @@ wizard() {
         printf '   %sb%s  back\n'                                     "$GN" "$OFF"
         local tgt; if [[ "$MODE" == 1 ]]; then tgt="$NAMESPACE / ${SELECTOR:-<any pod>}"; else tgt="this machine (localhost)"; fi
         printf '\n  %starget: %s · anything that could hurt the app asks you first%s\n' "$DIM" "$tgt" "$OFF"
-        printf '\n  %s> %s' "$B" "$OFF"; local s; read -r s
+        printf '\n  %s> %s' "$B" "$OFF"; local s; read -rn1 s || return; printf '\n'
         case "$s" in
             1) wiz_oom ;; 2) wiz_slow ;; 3) wiz_cpu ;; 4) wiz_leak ;; 5) wiz_gc ;; 6) wiz_all ;;
             b|B|"") return ;;
@@ -444,13 +496,14 @@ menu_remote() {
    ${GN}5${OFF}  threads     what is every thread doing right now?      ${GN}safe · instant${OFF}
    ${GN}6${OFF}  heap        every object in memory, for leak hunting   ${RD}⚠ pauses the app${OFF}
    ${GN}7${OFF}  jcmd        advanced JVM commands (GC, JFR, native)    ${YL}mostly safe${OFF}
-   ${GN}10${OFF} snapshot    grab EVERYTHING in one offline bundle      ${GN}safe${OFF}${DIM} · heap optional${OFF}
+   ${GN}0${OFF}  snapshot    grab EVERYTHING in one offline bundle      ${GN}safe${OFF}${DIM} · heap optional${OFF}
 
   ${B}LOGS${OFF}
    ${GN}8${OFF}  logs        live log stream from every replica         ${GN}safe${OFF}
    ${GN}9${OFF}  log-level   turn logging up/down without a restart     ${YL}adds log volume${OFF}
 
   ${B}MORE${OFF}  ${GN}h${OFF} help/glossary · ${GN}c${OFF} check setup · ${GN}d${OFF} view captures · ${GN}i${OFF} stage jattach · ${GN}p${OFF} push in-pod tool · ${GN}t${OFF} target · ${GN}m${OFF} mode · ${GN}q${OFF} quit
+  ${DIM}keys act instantly — no Enter needed${OFF}
 EOF
     printf '\n  %s> %s' "$B" "$OFF"
 }
@@ -471,6 +524,7 @@ menu_local() {
    ${GN}7${OFF}  snapshot    grab EVERYTHING in one offline bundle      ${GN}safe${OFF}${DIM} · heap optional${OFF}
 
   ${B}MORE${OFF}  ${GN}h${OFF} help/glossary · ${GN}d${OFF} view captures · ${GN}i${OFF} stage jattach · ${GN}s${OFF} settings · ${GN}m${OFF} mode · ${GN}q${OFF} quit
+  ${DIM}keys act instantly — no Enter needed${OFF}
 EOF
     printf '\n  %s> %s' "$B" "$OFF"
 }
@@ -486,10 +540,12 @@ dispatch_remote() {
         6)  ask_via; confirm "heap dump PAUSES the JVM (destructive in production) — proceed?" && run "$DBG" heap $VIA_FLAG --confirm ${POD_PIN:+"$POD_PIN"} ;;
         7)  ask_jcmd; [[ -n "$JCMD_PICK" ]] && run "$DBG" jcmd "$JCMD_PICK" ${POD_PIN:+"$POD_PIN"} ;;
         8)  printf '  %sstreaming — Ctrl-C to stop%s\n' "$DIM" "$OFF"; run "$DBG" logs ;;
-        9)  printf '  logger (e.g. com.example.debugdemo, ROOT): '; read -r lg
-            printf '  level (TRACE|DEBUG|INFO|WARN|ERROR|OFF): '; read -r lv
+        9)  printf '  logger (e.g. com.example.debugdemo, ROOT): '; IFS= read -r lg
+            printf '  level: 1 TRACE · 2 DEBUG · 3 INFO · 4 WARN · 5 ERROR · 6 OFF > '
+            local lvk lv=""; read -rn1 lvk; printf '\n'
+            case "$lvk" in 1) lv=TRACE;; 2) lv=DEBUG;; 3) lv=INFO;; 4) lv=WARN;; 5) lv=ERROR;; 6) lv=OFF;; esac
             [[ -n "$lg" && -n "$lv" ]] && run "$DBG" log-level "$lg" "$lv" ;;
-        10) if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run "$DBG" snapshot --heap --confirm ${POD_PIN:+"$POD_PIN"}; else run "$DBG" snapshot ${POD_PIN:+"$POD_PIN"}; fi ;;
+        0)  if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run "$DBG" snapshot --heap --confirm ${POD_PIN:+"$POD_PIN"}; else run "$DBG" snapshot ${POD_PIN:+"$POD_PIN"}; fi ;;
         h|H) show_help ;;
         c|C) run "$DBG" doctor ;;
         d|D) run "$DBG" dumps ;;
@@ -497,7 +553,7 @@ dispatch_remote() {
         p|P) run "$DBG" push-local ${POD_PIN:+"$POD_PIN"} ;;
         t|T) retarget ;;
         m|M) choose_mode ;;
-        q|Q) bye ;;
+        q|Q) confirm "quit jdebug?" && bye; return 1 ;;
         *) return 1 ;;   # unknown key or bare Enter: just show the menu again
     esac
     return 0   # a FAILED action must still pause so its error stays readable
@@ -520,7 +576,7 @@ dispatch_local() {
         i|I) run stage_jattach_local ;;
         s|S) local_settings ;;
         m|M) choose_mode ;;
-        q|Q) bye ;;
+        q|Q) confirm "quit jdebug?" && bye; return 1 ;;
         *) return 1 ;;   # unknown key or bare Enter: just show the menu again
     esac
     return 0   # a FAILED action must still pause so its error stays readable
@@ -531,7 +587,7 @@ dispatch_local() {
 if [[ "${1:-}" == wizard ]]; then MODE=1; wizard; bye; fi
 [[ -n "$MODE" ]] || choose_mode
 while true; do
-    if [[ "$MODE" == 1 ]]; then menu_remote; read -r choice || exit 0; dispatch_remote "$choice" || continue
-    else menu_local; read -r choice || exit 0; dispatch_local "$choice" || continue; fi
+    if [[ "$MODE" == 1 ]]; then menu_remote; read -rn1 choice || bye; printf '\n'; dispatch_remote "$choice" || continue
+    else menu_local; read -rn1 choice || bye; printf '\n'; dispatch_local "$choice" || continue; fi
     [[ "$choice" =~ ^[tTmMsSwW]$ ]] || pause
 done
