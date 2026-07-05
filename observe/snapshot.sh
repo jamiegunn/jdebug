@@ -63,8 +63,12 @@ fi
 
 POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
-SNAP="${OUT_DIR:-$JDEBUG_DUMPS}/snapshot-$TS"
+# a snapshot is just a capture session with many files — same organized home
+# as any single capture (dumps/pods/<pod>/<ts>/), so the browser lists it the
+# same way. A 'snapshot' marker file records that these files belong together.
+SNAP="${OUT_DIR:-$(session_dir "$POD" "$TS")}"
 ensure_dir "$SNAP"
+: > "$SNAP/.snapshot"
 
 PASS=0; FAIL=0
 step() {  # step <outfile> <description> <cmd...>

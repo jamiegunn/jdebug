@@ -417,7 +417,7 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 	case "c", "C":
 		return m.quickCLI(false, "doctor")
 	case "a", "A":
-		return m.quickCLI(false, "analyze")
+		return m.analyzeContext() // the open file, else the whole tree
 	case "d", "D":
 		return m.quickCLI(false, "dumps")
 	case "i", "I":

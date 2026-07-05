@@ -209,9 +209,9 @@ info "JVM PID inside pod: $JVM_PID"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 case "$ACTION" in
     threads)
-        OUT_DIR="${OUT_DIR:-$JDEBUG_DUMPS/threads}"
+        OUT_DIR="${OUT_DIR:-$(session_dir "$POD" "$TS")}"
         ensure_dir "$OUT_DIR"
-        LOCAL_PATH="$OUT_DIR/${POD}-jattach-thread-$TS.txt"
+        LOCAL_PATH="$OUT_DIR/threads-jattach.txt"
         info "running jattach jcmd 'Thread.print -l' on PID $JVM_PID"
         kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
             "$JATTACH_REMOTE_PATH" "$JVM_PID" jcmd "Thread.print -l" > "$LOCAL_PATH"
@@ -219,10 +219,10 @@ case "$ACTION" in
         info "analyze: open it in VisualVM (free, runs locally — visualvm.github.io) and look for deadlocks & blocked pools"
         ;;
     heap)
-        OUT_DIR="${OUT_DIR:-$JDEBUG_DUMPS/heap}"
+        OUT_DIR="${OUT_DIR:-$(session_dir "$POD" "$TS")}"
         ensure_dir "$OUT_DIR"
         REMOTE_PATH="/tmp/heap-jattach-$TS.hprof"
-        LOCAL_PATH="$OUT_DIR/${POD}-jattach-heap-$TS.hprof"
+        LOCAL_PATH="$OUT_DIR/heap-jattach.hprof"
         info "running jattach dumpheap (PAUSES JVM)"
         kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
             "$JATTACH_REMOTE_PATH" "$JVM_PID" dumpheap "$REMOTE_PATH"

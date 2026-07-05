@@ -147,6 +147,15 @@ ensure_dir() {
     mkdir -p "$1" || { err "cannot create directory: $1"; exit 1; }
 }
 
+# session_dir <pod> <ts> — the organized directory a capture writes into:
+# dumps/pods/<pod>/<ts>/ , so evidence groups by pod → session and the TUI
+# browser can navigate it (pod → date → file). A single capture drops one
+# file here; a snapshot drops many. Callers still honour an explicit $OUT_DIR
+# (snapshot sets its own; in-pod captures write to /tmp).
+session_dir() {
+    printf '%s/pods/%s/%s' "$JDEBUG_DUMPS" "$1" "$2"
+}
+
 # check_cluster — is the kube context actually answering? If not, translate the
 # usual kubectl failure modes into plain language and a likely fix, instead of
 # letting every later kubectl call spew TLS stack traces and memcache spam.

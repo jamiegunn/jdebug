@@ -123,17 +123,16 @@ analyze_findings() {
     fi
 }
 
-analyze_snapshot() {
-    local d="$1" m h
-    printf '\n━━ snapshot bundle: %s\n' "$d"
-    [[ -f "$d/health.json" ]] && analyze_health "$d/health.json"
-    for m in "$d/memory-report.txt" "$d/memory.txt"; do [[ -f "$m" ]] && analyze_memreport "$m"; done
-    [[ -f "$d/threads.txt" ]] && grep -q 'Full thread dump' "$d/threads.txt" 2>/dev/null && analyze_threads "$d/threads.txt"
-    [[ -f "$d/gc-heap-info.txt" ]] && analyze_gcheap "$d/gc-heap-info.txt"
-    [[ -f "$d/pod.txt" ]] && analyze_pod "$d/pod.txt"
-    [[ -f "$d/why.txt" ]] && analyze_findings "$d/why.txt" "pod deep-dive"
-    [[ -f "$d/security.txt" ]] && analyze_findings "$d/security.txt" "security posture"
-    for h in "$d"/*.hprof; do [[ -f "$h" ]] && analyze_hprof "$h"; done
+# analyze_session <dir> — one capture session (a single capture or a full
+# snapshot bundle, both now dumps/pods/<pod>/<ts>/). Dispatches every file in
+# it; related evidence groups under one header.
+analyze_session() {
+    local d="$1" kind="capture session" f
+    [[ -f "$d/.snapshot" ]] && kind="snapshot bundle"
+    printf '\n━━ %s: %s\n' "$kind" "$d"
+    while IFS= read -r f; do
+        analyze_file "$f" || true
+    done < <(find "$d" -maxdepth 1 -type f ! -name '.*' 2>/dev/null | sort)
 }
 
 analyze_file() {
@@ -142,10 +141,13 @@ analyze_file() {
     case "$f" in *.hprof) analyze_hprof "$f"; return 0 ;; esac
     if grep -q 'Full thread dump' "$f" 2>/dev/null; then analyze_threads "$f"; return 0; fi
     case "$(basename "$f")" in
-        health.json)              analyze_health "$f" ;;
-        memory-report.txt|memory.txt) analyze_memreport "$f" ;;
-        why.txt)                  analyze_findings "$f" "pod deep-dive" ;;
-        security.txt)             analyze_findings "$f" "security posture" ;;
+        health.json)                       analyze_health "$f" ;;
+        memory-report.txt|memory.txt)      analyze_memreport "$f" ;;
+        gc-heap-info.txt)                  analyze_gcheap "$f" ;;
+        pod.txt)                           analyze_pod "$f" ;;
+        why.txt)                           analyze_findings "$f" "pod deep-dive" ;;
+        security.txt)                      analyze_findings "$f" "security posture" ;;
+        threads-*.json|*-thread-*.json)    analyze_threads "$f" ;;
         *) return 1 ;;
     esac
     return 0
@@ -164,13 +166,17 @@ fi
 if [[ -f "$TARGET" ]]; then
     analyze_file "$TARGET" || { err "don't know how to analyze: $TARGET"; exit 64; }
 elif [[ -d "$TARGET" ]]; then
-    for d in "$TARGET"/snapshot-* "$TARGET"/jdebug-snapshot-*; do
-        [[ -d "$d" ]] && analyze_snapshot "$d"
-    done
-    while IFS= read -r f; do
-        analyze_file "$f" || true
-    done < <(find "$TARGET" \( -type d \( -name 'snapshot-*' -o -name 'jdebug-snapshot-*' \) -prune \) \
-                -o -type f \( -name '*.txt' -o -name '*.hprof' -o -name '*.json' \) -print 2>/dev/null | sort)
+    # a session dir directly holds capture files → analyze it as one group;
+    # otherwise walk the tree and analyze every session dir under it (newest
+    # first). "session dir" = any directory that directly contains a file.
+    if find "$TARGET" -maxdepth 1 -type f ! -name '.*' 2>/dev/null | grep -q .; then
+        analyze_session "$TARGET"
+    else
+        while IFS= read -r d; do
+            [[ -n "$d" ]] && analyze_session "$d"
+        done < <(find "$TARGET" -type f ! -name '.*' 2>/dev/null \
+                     -exec dirname {} \; | sort -ru)
+    fi
 else
     err "no such file or directory: $TARGET"
     exit 2

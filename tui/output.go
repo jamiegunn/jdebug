@@ -34,20 +34,21 @@ type streamDoneMsg struct {
 }
 
 type outState struct {
-	id      int // guards against messages from a superseded stream
-	title   string
-	display string // full command line, for the session log
-	raw     []byte
-	lines   []logLine
-	off     int // back from the tail; 0 = follow
-	running bool
-	done    bool
-	ok      bool
-	errStr  string
-	notice  string // transient feedback, e.g. "copied to clipboard ✓"
-	show    bool   // rendering in the bottom strip (vs scOutput fallback)
-	ch      chan tea.Msg
-	cancel  context.CancelFunc
+	id       int // guards against messages from a superseded stream
+	title    string
+	display  string // full command line, for the session log
+	raw      []byte
+	lines    []logLine
+	off      int // back from the tail; 0 = follow
+	running  bool
+	done     bool
+	ok       bool
+	errStr   string
+	notice   string // transient feedback, e.g. "copied to clipboard ✓"
+	filePath string // a capture is being VIEWED — `a` analyzes this file
+	show     bool   // rendering in the bottom strip (vs scOutput fallback)
+	ch       chan tea.Msg
+	cancel   context.CancelFunc
 }
 
 // copyTranscript puts the pane's ANSI-free transcript on the system
@@ -355,7 +356,7 @@ func (m model) outputKey(key string) (tea.Model, tea.Cmd) {
 		}
 		m.scr = m.prev
 		m.out.show = false
-		return m, tea.Batch(m.panelFetch(), fetchCaps(m.kit))
+		return m, tea.Batch(m.panelFetch(), fetchCaps(m.kit, m.capsDir()))
 	case "C":
 		return m.copyTranscript(), nil
 	case "ctrl+c":
@@ -378,7 +379,7 @@ func (m model) menuOutKey(key string) (tea.Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		m.out.show = false
-		return m, tea.Batch(m.panelFetch(), fetchCaps(m.kit)), true
+		return m, tea.Batch(m.panelFetch(), fetchCaps(m.kit, m.capsDir())), true
 	case "C":
 		return m.copyTranscript(), nil, true
 	case "up", "down", "pgup", "pgdown":

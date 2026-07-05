@@ -53,12 +53,12 @@ fi
 
 POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
 
-OUT_DIR="${OUT_DIR:-$JDEBUG_DUMPS/heap}"
-ensure_dir "$OUT_DIR"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
+OUT_DIR="${OUT_DIR:-$(session_dir "$POD" "$TS")}"
+ensure_dir "$OUT_DIR"
 DEBUG_CONTAINER="jmap-$(date +%s)"       # RFC 1123: lowercase alnum + '-' only
 REMOTE_PATH="/tmp/heap-jdk-$TS.hprof"    # written by the JVM → app container's /tmp
-LOCAL_PATH="$OUT_DIR/${POD}-jdk-heap-$TS.hprof"
+LOCAL_PATH="$OUT_DIR/heap-jdk.hprof"
 
 # Runs inside the debug container: find the JVM PID, hand-shake the HotSpot
 # attach protocol across the container boundary (see dump-threads.sh for the

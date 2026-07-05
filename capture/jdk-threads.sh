@@ -35,11 +35,11 @@ require_cmd kubectl
 parse_common_args "$@"
 POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
 
-OUT_DIR="${OUT_DIR:-$JDEBUG_DUMPS/threads}"
-ensure_dir "$OUT_DIR"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
+OUT_DIR="${OUT_DIR:-$(session_dir "$POD" "$TS")}"
+ensure_dir "$OUT_DIR"
 DEBUG_CONTAINER="jstack-$(date +%s)"     # RFC 1123: lowercase alnum + '-' only
-LOCAL_PATH="$OUT_DIR/${POD}-jdk-thread-$TS.txt"
+LOCAL_PATH="$OUT_DIR/threads-jdk.txt"
 
 # Runs inside the debug container: find the JVM PID (PID 1 is /pause under
 # shareProcessNamespace), hand-shake the HotSpot attach protocol across the

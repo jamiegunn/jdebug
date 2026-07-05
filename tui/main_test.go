@@ -8,6 +8,7 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -218,7 +219,7 @@ func TestDashboardShowsPanes(t *testing.T) {
 	m.width, m.height = 200, 50
 	out := m.menuView()
 	for _, want := range []string{"LIVE LOGS", "EVENTS", "CAPTURES", "TRENDS", "PODS", "▲",
-		"OutOfMemoryError", "BackOff", "threads-pod-a", "click switches"} {
+		"OutOfMemoryError", "BackOff", "20260705T091500Z", "click switches"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dashboard missing %q", want)
 		}
@@ -575,13 +576,20 @@ func TestNarrowHeaderSplitsTargetLine(t *testing.T) {
 	}
 }
 
-func TestCapturesNameNextStep(t *testing.T) {
-	m := readyModel()
-	rows := strings.Join(m.capsRows(72, 8), "\n")
-	for _, want := range []string{"Eclipse MAT", "a / VisualVM", "a analyzes"} {
+func TestCapturesBrowserRenders(t *testing.T) {
+	m := readyModel() // demo is browsing a pod's sessions
+	rows := strings.Join(m.capsRows(72, 10), "\n")
+	for _, want := range []string{"CAPTURES", "click opens · a analyzes", "..", "drill in", "▸"} {
 		if !strings.Contains(rows, want) {
-			t.Errorf("captures pane missing next-step %q", want)
+			t.Errorf("captures browser missing %q", want)
 		}
+	}
+	// capHint routes file types to the right next step
+	if got := capHint(capEntry{Name: "heap-jattach.hprof"}); got != "a → histogram" {
+		t.Errorf("hprof hint = %q", got)
+	}
+	if got := capHint(capEntry{Name: "threads-jattach.txt"}); got != "view · a" {
+		t.Errorf("txt hint = %q", got)
 	}
 }
 
@@ -815,23 +823,68 @@ func TestCopyTranscriptNotices(t *testing.T) {
 	}
 }
 
-func TestCaptureClickOpens(t *testing.T) {
-	saved := openFileFn
-	defer func() { openFileFn = saved }()
-	var opened string
-	openFileFn = func(p string) error { opened = p; return nil }
+func TestCaptureBrowserDrillAndView(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("JDEBUG_DUMPS", filepath.Join(dir, "dumps")) // dumpsDir honours this
+	sess := filepath.Join(dir, "dumps", "pods", "pod-a", "20260705T010000Z")
+	if err := os.MkdirAll(sess, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	os.WriteFile(filepath.Join(sess, "threads-jattach.txt"), []byte("Full thread dump\n\"main\" RUNNABLE"), 0o644)
+	os.WriteFile(filepath.Join(sess, "heap-jattach.hprof"), append([]byte("JAVA PROFILE 1.0.2\x00"), 0x01, 0x02), 0o644)
+
+	// helper: apply a fetchCaps result to the model
+	load := func(m model) model {
+		mm, _ := m.Update(fetchCaps(m.kit, m.capsDir())())
+		return mm.(model)
+	}
+
 	m := readyModel()
+	m.kit = dir
+	m.t.Pod = "pod-a"
+	m.capsCwd = "" // clear the demo's browse dir; use the real pre-filter
 	m.width, m.height = 200, 50
-	menuW, midW, _ := m.cols()
-	body := m.remoteBody()
-	topH := strings.Count(body, "\n") + 1
-	podH, evH, _ := rightHeights(topH)
-	x := menuW + midW + 4 + 2
-	y := 3 + podH + evH + 1 // first capture row
-	res, _ := m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
-	_ = res
-	if !strings.Contains(opened, m.caps[0].Name) {
-		t.Fatalf("clicking the first capture must open it, got %q", opened)
+
+	// pre-filtered to the pod: one session folder, plus an up-row (below pods root)
+	m = load(m)
+	if len(m.caps) != 1 || !m.caps[0].Dir {
+		t.Fatalf("pod dir should list one session folder, got %+v", m.caps)
+	}
+	if !m.capsHasUp() {
+		t.Fatal("a pod dir sits below the pods root, so '..' must be offered")
+	}
+
+	// content row 1 is the folder (row 0 is ".."); drill in
+	res, _ := m.capsClick(1)
+	m = load(res.(model))
+	var sawText, sawHeap bool
+	for _, c := range m.caps {
+		sawText = sawText || strings.HasPrefix(c.Name, "threads")
+		sawHeap = sawHeap || strings.HasSuffix(c.Name, ".hprof")
+	}
+	if !sawText || !sawHeap {
+		t.Fatalf("drilling into the session must list its files, got %+v", m.caps)
+	}
+
+	// view the text file → loads into the pane; `a` then targets that file
+	tv, _ := m.viewFile(filepath.Join(sess, "threads-jattach.txt"))
+	vm := tv.(model)
+	if vm.out.filePath == "" || !strings.Contains(string(vm.out.raw), "Full thread dump") {
+		t.Fatal("viewing a text capture must load it into the pane")
+	}
+	_, acmd := vm.analyzeContext()
+	if acmd == nil {
+		t.Fatal("analyze with a file in view must run (on that file)")
+	}
+
+	// view the heap dump → metadata, never raw binary
+	hv, _ := m.viewFile(filepath.Join(sess, "heap-jattach.hprof"))
+	hm := hv.(model)
+	if strings.ContainsRune(string(hm.out.raw), 0) {
+		t.Fatal("a heap dump must never be shown as raw bytes")
+	}
+	if !strings.Contains(string(hm.out.raw), "heap dump") {
+		t.Fatalf("heap view must explain what it is, got %q", string(hm.out.raw))
 	}
 }
 

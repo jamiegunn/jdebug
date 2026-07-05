@@ -160,21 +160,26 @@ run_case ./jdebug dumps
 assert_has "empty: says none yet" "none yet"
 assert_has "empty: suggests a safe first capture" "jdebug threads"
 
-mkdir -p "$TMP/dumps/threads" "$TMP/dumps/snapshot-20260704T000000Z"
-echo t > "$TMP/dumps/threads/pod-a-thread.txt"
-echo s > "$TMP/dumps/snapshot-20260704T000000Z/health.json"
+# organized layout: dumps/pods/<pod>/<ts>/<file>
+mkdir -p "$TMP/dumps/pods/pod-a/20260704T010000Z" "$TMP/dumps/pods/pod-a/20260704T020000Z"
+echo t > "$TMP/dumps/pods/pod-a/20260704T010000Z/threads-jattach.txt"
+: > "$TMP/dumps/pods/pod-a/20260704T020000Z/.snapshot"
+echo s > "$TMP/dumps/pods/pod-a/20260704T020000Z/health.json"
 run_case ./jdebug dumps
-assert_has "lists thread capture" "threads/pod-a-thread.txt"
-assert_has "lists snapshot dir as one entry" "snapshot-20260704T000000Z"
-assert_has "explains VisualVM (local) for threads" "VisualVM"
-assert_has "explains MAT for heap" "Leak Suspects"
-assert_has "PII warning present" "real user data"
+assert_has "dumps: groups by pod" "pod-a/"
+assert_has "dumps: lists a single capture file" "threads-jattach.txt"
+assert_has "dumps: marks a snapshot bundle" "snapshot bundle"
+assert_has "dumps: explains VisualVM (local) for threads" "VisualVM"
+assert_has "dumps: explains MAT for heap" "Leak Suspects"
+assert_has "dumps: PII warning present" "real user data"
 rm -rf "$TMP/dumps"
 
 # --- jdebug analyze: first-pass triage of captures -------------------------------
 section "jdebug analyze"
-AD="$TMP/dumps"; mkdir -p "$AD/threads" "$AD/snapshot-20260704T000000Z"
-cat > "$AD/threads/pod-a-thread.txt" <<'EOF'
+AD="$TMP/dumps"
+SESS="$AD/pods/pod-a/20260704T010000Z"; BUNDLE="$AD/pods/pod-a/20260704T020000Z"
+mkdir -p "$SESS" "$BUNDLE"; : > "$BUNDLE/.snapshot"
+cat > "$SESS/threads-jattach.txt" <<'EOF'
 Full thread dump OpenJDK 64-Bit Server VM
 "main" #1 prio=5
    java.lang.Thread.State: RUNNABLE
@@ -193,10 +198,10 @@ Full thread dump OpenJDK 64-Bit Server VM
 
 Found one Java-level deadlock:
 EOF
-printf 'JAVA PROFILE 1.0.2\0heapbytes' > "$AD/good.hprof"
-printf 'HTTP 404 not found' > "$AD/bad.hprof"
+printf 'JAVA PROFILE 1.0.2\0heapbytes' > "$SESS/good.hprof"
+printf 'HTTP 404 not found' > "$SESS/bad.hprof"
 printf '{"status":"DOWN","components":{"db":{"status":"DOWN"},"redis":{"status":"UP"}}}' \
-    > "$AD/snapshot-20260704T000000Z/health.json"
+    > "$BUNDLE/health.json"
 
 run_case ./jdebug analyze
 assert_rc  "analyze exits 0" 0
@@ -211,7 +216,7 @@ assert_has "hprof: invalid one flagged" "NOT a valid hprof"
 assert_has "summary counts findings" "finding(s) flagged above"
 assert_has "analyze names the next move" "Next: chase the ⚠ findings"
 
-run_case ./jdebug analyze "$AD/threads/pod-a-thread.txt"
+run_case ./jdebug analyze "$SESS/threads-jattach.txt"
 assert_has "single-file analysis works" "DEADLOCK detected"
 rm -rf "$AD"
 

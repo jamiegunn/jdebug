@@ -259,33 +259,50 @@ case "$cmd" in
     analyze)         "$D/observe/analyze.sh" ${ARGS[@]+"${ARGS[@]}"} ;;
 
     dumps|captures)
-        echo "Captured evidence — $JDEBUG_DUMPS (newest first)"
+        echo "Captured evidence — $JDEBUG_DUMPS (organized by pod → session → file)"
         echo
-        # snapshot dirs listed as one entry; capture filenames never contain
-        # spaces (pod names + timestamps), so word-splitting $names is safe.
-        # `|| true`: common.sh sets -e; a missing dumps dir must mean "none yet", not death.
-        names="$(cd "$JDEBUG_DUMPS" 2>/dev/null && find . \( -type d -name 'snapshot-*' -prune -print \) -o -type f -print 2>/dev/null | sed 's|^\./||')" || true
-        if [[ -z "$names" ]]; then
+        # Walk the organized tree: dumps/pods/<pod>/<ts>/<files>. A session dir
+        # with a .snapshot marker is a bundle; otherwise it's single captures.
+        # `|| true`: common.sh sets -e; a missing dir must mean "none yet".
+        found=0
+        if [[ -d "$JDEBUG_DUMPS/pods" ]]; then
+            while IFS= read -r pod; do
+                [[ -z "$pod" ]] && continue
+                found=1
+                printf '  %s/\n' "$(basename "$pod")"
+                while IFS= read -r ts; do
+                    [[ -z "$ts" ]] && continue
+                    kind="session"; [[ -f "$ts/.snapshot" ]] && kind="snapshot bundle"
+                    nfiles=$(find "$ts" -type f ! -name '.*' 2>/dev/null | wc -l | tr -d ' ')
+                    printf '    %s/   (%s, %s file(s))\n' "$(basename "$ts")" "$kind" "$nfiles"
+                    find "$ts" -type f ! -name '.*' 2>/dev/null | sort | while IFS= read -r f; do
+                        printf '      %6s  %s\n' "$(du -h "$f" 2>/dev/null | cut -f1 | tr -d ' ')" "$(basename "$f")"
+                    done
+                done < <(find "$pod" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r)
+            done < <(find "$JDEBUG_DUMPS/pods" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort)
+        fi
+        # legacy flat layout (pre-reorg dumps) — still list it if present
+        legacy="$(cd "$JDEBUG_DUMPS" 2>/dev/null && find . -maxdepth 2 \( -path './pods' -o -name 'session-*' \) -prune -o -type f -print 2>/dev/null | sed 's|^\./||')" || true
+        [[ -n "$legacy" ]] && { found=1; echo "  (older flat captures:)"; printf '    %s\n' $legacy; }
+        if [[ "$found" -eq 0 ]]; then
             echo "  none yet — threads, heap, and snapshot save their files here automatically."
             echo "  Try: jdebug threads   (safe, instant)"
             exit 0
         fi
-        # shellcheck disable=SC2086
-        (cd "$JDEBUG_DUMPS" && ls -dlht $names 2>/dev/null | awk '{printf "  %8s   %s %2s %5s   %s\n", $5, $6, $7, $8, $9}')
         cat <<'HINTS'
 
   These files are already on YOUR machine. How to analyze each kind:
-    threads/*.txt     open in VisualVM (free, local — visualvm.github.io);
-                      'jdebug analyze' flags deadlocks, blocked pools, hot loops
-    heap/*.hprof      Eclipse MAT → File → Open Heap Dump → run "Leak Suspects"
-    snapshot-*/       start with memory-report.txt and threads.txt; the jcmd-*.txt
-                      files hold GC + native-memory detail
+    threads-*.txt     'jdebug analyze <file>' flags deadlocks, blocked pools, hot loops;
+                      deeper: VisualVM (free, local — visualvm.github.io)
+    heap-*.hprof      'jdebug analyze <file>' prints a class histogram (biggest consumers);
+                      deeper: Eclipse MAT → Open Heap Dump → "Leak Suspects"
+    why.txt/security.txt   the kubernetes-layer findings, already summarized
     session-*.log     transcript of everything you ran in the menu (and its output)
 
   ⚠ Heap dumps contain whatever the app had in memory — possibly real user data.
     Treat them like production data; delete them when the investigation is done.
 
-  First-pass triage of everything above in one go:  jdebug analyze
+  Analyze one session:  jdebug analyze <dir>   ·   everything:  jdebug analyze
 HINTS
         ;;
     logs)            fwd "$D/observe/tail-logs.sh" ;;

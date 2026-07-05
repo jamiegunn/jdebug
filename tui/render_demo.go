@@ -42,11 +42,12 @@ func demoModel() model {
 		{Age: "7m", Type: "Normal", Reason: "Pulled", Msg: "Container image already present on machine"},
 		{Age: "9m", Type: "Normal", Reason: "Started", Msg: "Started container app"},
 	}
+	// browsing this pod's sessions: two timestamped dirs (one a snapshot bundle)
 	m.caps = []capEntry{
-		{Name: "threads-pod-a-20260705-1030.txt", Size: 12 << 10, Mod: time.Now().Add(-3 * time.Minute)},
-		{Name: "heap-pod-a-20260705-0940.hprof", Size: 210 << 20, Mod: time.Now().Add(-time.Hour)},
-		{Name: "snapshot-pod-a-20260705-0915", Size: 34 << 20, Mod: time.Now().Add(-2 * time.Hour), Dir: true},
+		{Name: "20260705T103000Z", Size: 12 << 10, Mod: time.Now().Add(-3 * time.Minute), Dir: true},
+		{Name: "20260705T091500Z", Size: 34 << 20, Mod: time.Now().Add(-2 * time.Hour), Dir: true, Snap: true},
 	}
+	m.capsCwd = "dumps/pods/app-debug-demo-app-6c6c4b5769-s9jdg"
 	m.logs.lines = classifyLogs([]string{
 		"10:29:51 INFO  [http-nio-8080-exec-3] c.e.d.DemoController : request served in 12ms",
 		"10:29:53 INFO  [scheduler-1] c.e.d.CacheWarmer : warmed 1200 entries",

@@ -79,6 +79,8 @@ type model struct {
 	eventsErr string
 	hist      []sample // sparkline history, one point per panel fetch
 	caps      []capEntry
+	capsCwd   string // CAPTURES browser: explicit browse dir ("" = pod default)
+	capsOff   int
 	pods      []string // PODS pane: what the selector/namespace matches
 	podsScope string
 	podsErr   string
@@ -111,14 +113,14 @@ func (m model) Init() tea.Cmd {
 	// (the 5s log ticker arms on the first WindowSizeMsg — the one event
 	// every entry path shares exactly once)
 	if m.mode == 1 {
-		cmds := []tea.Cmd{fetchPanel(m.t), fetchEvents(m.t), fetchCaps(m.kit),
+		cmds := []tea.Cmd{fetchPanel(m.t), fetchEvents(m.t), fetchCaps(m.kit, m.capsDir()),
 			fetchPodList(m.t), tickCmd(), autoStatusCmd()}
 		if m.t.Pod != "" {
 			cmds = append(cmds, fetchLogs(m.t))
 		}
 		return tea.Batch(cmds...)
 	}
-	return tea.Batch(fetchCaps(m.kit), tickCmd())
+	return tea.Batch(fetchCaps(m.kit, m.capsDir()), tickCmd())
 }
 
 // autoStatusCmd: the dashboard's opening move — after two quiet seconds it
@@ -159,7 +161,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.scr != scChooser {
 			m.scr = scMenu
 		}
-		cmds := []tea.Cmd{m.panelFetch(), fetchCaps(m.kit)}
+		cmds := []tea.Cmd{m.panelFetch(), fetchCaps(m.kit, m.capsDir())}
 		if m.mode == 1 {
 			cmds = append(cmds, fetchEvents(m.t), fetchPodList(m.t))
 			if m.showLogPane() && !m.logBusy {
@@ -199,7 +201,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.out.errStr = firstLine(v.err.Error())
 		}
 		appendSessionLog(m.out.display, m.out.raw, v.err)
-		cmds := []tea.Cmd{m.panelFetch(), fetchCaps(m.kit)}
+		cmds := []tea.Cmd{m.panelFetch(), fetchCaps(m.kit, m.capsDir())}
 		if m.mode == 1 {
 			cmds = append(cmds, fetchEvents(m.t))
 		}
@@ -228,7 +230,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.eventsErr = v.err
 		return m, nil
 	case capsMsg:
-		m.caps = []capEntry(v)
+		// ignore a stale fetch that resolved after the user navigated away
+		if v.dir == m.capsDir() {
+			m.caps = v.entries
+			if m.capsOff > len(m.caps) {
+				m.capsOff = 0
+			}
+		}
 		return m, nil
 	case podsMsg:
 		m.pods = v.lines
@@ -239,7 +247,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.handleMouse(v)
 	case tickMsg:
 		if m.scr == scMenu && m.mode == 1 && m.remote.OK {
-			cmds := []tea.Cmd{fetchEvents(m.t), fetchCaps(m.kit), fetchPodList(m.t), tickCmd()}
+			cmds := []tea.Cmd{fetchEvents(m.t), fetchCaps(m.kit, m.capsDir()), fetchPodList(m.t), tickCmd()}
 			if !m.panelBusy {
 				cmds = append(cmds, m.panelFetch())
 			}
@@ -268,16 +276,17 @@ func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if pod := m.podsClickTarget(v.X, v.Y); pod != "" {
 			return m.switchPod(pod)
 		}
-		if path := m.captureClickPath(v.X, v.Y); path != "" {
-			if err := openFileFn(path); err != nil {
-				m.out.notice = "couldn't open: " + firstLine(err.Error())
-			}
-			return m, nil
+		if in, row := m.capsHit(v.X, v.Y); in {
+			return m.capsClick(row)
 		}
 	case v.Button == tea.MouseButtonWheelUp:
 		if in, _ := m.podsHit(v.X, v.Y); in {
 			if m.podsOff > 0 {
 				m.podsOff--
+			}
+		} else if in, _ := m.capsHit(v.X, v.Y); in {
+			if m.capsOff > 0 {
+				m.capsOff--
 			}
 		} else if outVisible {
 			return m.outScroll("pgup", 3), nil // 3 lines per wheel notch
@@ -286,6 +295,10 @@ func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if in, _ := m.podsHit(v.X, v.Y); in {
 			if m.podsOff < len(m.pods)-1 {
 				m.podsOff++
+			}
+		} else if in, _ := m.capsHit(v.X, v.Y); in {
+			if m.capsOff < len(m.caps)-1 {
+				m.capsOff++
 			}
 		} else if outVisible {
 			return m.outScroll("pgdown", 3), nil

@@ -69,13 +69,13 @@ TS="$(date -u +%Y%m%dT%H%M%SZ)"
 
 case "$ACTION" in
     threads)
-        OUT_DIR="${OUT_DIR:-$JDEBUG_DUMPS/threads}"
+        OUT_DIR="${OUT_DIR:-$(session_dir "$POD" "$TS")}"
         ensure_dir "$OUT_DIR"
         if [[ $AS_JSON -eq 1 ]]; then
-            LOCAL_PATH="$OUT_DIR/${POD}-actuator-thread-$TS.json"
+            LOCAL_PATH="$OUT_DIR/threads-actuator.json"
             ACCEPT="application/json"
         else
-            LOCAL_PATH="$OUT_DIR/${POD}-actuator-thread-$TS.txt"
+            LOCAL_PATH="$OUT_DIR/threads-actuator.txt"
             ACCEPT="text/plain"
         fi
         info "thread dump via actuator (pod=$POD)"
@@ -97,9 +97,9 @@ case "$ACTION" in
         info "analyze: open it in VisualVM (free, runs locally — visualvm.github.io) and look for deadlocks & blocked pools"
         ;;
     heap)
-        OUT_DIR="${OUT_DIR:-$JDEBUG_DUMPS/heap}"
+        OUT_DIR="${OUT_DIR:-$(session_dir "$POD" "$TS")}"
         ensure_dir "$OUT_DIR"
-        LOCAL_PATH="$OUT_DIR/${POD}-actuator-heap-$TS.hprof"
+        LOCAL_PATH="$OUT_DIR/heap-actuator.hprof"
         info "heap dump via actuator (pod=$POD) — this PAUSES the JVM"
         show_cmd "kubectl -n $NAMESPACE exec $POD -c $APP_CONTAINER -- sh -c '<curl-or-wget> $ACTUATOR_BASE/heapdump' > $LOCAL_PATH"
         if ! kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
