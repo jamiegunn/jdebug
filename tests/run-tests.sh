@@ -275,6 +275,27 @@ assert_has "topology detects the replicas-vs-HPA fight" "they FIGHT"
 assert_has "topology lists the routing Service" "Services routing here: app"
 assert_has "topology ends with a verdict" "Bottom line:"
 
+# --- runtime context / app wiring ---------------------------------------------
+section "context (app wiring: services, env, probes, deps)"
+MOCK_CONTEXT=1 run_case ./jdebug context pod-a
+assert_rc  "context exits 0" 0
+assert_has "context: owner + image" "image reg/payments:1.4.2"
+assert_has "context: services & ports" "port 80 (http) → targetPort 8080"
+assert_has "context: endpoints membership" "IS in rotation"
+assert_has "context: probes with thresholds" "readiness: HTTP /actuator/health/readiness"
+assert_has "context: JVM env surfaced" "JAVA_TOOL_OPTIONS"
+assert_has "context: Spring profiles" "Spring profiles: prod,cluster"
+assert_has "context: secretKeyRef shown as reference" "← Secret app-secrets/redis-pw"
+assert_has "context: memory-backed volume flagged" "MEMORY-backed"
+assert_has "context: PVC named" "PVC payments-pvc"
+assert_has "context: Valkey/Redis client detected" "SPRING_DATA_REDIS_HOST"
+assert_has "context: cluster-announce surfaced" "cluster-announce-ip"
+assert_has "context: requirepass redacted (never printed)" "requirepass <redacted>"
+assert_not "context: never prints the redis secret value" "supersecret"
+assert_has "context: cluster-announce warning" "verify they resolve from CLIENTS"
+# a secretKeyRef VALUE must never leak, and neither should a Secret env value
+assert_not "context: no raw secret env values" "redis-pw ="
+
 # --- lifecycle: state-changing actions, gated hard -------------------------------
 section "lifecycle (re-roll / kill)"
 run_case ./jdebug restart pod-a
@@ -563,6 +584,9 @@ assert_has "target editor: containers read from the PINNED pod" "Container (in p
 
 run_input 'aqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "menu: a runs analyze" "first-pass triage"
+
+MOCK_CONTEXT=1 run_input 'eqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "menu: e runs context (app wiring)" "runtime context"
 
 run_input 'q' ./ui/tui.sh
 assert_rc  "mode chooser: q exits" 0

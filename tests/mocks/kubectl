@@ -47,7 +47,18 @@ case "$*" in
         printf 'app\nsidecar\n' ;;
     *" get pod "*"-o json"*)
         [ "${MOCK_POD_GONE:-}" = 1 ] && exit 1
+        if [ "${MOCK_CONTEXT:-}" = 1 ]; then
+            # rich pod for `jdebug context`: env (incl. JVM + redis + a secretKeyRef),
+            # envFrom, probes, volumes (tmpfs + PVC + configMap + secret)
+            printf '{"metadata":{"name":"pod-a","labels":{"app":"payments"},"ownerReferences":[{"kind":"ReplicaSet","name":"app-6c6c4b5769"}]},"status":{"phase":"Running"},"spec":{"volumes":[{"name":"cache","emptyDir":{"medium":"Memory"}},{"name":"data","persistentVolumeClaim":{"claimName":"payments-pvc"}},{"name":"cfg","configMap":{"name":"redis-config"}},{"name":"creds","secret":{"secretName":"app-secrets"}}],"containers":[{"name":"app","image":"reg/payments:1.4.2","command":["java"],"args":["-jar","app.jar"],"volumeMounts":[{"name":"cache","mountPath":"/tmp/cache"},{"name":"data","mountPath":"/data","readOnly":true},{"name":"cfg","mountPath":"/etc/redis"}],"readinessProbe":{"httpGet":{"path":"/actuator/health/readiness","port":8080},"initialDelaySeconds":10,"periodSeconds":5,"timeoutSeconds":2,"failureThreshold":3},"livenessProbe":{"httpGet":{"path":"/actuator/health/liveness","port":8080},"periodSeconds":10,"failureThreshold":3},"env":[{"name":"JAVA_TOOL_OPTIONS","value":"-XX:MaxRAMPercentage=75"},{"name":"SPRING_PROFILES_ACTIVE","value":"prod,cluster"},{"name":"TZ","value":"UTC"},{"name":"HTTPS_PROXY","value":"http://proxy:3128"},{"name":"SPRING_DATA_REDIS_HOST","value":"valkey.svc"},{"name":"SPRING_DATA_REDIS_PASSWORD","valueFrom":{"secretKeyRef":{"name":"app-secrets","key":"redis-pw"}}},{"name":"DB_URL","valueFrom":{"configMapKeyRef":{"name":"app-config","key":"db-url"}}}],"envFrom":[{"configMapRef":{"name":"app-config"}},{"secretRef":{"name":"app-secrets"}}]}]}}'
+            exit 0
+        fi
         printf '{"metadata":{"name":"pod-a","labels":{"app":"payments"},"ownerReferences":[{"kind":"ReplicaSet","name":"app-6c6c4b5769"}]},"status":{"phase":"Running","qosClass":"Burstable","containerStatuses":[{"name":"app","restartCount":3,"state":{"waiting":{"reason":"CrashLoopBackOff"}},"lastState":{"terminated":{"reason":"OOMKilled","exitCode":137}}}]},"spec":{"serviceAccountName":"default","containers":[{"name":"app","resources":{"requests":{"memory":"256Mi","cpu":"100m"},"limits":{"memory":"512Mi","cpu":"500m"}},"livenessProbe":{"httpGet":{"path":"/actuator/health","port":8080},"periodSeconds":10,"failureThreshold":3}}]}}' ;;
+    *"get endpoints"*"-o json"*)
+        printf '{"items":[{"metadata":{"name":"app"},"subsets":[{"addresses":[{"ip":"10.0.0.5","targetRef":{"name":"pod-a"}}]}]}]}' ;;
+    *"get configmap"*"-o json"*)
+        # a mounted redis.conf with cluster-announce settings (the classic footgun)
+        printf '{"metadata":{"name":"redis-config"},"data":{"redis.conf":"cluster-enabled yes\\ncluster-announce-ip 10.1.2.3\\ncluster-announce-port 6379\\nrequirepass supersecret\\nmaxmemory 512mb\\nmaxmemory-policy allkeys-lru\\n"}}' ;;
     *"get deployment"*"-o json"*)
         # rich enough for both why.sh (last-applied replicas) and topology.sh
         # (kind, revision, status, template labels)
@@ -60,7 +71,7 @@ case "$*" in
         # topology: current revision-3 RS + an old revision-2 RS still running a pod
         printf '{"items":[{"metadata":{"name":"app-6c6c4b5769","annotations":{"deployment.kubernetes.io/revision":"3"},"ownerReferences":[{"kind":"Deployment","name":"app"}]},"spec":{"replicas":3},"status":{"readyReplicas":2}},{"metadata":{"name":"app-59d8ff7c44","annotations":{"deployment.kubernetes.io/revision":"2"},"ownerReferences":[{"kind":"Deployment","name":"app"}]},"spec":{"replicas":1},"status":{"readyReplicas":1}}]}' ;;
     *"get svc"*"-o json"*)
-        printf '{"items":[{"metadata":{"name":"app"},"spec":{"selector":{"app":"payments"}}}]}' ;;
+        printf '{"items":[{"metadata":{"name":"app"},"spec":{"type":"ClusterIP","clusterIP":"10.96.0.20","selector":{"app":"payments"},"ports":[{"name":"http","port":80,"targetPort":8080,"protocol":"TCP"}]}}]}' ;;
     *" top pod "*)
         if [ "${MOCK_TOP:-}" = absent ]; then
             echo 'error: Metrics API not available' >&2; exit 1

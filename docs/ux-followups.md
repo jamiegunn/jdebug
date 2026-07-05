@@ -104,14 +104,22 @@ probe, raise a limit) should be explanation or copy-paste unless a strongly
 confirmed remediation flow is designed — the pattern set by `re-roll` and
 `kill pod` (hard confirm + full risk brief).
 
-## Runtime context / app wiring
+## Runtime context / app wiring — SHIPPED
 
-**Goal:** answer “what is this app, what exposes it, what config is it running
-with, and what dependencies might be miswired?” without making the user jump
-between pod specs, Services, ConfigMaps, Secrets, and JVM commands.
+A new read-only verb `jdebug context` (`observe/context.sh`, reachable as `e` in
+both frontends) answers "what is this app, what exposes it, what config is it
+running with, and what dependencies might be miswired?" in one pass. It reads the
+pod spec + Services/Endpoints + referenced ConfigMaps and prints scan-friendly
+sections — **owner & rollout · services & ports (incl. endpoint membership) ·
+probes · environment (JVM env, Spring profiles, tz, proxies, envFrom) · secret &
+config references · volumes & storage (tmpfs/PVC/memory-backed flagged) ·
+dependencies · Valkey/Redis** — each naming the command it used. Secret VALUES
+are never printed: sensitive keys and secretKeyRef values show as
+`<redacted>` / `← Secret name/key`. JVM live flags are pointed at
+`jdebug jcmd 'VM.flags'` rather than probed, keeping `context` kubectl-only.
 
-**Entry point:** expand `jdebug topology` or add a sibling read-only verb such
-as `jdebug context`. Organize the output into scan-friendly sections:
+Remaining refinement (kept as ideas): external IP/hostname for LoadBalancer
+Services, Ingress/Gateway/NetworkPolicy discovery. Original section spec:
 
 - Owner and rollout: Deployment/ReplicaSet revision, ready/updated/available
   replicas, strategy, image tag/digest, command/args, rollout status.
@@ -135,13 +143,19 @@ as `jdebug context`. Organize the output into scan-friendly sections:
 Every section should print or link to the command/API used to gather it. Secret
 values must be redacted; show names/keys/references only.
 
-## Dependency-aware checks: Valkey / Redis-compatible
+## Dependency-aware checks: Valkey / Redis-compatible — SHIPPED
 
-**Goal:** when env/config suggests Valkey or Redis-compatible clients, surface
-the configuration that commonly explains connectivity and cluster routing
-failures.
+The `dependencies · Valkey / Redis` section of `jdebug context` surfaces both
+client-side settings (from the app's `REDIS/VALKEY/LETTUCE/JEDIS` env, passwords
+redacted) and server-side config found in mounted `redis.conf`-style ConfigMaps:
+`cluster-enabled`, all `cluster-announce-*` / `replica-announce-*`,
+`bind`/`protected-mode`/`port`/`tls-port`, `requirepass`/`masterauth`
+(presence only, always `<redacted>`), `maxmemory*`, `appendonly`, and the
+`cluster-node-timeout`/`require-full-coverage`/`migration-barrier` knobs. When
+announce settings are present it flags the classic "works in the pod, clients
+fail from elsewhere" footgun. Extensible for future deps (DB/Kafka/mesh).
 
-Useful safe clues/checks:
+Original clue list:
 
 - Client host/port/db/SSL settings from env/config, with secrets redacted.
 - `cluster-enabled`.
