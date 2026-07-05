@@ -21,8 +21,11 @@ func (m model) openEditor() (tea.Model, tea.Cmd) {
 }
 
 func (m model) editorView() string {
-	row := func(k, name, val string) string {
-		return "   " + cKey.Render(k) + "  " + cBody.Render(fmt.Sprintf("%-11s", name)) + cMuted.Render(val)
+	// every field carries a plain-language gloss — nobody should need the
+	// glossary mid-incident
+	row := func(k, name, val, gloss string) string {
+		return "   " + cKey.Render(k) + "  " + cBody.Render(fmt.Sprintf("%-11s", name)) +
+			cMuted.Render(fmt.Sprintf("%-34s", val)) + cFaint.Render(gloss)
 	}
 	sel := m.t.Selector
 	if sel == "" {
@@ -34,16 +37,33 @@ func (m model) editorView() string {
 	}
 	out := "\n  " + cTitle.Render("TARGET") + cMuted.Render(" — press a letter to change a field · ") +
 		cKey.Render("Enter") + cMuted.Render("/") + cKey.Render("b") + cMuted.Render(" back to the menu") + "\n" +
-		row("c", "context", currentContext()) + "\n" +
-		row("n", "namespace", m.t.Namespace) + "\n" +
-		row("s", "selector", sel) + "\n" +
-		row("p", "pod", pod) + "\n" +
-		row("o", "container", m.t.Container) + "\n" +
-		row("a", "actuator", m.t.Actuator) + "\n"
+		row("c", "context", currentContext(), "which cluster kubectl talks to") + "\n" +
+		row("n", "namespace", m.t.Namespace, "the app's folder in the cluster") + "\n" +
+		row("s", "selector", sel, "label that finds your app's pods") + "\n" +
+		row("p", "pod", pod, "one running copy of the app") + "\n" +
+		row("o", "container", m.t.Container, "the app's box inside the pod") + "\n" +
+		row("a", "actuator", m.t.Actuator, "Spring Boot admin endpoint in the app") + "\n"
+	if next := m.editorNext(); next != "" {
+		out += "\n  " + cOK.Render("▸ ") + cBody.Render(next) + "\n"
+	}
 	if m.editor.note != "" {
 		out += "  " + cWarn.Render(m.editor.note) + "\n"
 	}
 	return out + prompt()
+}
+
+// editorNext points at the field that unblocks the readiness gate next.
+func (m model) editorNext() string {
+	if m.mode != 1 {
+		return ""
+	}
+	switch {
+	case m.t.Pod == "":
+		return "Next: press p and pick the pod — the highest restart count usually marks the sick one (wrong app list? n narrows the namespace first)"
+	case !m.remote.OK:
+		return "Next: press o and pick the app's container — it's usually 'app', not the sidecar"
+	}
+	return ""
 }
 
 func (m model) editorKey(key string) (tea.Model, tea.Cmd) {

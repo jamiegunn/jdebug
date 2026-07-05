@@ -36,11 +36,16 @@ and container. The panel tells you exactly which key fixes each ✗; Enter (or
 `g`) opens the target editor — each field is one keypress, and everything the
 cluster can enumerate is a live dropdown:
 
-- **c context** — your kube contexts (switching is confirmed first)
-- **n namespace** — listed from the cluster
-- **s selector** — built from the `app` labels actually on the pods there
-- **o container / p pod** — read from the pod spec; the pod picker shows
-  restart counts (*the restarting one is usually the sick one*)
+- **c context** — which cluster kubectl talks to (switching is confirmed first)
+- **n namespace** — the app's "folder" in the cluster, listed live
+- **s selector** — the label (like `app=payments`) that finds your app's pods,
+  built from the `app` labels actually on the pods there
+- **o container / p pod** — a pod is one running copy of the app; the container
+  is the app's box inside it. Both are read from the pod spec, and the pod
+  picker shows restart counts (*the restarting one is usually the sick one*)
+
+Each field carries the same plain-language explanation inline in the editor,
+so nobody has to leave the screen to decode a term mid-incident.
 
 The header's one-line status always shows exactly what you're pointed at,
 with a live green/red reachability dot. Menu keys act instantly — no Enter;

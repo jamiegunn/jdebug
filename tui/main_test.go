@@ -146,8 +146,8 @@ func TestMenuParityStrings(t *testing.T) {
 	v := demoModel()
 	v.scr = scMenu
 	out := v.menuView()
-	for _, want := range []string{"INSPECT", "CAPTURE", "LOGS", "guided diagnosis",
-		"pauses app", "safe / caution / disruptive", "❯", "[?] help"} {
+	for _, want := range []string{"START HERE", "QUICK CHECKS", "CAPTURE EVIDENCE", "ADVANCED",
+		"guided diagnosis", "pauses app", "safe / caution / disruptive", "❯", "[?] help"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("menu missing %q", want)
 		}
@@ -465,6 +465,29 @@ func TestNoActuatorHint(t *testing.T) {
 	got := strings.Join(m.suggestions(), "\n")
 	if !strings.Contains(got, "no actuator") || !strings.Contains(got, "jattach") {
 		t.Fatalf("missing actuator must be surfaced with the working routes, got %q", got)
+	}
+}
+
+func TestNotSureRunsSafeSnapshotFirst(t *testing.T) {
+	for _, f := range wizardFlows {
+		if f.key != "6" {
+			continue
+		}
+		if f.steps[0].confirm != "" || f.steps[0].args[0] != "snapshot" {
+			t.Fatal("flow 6 must run a safe snapshot unconditionally before offering heap")
+		}
+		if f.steps[1].confirm == "" || f.steps[1].args[0] != "heap" {
+			t.Fatal("flow 6's heap dump must be an optional, confirmed add-on")
+		}
+	}
+	// declining the heap step must still have produced the snapshot: picking
+	// flow 6 fires the snapshot command immediately, no question asked first
+	m := readyModel()
+	out, _ := m.Update(key("w"))
+	res, cmd := out.(model).Update(key("6"))
+	mm := res.(model)
+	if mm.scr != scWizard || !mm.wiz.active || cmd == nil {
+		t.Fatalf("flow 6 must start running the snapshot straight away, got screen %v", mm.scr)
 	}
 }
 

@@ -44,26 +44,27 @@ rules, a footer with navigation keys and a risk legend, and a live `❯` prompt:
 
 ```
  jvm debug kit                                        remote · kubectl → pod
- ● ddk3s  ·  debug-demo / app · …c6c4b5769-s9jdg  ·  :8080/actuator  ·  [g] retarget  [M] mode
+ ● ddk3s  ·  debug-demo / app-debug-demo-app-6c6c4b5769-s9jdg / app  ·  :8080/actuator
  ─────────────────────────────────────────────────────────────────────────
 
- ▎▸ w  guided diagnosis — describe the symptom, it runs the right captures
+ START HERE ───────────────────────────────────────────────────────────────
+ ▎▸ w  guided diagnosis — pick the symptom, it runs the right captures · safest when unsure
 
- INSPECT  read-only ──────────────────────────────────────────────────────
-   s   status      pods up? restarts, recent events                      ●
-   h   health      app checks — db, queue, disk                          ●
-   o   top         CPU + memory per pod, autoscaler                      ●
-   m   memory      container total vs JVM heap/non-heap                  ●
+ QUICK CHECKS  read-only — can't hurt anything ────────────────────────────
+   s   status      is the pod running or restarting?                     ●
+   h   health      is a dependency — db, queue — down?                   ●
+   o   top         which pod is eating CPU or memory?                    ●
+   m   memory      is the app near its memory limit?                     ●
+   l   logs        what did the app say? (live stream)                   ●
 
- CAPTURE  saves to dumps/ · [d] browse ───────────────────────────────────
-   t   threads     what every thread is doing now                        ●
-   j   jcmd        advanced JVM — GC, JFR, native                        ●
-   H   heap        every object, for leak hunting             ● pauses app
-   x   snapshot    everything in one offline bundle                      ●
+ CAPTURE EVIDENCE  saves to dumps/ · [d] browse ───────────────────────────
+   t   threads     safe snapshot of what the code is doing               ●
+   x   bundle      everything in one safe offline bundle                 ●
+   H   heap        every object in memory — for leak hunting  ● pauses app
 
- LOGS ────────────────────────────────────────────────────────────────────
-   l   logs        live stream from every replica                        ●
-   v   verbosity   change log level, no restart                          ●
+ ADVANCED ─────────────────────────────────────────────────────────────────
+   j   jcmd        raw JVM commands — GC, profiling, native memory       ●
+   v   verbosity   change log level live, no restart                     ●
 
  ─────────────────────────────────────────────────────────────────────────
  more  [a] analyze  [c] check setup  [?] help  [q] quit   ●●● safe / caution / disruptive

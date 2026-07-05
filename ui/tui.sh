@@ -574,7 +574,7 @@ wiz_hd()  { printf '\n  %s— %s —%s\n\n' "$B" "$*" "$OFF"; }
 wrun() {
     if [[ "$MODE" == 1 ]]; then run "$DBG" "$@" ${POD_PIN:+"$POD_PIN"}
     else case "$1" in
-            top|status) wiz_say "(skipping '$1' — it needs kubectl, so it only works in remote mode)" ;;
+            top|status|logs) wiz_say "(skipping '$1' — it needs kubectl, so it only works in remote mode)" ;;
             *) run sh "$LOCAL" "$@" ;;
          esac
     fi
@@ -637,11 +637,22 @@ wiz_gc() {
 }
 wiz_all() {
     wiz_hd "Not sure — capture everything"
-    wiz_say "One bundle with threads + health + memory + JVM internals, so you (or a"
-    wiz_say "colleague) can analyze offline without touching production again."
-    if confirm "include a HEAP DUMP in the bundle? (⚠ pauses the app)"; then wrun snapshot --heap --confirm; else wrun snapshot; fi
+    wiz_say "A safe snapshot first — threads + health + memory + JVM internals, so you (or a"
+    wiz_say "colleague) can analyze offline without touching production again. No pause, no risk:"
+    wrun snapshot
+    if confirm "add a heap dump to the evidence too? (⚠ pauses the app)"; then wrun heap --confirm; fi
     wiz_say "Next → press a (analyze) for a first pass over the whole bundle; then"
     wiz_say "       threads.txt → VisualVM · heap.hprof → Eclipse MAT (both free, local)."
+}
+wiz_crash() {
+    wiz_hd "Crash-looping / CrashLoopBackOff"
+    wiz_say "How often is it dying, and what does kubernetes say about why:"
+    wrun status
+    wiz_say "The previous container's last words — the crash reason is almost always here:"
+    wrun logs --previous
+    wiz_say "Next → OutOfMemoryError / exit 137 above = memory: re-run this wizard, option 1."
+    wiz_say "       A stack trace names the failing class — startup config is the usual culprit."
+    wiz_say "       Nothing useful? The events in the status output carry the kubernetes-side reasons."
 }
 wizard() {
     while true; do
@@ -654,12 +665,13 @@ wizard() {
         printf '   %s4%s  Memory %screeping up%s over time (leak)\n'  "$GN" "$OFF" "$B" "$OFF"
         printf '   %s5%s  %sGC pauses%s climbing\n'                   "$GN" "$OFF" "$B" "$OFF"
         printf '   %s6%s  Not sure — %scapture everything%s\n'        "$GN" "$OFF" "$B" "$OFF"
+        printf '   %s7%s  %sCrash-looping%s / CrashLoopBackOff\n'     "$GN" "$OFF" "$B" "$OFF"
         printf '   %sb%s  back\n'                                     "$GN" "$OFF"
         local tgt; if [[ "$MODE" == 1 ]]; then tgt="$NAMESPACE / ${SELECTOR:-<any pod>}"; else tgt="this machine (localhost)"; fi
         printf '\n  %starget: %s · anything that could hurt the app asks you first%s\n' "$DIM" "$tgt" "$OFF"
         printf '\n  %s> %s' "$B" "$OFF"; local s; read -rn1 s || return; printf '\n'
         case "$s" in
-            1) wiz_oom ;; 2) wiz_slow ;; 3) wiz_cpu ;; 4) wiz_leak ;; 5) wiz_gc ;; 6) wiz_all ;;
+            1) wiz_oom ;; 2) wiz_slow ;; 3) wiz_cpu ;; 4) wiz_leak ;; 5) wiz_gc ;; 6) wiz_all ;; 7) wiz_crash ;;
             b|B|"") return ;;
             *) continue ;;
         esac
@@ -670,7 +682,9 @@ wizard() {
 # --- menus ------------------------------------------------------------------
 # banner + footer shared by both modes
 menu_banner() {
-    printf '\n %s▎%s%s▸ w%s  %sguided diagnosis%s %s— describe the symptom, it runs the right captures%s\n\n' \
+    printf '\n'
+    msection "START HERE"
+    printf ' %s▎%s%s▸ w%s  %sguided diagnosis%s %s— pick the symptom, it runs the right captures · safest when unsure%s\n\n' \
         "$C_ACC" "$C_R" "$C_KEY" "$C_R" "$C_TITLE" "$C_R" "$C_MUTED" "$C_R"
 }
 menu_footer() {  # $1 = nav keys string (plain), printed dim; legend right-aligned
@@ -695,21 +709,21 @@ menu_remote() {
         return
     fi
     menu_banner
-    msection "INSPECT" "read-only"
-    mrow s status  "pods up? restarts, recent events"       safe
-    mrow h health  "app checks — db, queue, disk"           safe
-    mrow o top     "CPU + memory per pod, autoscaler"       safe
-    mrow m memory  "container total vs JVM heap/non-heap"   safe
+    msection "QUICK CHECKS" "read-only — can't hurt anything"
+    mrow s status  "is the pod running or restarting?"      safe
+    mrow h health  "is a dependency — db, queue — down?"    safe
+    mrow o top     "which pod is eating CPU or memory?"     safe
+    mrow m memory  "is the app near its memory limit?"      safe
+    mrow l logs    "what did the app say? (live stream)"    safe
     printf '\n'
-    msection "CAPTURE" "saves to dumps/ · [d] browse"
-    mrow t threads  "what every thread is doing now"        safe
-    mrow j jcmd     "advanced JVM — GC, JFR, native"        caution
-    mrow H heap     "every object, for leak hunting"        disruptive "pauses app"
-    mrow x snapshot "everything in one offline bundle"      safe
+    msection "CAPTURE EVIDENCE" "saves to dumps/ · [d] browse"
+    mrow t threads "safe snapshot of what the code is doing"    safe
+    mrow x bundle  "everything in one safe offline bundle"      safe
+    mrow H heap    "every object in memory — for leak hunting"  disruptive "pauses app"
     printf '\n'
-    msection "LOGS"
-    mrow l logs      "live stream from every replica"       safe
-    mrow v verbosity "change log level, no restart"         caution
+    msection "ADVANCED"
+    mrow j jcmd      "raw JVM commands — GC, profiling, native memory" caution
+    mrow v verbosity "change log level live, no restart"              caution
     printf '\n'
     menu_footer "[a] analyze  [c] check setup  [?] help  [q] quit"
     mprompt
@@ -725,16 +739,18 @@ menu_local() {
         return
     fi
     menu_banner
-    msection "INSPECT" "read-only"
-    mrow h health  "app checks — db, queue, disk"           safe
-    mrow e metrics "browse JVM metrics, or one live value"  safe
-    mrow m memory  "container total vs JVM heap/non-heap"   safe
+    msection "QUICK CHECKS" "read-only — can't hurt anything"
+    mrow h health  "is a dependency — db, queue — down?"    safe
+    mrow e metrics "browse the JVM's live numbers"          safe
+    mrow m memory  "is the app near its memory limit?"      safe
     printf '\n'
-    msection "CAPTURE" "saves to ${OUT_DIR:-/tmp} · [d] browse"
-    mrow t threads  "what every thread is doing now"        safe
-    mrow j jcmd     "advanced JVM — GC, JFR, native"        caution
-    mrow H heap     "every object, for leak hunting"        disruptive "pauses app"
-    mrow x snapshot "everything in one offline bundle"      safe
+    msection "CAPTURE EVIDENCE" "saves to ${OUT_DIR:-/tmp} · [d] browse"
+    mrow t threads "safe snapshot of what the code is doing"    safe
+    mrow x bundle  "everything in one safe offline bundle"      safe
+    mrow H heap    "every object in memory — for leak hunting"  disruptive "pauses app"
+    printf '\n'
+    msection "ADVANCED"
+    mrow j jcmd "raw JVM commands — GC, profiling, native memory" caution
     printf '\n'
     menu_footer "[a] analyze  [i] stage jattach  [s] settings  [?] help  [q] quit"
     mprompt

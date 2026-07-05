@@ -320,7 +320,7 @@ func (m model) panelView(w, h int, trends bool) string {
 			cpu = d.CPUUse + " used · no limit set"
 		}
 		rows = append(rows, line("cpu", cpu, false))
-		rows = append(rows, line("hpa", dash(d.HPA), false))
+		rows = append(rows, line("autoscale", dash(d.HPA), false))
 		heap := d.HeapUsed
 		switch {
 		case heap != "" && d.HeapMax != "":

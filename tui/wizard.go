@@ -32,10 +32,10 @@ var wizardFlows = []struct {
 }{
 	{"1", "Pod OOMKilled / restarts on memory", []wstep{
 		{narr: []string{"First question: is the memory going into the Java heap, or somewhere else?",
-			"heap ≈ limit → heap pressure or a leak · heap low, RSS high → off-heap (NMT)"},
+			"heap ≈ limit → heap pressure or a leak · heap low but container memory high → it's off-heap/native"},
 			args: []string{"memory"}, withPod: true},
 		{confirm: "capture a HEAP DUMP now? (⚠ pauses the app) [y/N]", args: []string{"heap", "--confirm"}, withPod: true},
-		{confirm: "capture native-memory detail (NMT, via jattach — safe)? [y/N]", args: []string{"jcmd", "VM.native_memory summary"}, withPod: true},
+		{confirm: "capture native-memory detail (safe, no pause)? [y/N]", args: []string{"jcmd", "VM.native_memory summary"}, withPod: true},
 	}, []string{"open the .hprof in Eclipse MAT and run 'Leak Suspects'", "press d in the menu to see every capture"}},
 
 	{"2", "Slow / hung / high latency", []wstep{
@@ -71,8 +71,10 @@ var wizardFlows = []struct {
 	}, []string{"TOTAL_TIME growing fast while the heap stays near-full = allocation pressure or a leak → heap dump → MAT"}},
 
 	{"6", "Not sure — capture everything", []wstep{
-		{confirm: "include a HEAP DUMP in the bundle? (⚠ pauses the app) [y/N]",
-			args: []string{"snapshot", "--heap", "--confirm"}, withPod: true},
+		{narr: []string{"A safe snapshot first — threads, health, memory, JVM internals. No pause, no risk:"},
+			args: []string{"snapshot"}, withPod: true},
+		{confirm: "add a heap dump to the evidence too? (⚠ pauses the app) [y/N]",
+			args: []string{"heap", "--confirm"}, withPod: true},
 	}, []string{"press a (analyze) for a first pass over the whole bundle",
 		"threads.txt → VisualVM · heap.hprof → Eclipse MAT (both free, local)"}},
 
@@ -167,10 +169,5 @@ func (m *model) wizStepCmd(st wstep) tea.Cmd {
 	if m.mode == 1 {
 		return m.runCLI(st.withPod, st.args...)
 	}
-	// local mode: same verbs on jdebug-local; snapshot drops --confirm
-	args := st.args
-	if args[0] == "snapshot" {
-		args = []string{"snapshot", "--heap"}
-	}
-	return m.runLocal(args...)
+	return m.runLocal(st.args...)
 }

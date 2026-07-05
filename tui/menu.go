@@ -86,13 +86,13 @@ func (m model) headerLocal(jattachOK bool) string {
 }
 
 func (m model) banner() string {
-	desc := "— describe the symptom, it runs the right captures"
+	desc := "— pick the symptom, it runs the right captures · safest when unsure"
 	if m.leftW() < 96 {
-		desc = "— describe the symptom"
+		desc = "— pick the symptom · safest when unsure"
 	}
-	return "\n " + cAcc.Render("▎") + cKey.Render("▸ w") + "  " +
-		cTitle.Render("guided diagnosis") + " " + cMuted.Render(desc) +
-		"  " + cOK.Render("← start here") + "\n"
+	return "\n" + m.section("START HERE", "") + "\n" +
+		" " + cAcc.Render("▎") + cKey.Render("▸ w") + "  " +
+		cTitle.Render("guided diagnosis") + " " + cMuted.Render(desc) + "\n"
 }
 
 func (m model) section(label, sub string) string {
@@ -155,55 +155,59 @@ func prompt() string { return "\n " + cOK.Render("❯") + " " }
 
 // --- views ---------------------------------------------------------------------
 
+// Sections mirror a junior SRE's mental model: symptom first, then the
+// question each check answers, evidence next, power tools last.
 var remoteActions = struct {
-	inspect, capture, logs []action
+	quick, capture, advanced []action
 }{
-	inspect: []action{
-		{"s", "status", "pods up? restarts, recent events", "safe", ""},
-		{"h", "health", "app checks — db, queue, disk", "safe", ""},
-		{"o", "top", "CPU + memory per pod, autoscaler", "safe", ""},
-		{"m", "memory", "container total vs JVM heap/non-heap", "safe", ""},
+	quick: []action{
+		{"s", "status", "is the pod running or restarting?", "safe", ""},
+		{"h", "health", "is a dependency — db, queue — down?", "safe", ""},
+		{"o", "top", "which pod is eating CPU or memory?", "safe", ""},
+		{"m", "memory", "is the app near its memory limit?", "safe", ""},
+		{"l", "logs", "what did the app say? (live stream)", "safe", ""},
 	},
 	capture: []action{
-		{"t", "threads", "what every thread is doing now", "safe", ""},
-		{"j", "jcmd", "advanced JVM — GC, JFR, native", "caution", ""},
-		{"H", "heap", "every object, for leak hunting", "disruptive", "pauses app"},
-		{"x", "snapshot", "everything in one offline bundle", "safe", ""},
+		{"t", "threads", "safe snapshot of what the code is doing", "safe", ""},
+		{"x", "bundle", "everything in one safe offline bundle", "safe", ""},
+		{"H", "heap", "every object in memory — for leak hunting", "disruptive", "pauses app"},
 	},
-	logs: []action{
-		{"l", "logs", "live stream from every replica", "safe", ""},
-		{"v", "verbosity", "change log level, no restart", "caution", ""},
+	advanced: []action{
+		{"j", "jcmd", "raw JVM commands — GC, profiling, native memory", "caution", ""},
+		{"v", "verbosity", "change log level live, no restart", "caution", ""},
 	},
 }
 
-var localActions = struct{ inspect, capture []action }{
-	inspect: []action{
-		{"h", "health", "app checks — db, queue, disk", "safe", ""},
-		{"e", "metrics", "browse JVM metrics, or one live value", "safe", ""},
-		{"m", "memory", "container total vs JVM heap/non-heap", "safe", ""},
+var localActions = struct{ quick, capture, advanced []action }{
+	quick: []action{
+		{"h", "health", "is a dependency — db, queue — down?", "safe", ""},
+		{"e", "metrics", "browse the JVM's live numbers", "safe", ""},
+		{"m", "memory", "is the app near its memory limit?", "safe", ""},
 	},
 	capture: []action{
-		{"t", "threads", "what every thread is doing now", "safe", ""},
-		{"j", "jcmd", "advanced JVM — GC, JFR, native", "caution", ""},
-		{"H", "heap", "every object, for leak hunting", "disruptive", "pauses app"},
-		{"x", "snapshot", "everything in one offline bundle", "safe", ""},
+		{"t", "threads", "safe snapshot of what the code is doing", "safe", ""},
+		{"x", "bundle", "everything in one safe offline bundle", "safe", ""},
+		{"H", "heap", "every object in memory — for leak hunting", "disruptive", "pauses app"},
+	},
+	advanced: []action{
+		{"j", "jcmd", "raw JVM commands — GC, profiling, native memory", "caution", ""},
 	},
 }
 
-// remoteBody builds the banner + INSPECT/CAPTURE/LOGS sections at leftW.
+// remoteBody builds START HERE / QUICK CHECKS / CAPTURE EVIDENCE / ADVANCED.
 func (m model) remoteBody() string {
 	var body strings.Builder
 	body.WriteString(m.banner() + "\n")
-	body.WriteString(m.section("INSPECT", "read-only") + "\n")
-	for _, a := range remoteActions.inspect {
+	body.WriteString(m.section("QUICK CHECKS", "read-only — can't hurt anything") + "\n")
+	for _, a := range remoteActions.quick {
 		body.WriteString(m.row(a) + "\n")
 	}
-	body.WriteString("\n" + m.section("CAPTURE", "saves to dumps/ · [d] browse") + "\n")
+	body.WriteString("\n" + m.section("CAPTURE EVIDENCE", "saves to dumps/ · [d] browse") + "\n")
 	for _, a := range remoteActions.capture {
 		body.WriteString(m.row(a) + "\n")
 	}
-	body.WriteString("\n" + m.section("LOGS", "") + "\n")
-	for _, a := range remoteActions.logs {
+	body.WriteString("\n" + m.section("ADVANCED", "") + "\n")
+	for _, a := range remoteActions.advanced {
 		body.WriteString(m.row(a) + "\n")
 	}
 	return body.String()
@@ -254,12 +258,16 @@ func (m model) menuView() string {
 	}
 	var body strings.Builder
 	body.WriteString(m.banner() + "\n")
-	body.WriteString(m.section("INSPECT", "read-only") + "\n")
-	for _, a := range localActions.inspect {
+	body.WriteString(m.section("QUICK CHECKS", "read-only — can't hurt anything") + "\n")
+	for _, a := range localActions.quick {
 		body.WriteString(m.row(a) + "\n")
 	}
-	body.WriteString("\n" + m.section("CAPTURE", "saves to /tmp · [d] browse") + "\n")
+	body.WriteString("\n" + m.section("CAPTURE EVIDENCE", "saves to /tmp · [d] browse") + "\n")
 	for _, a := range localActions.capture {
+		body.WriteString(m.row(a) + "\n")
+	}
+	body.WriteString("\n" + m.section("ADVANCED", "") + "\n")
+	for _, a := range localActions.advanced {
 		body.WriteString(m.row(a) + "\n")
 	}
 	b.WriteString("\n" + m.withPanel(body.String()))
