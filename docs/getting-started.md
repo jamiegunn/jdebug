@@ -33,7 +33,7 @@ The first question is **where the JVM is**:
 You can't fire a capture at the wrong thing: the tools stay hidden behind a
 ✓/✗ checklist until the cluster answers **and** you've picked a specific pod
 and container. The panel tells you exactly which key fixes each ✗; Enter (or
-`t`) opens the target editor — each field is one keypress, and everything the
+`g`) opens the target editor — each field is one keypress, and everything the
 cluster can enumerate is a live dropdown:
 
 - **c context** — your kube contexts (switching is confirmed first)
@@ -42,18 +42,20 @@ cluster can enumerate is a live dropdown:
 - **o container / p pod** — read from the pod spec; the pod picker shows
   restart counts (*the restarting one is usually the sick one*)
 
-The header always shows exactly what you're pointed at, plus a live
-✓/✗ cluster-reachability indicator. Menu keys act instantly — no Enter;
-only confirmations (heap dumps, quitting) ask for a deliberate y.
+The header's one-line status always shows exactly what you're pointed at,
+with a live green/red reachability dot. Menu keys act instantly — no Enter;
+every key is a letter from the action's own name, risk shows as a colored
+dot per row, and the one dangerous action (`H` heap) confirms by asking for
+a second `H`.
 
 ## 4. Look around — all safe, read-only
 
 | key | shows | how to read it |
 |---|---|---|
-| `1` status | pods, restarts, events | the output ends with what CrashLoopBackOff, OOMKilled, and Pending mean |
-| `2` health | the app's own health checks | a DOWN component names the failing dependency — chase that system first |
-| `3` top | CPU + memory per pod | memory near the limit = OOM risk |
-| `4` memory | container total vs JVM heap/non-heap | the classic "heap is fine but the pod died" gap, explained |
+| `s` status | pods, restarts, events | the output ends with what CrashLoopBackOff, OOMKilled, and Pending mean |
+| `h` health | the app's own health checks | a DOWN component names the failing dependency — chase that system first |
+| `o` top | CPU + memory per pod | memory near the limit = OOM risk |
+| `m` memory | container total vs JVM heap/non-heap | the classic "heap is fine but the pod died" gap, explained |
 
 ## 5. Or just describe the symptom
 
@@ -76,5 +78,5 @@ so nothing you saw on screen is ever lost.
 ## The three keys to remember
 
 - `w` — guided diagnosis. When in doubt, start here.
-- `h` — help: the glossary, the workflow, the safety rules.
-- `d` — everything you've captured and what to do with it.
+- `?` — help: the glossary, the workflow, the safety rules, the hidden keys.
+- `d` — everything you've captured and what to do with it (`a` analyzes it all).

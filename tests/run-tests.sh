@@ -297,11 +297,11 @@ section "TUI"
 # readiness gate: with no pod pinned the tools stay hidden and the panel guides
 run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "gate: setup panel when no pod pinned" "SET UP YOUR TARGET FIRST"
-assert_not "gate: action menu hidden until ready" "GUIDED DIAGNOSIS"
-run_input '5qy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "gate: blocked action explains what to do" "finish the target setup first"
-MOCK_PODS=multi run_input 'tp2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "gate: unlocks once a pod is pinned" "GUIDED DIAGNOSIS"
+assert_not "gate: action menu hidden until ready" "guided diagnosis"
+run_input 'sqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "gate: blocked action explains what to do" "press g"
+MOCK_PODS=multi run_input 'gp2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "gate: unlocks once a pod is pinned" "guided diagnosis"
 
 # a ready target for the rest of the TUI tests (pod pinned, container valid)
 mkdir -p "$TMP/config"; cat > "$TMP/config/target" <<'EOF'
@@ -315,20 +315,22 @@ EOF
 run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_rc  "remote menu: q + confirm quits cleanly" 0
 assert_has "quit asks for confirmation" "quit jdebug?"
-assert_has "remote menu: wizard promoted" "GUIDED DIAGNOSIS"
-assert_has "remote menu: heap risk labeled" "pauses the app"
-assert_has "remote menu: help key present" "h help/glossary"
-assert_has "remote menu: doctor key present" "c check setup"
-assert_has "remote menu: snapshot on key 0" "0  snapshot"
-assert_has "remote menu: instant keys advertised" "no Enter needed"
-assert_has "remote header: reachability shown" "cluster reachable"
-assert_has "remote header: empty selector hint" "press t to narrow"
+assert_has "remote menu: wizard hero banner" "guided diagnosis"
+assert_has "remote menu: heap is the only inline risk text" "pauses app"
+assert_has "remote menu: help key present" "[?] help"
+assert_has "remote menu: doctor key present" "[c] check setup"
+assert_has "remote menu: snapshot on key x" "x   snapshot"
+assert_has "remote menu: sections render" "INSPECT"
+assert_has "remote menu: risk legend" "safe / caution / disruptive"
+assert_has "remote menu: live prompt caret" "❯"
+assert_has "remote header: one-line status shows context" "mock-ctx"
+assert_has "remote header: status shows ns/container/pod" "default / app · pod-a"
 
 run_input 'qn qy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_rc  "declining the quit confirm returns to the menu" 0
 
 MOCK_KUBECTL=x509 run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "remote header: unreachable flagged" "can't connect"
+assert_has "remote header: unreachable flagged" "unreachable"
 
 # THE regression test: a FAILED command must pause with its error still visible.
 # (cluster down → gated, so the allowed 'c' doctor is the failing action here)
@@ -337,16 +339,17 @@ assert_has "failed action: error shown" "cluster unreachable"
 assert_has "failed action: marked failed" "that didn't work"
 assert_has "failed action: pauses (error not wiped)" "any key for the menu"
 
-run_input '1\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input 's\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "action output is tee'd to session log path" "$TMP/dumps/session-"
 grep -rq 'jdebug status' "$TMP"/dumps/session-*.log 2>/dev/null \
     && ok "session log records the command" || bad "session log records the command" "no session log with 'jdebug status'"
 
-run_input 'h\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input '?\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "help: glossary defines pod" "one running copy of the app"
 assert_has "help: heap dump risk in glossary" "Pauses the app"
 assert_has "help: first-10-minutes workflow" "A GOOD FIRST 10 MINUTES"
-assert_has "help: safety rules" "answering n is always safe"
+assert_has "help: safety rules" "cancelling is always safe"
+assert_has "help: hidden utility keys documented" "KEYS NOT SHOWN ON THE MENU"
 
 run_input 'zzqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_rc  "unknown key: no crash, menu redraws" 0
@@ -355,42 +358,47 @@ run_input '\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_rc  "bare Enter does NOT quit (q still needed)" 0
 
 run_input 'qy' env JDEBUG_MODE=2 ./ui/tui.sh
-assert_has "local menu: wizard available" "GUIDED DIAGNOSIS"
+assert_has "local menu: wizard available" "guided diagnosis"
 assert_has "local menu: stage jattach present" "stage jattach"
 
 JATTACH_BIN="$TMP/nope" MOCK_HTTP=fail run_input 'qy' env JDEBUG_MODE=2 ./ui/tui.sh
 assert_has "local gate: route panel when no actuator + no jattach" "SET UP A ROUTE TO THE JVM"
-assert_not "local gate: tools hidden until a route exists" "GUIDED DIAGNOSIS"
+assert_not "local gate: tools hidden until a route exists" "guided diagnosis"
 
 run_input 'wbqy' env JDEBUG_MODE=2 ./ui/tui.sh
 assert_has "local wizard: mode-aware target" "this machine (localhost)"
 
-run_input '7\n\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input 'j\n\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "jcmd quick-pick offered" "GC.heap_info"
 assert_has "jcmd quick-pick includes JFR" "JFR.start"
 
+# disruptive actions fire only on a second press of the SAME key
+run_input 'Hzqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "heap: double-press confirm offered" "press H again to confirm"
+assert_has "heap: any other key cancels" "cancelled"
+
 # target editor: one key per field, live dropdowns from the cluster
-run_input 'tc1nbqy' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input 'gc1nbqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "target editor: field list shown" "TARGET"
 assert_has "target editor: context dropdown" "Which cluster?"
 assert_has "target editor: current context marked" "mock-ctx  (current)"
 
-run_input 'tn2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input 'gn2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "target editor: namespace dropdown applied" "namespace   payments"
 
-run_input 'ts2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input 'gs2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "target editor: selector applied from pod labels" "selector    app=payments"
 
-run_input 'ts2bts1bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input 'gs2bgs1bqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "target editor: any-pod option clears selector" "selector    <any pod>"
 
-run_input 'to2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input 'go2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "target editor: container from pod spec" "container   sidecar"
 
-MOCK_PODS=multi run_input 'tp0bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+MOCK_PODS=multi run_input 'gp0bqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "target editor: pod picker on multi" "pods match. Which one?"
 
-MOCK_PODS=multi run_input 'tp2o1bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+MOCK_PODS=multi run_input 'gp2o1bqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "target editor: containers read from the PINNED pod" "Container (in pod-b)"
 
 run_input 'aqy' env JDEBUG_MODE=1 ./ui/tui.sh
@@ -400,22 +408,22 @@ run_input 'q' ./ui/tui.sh
 assert_rc  "mode chooser: q exits" 0
 assert_has "mode chooser: self-test entry" "self-test"
 
-run_input '1\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input 's\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "quit shows transcript path" "transcript of everything from this session"
 
 # --- remembered target: selections persist between sessions -------------------------
 section "remembered target"
-MOCK_PODS=multi run_input 'tp2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+MOCK_PODS=multi run_input 'gp2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
 [[ -f "$TMP/config/target" ]] && ok "target file written on editor exit" \
     || bad "target file written on editor exit" "no $TMP/config/target"
 
 run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "pod pin remembered in a fresh session" "pod        pod-b"
+assert_has "pod pin remembered in a fresh session" "· pod-b"
 
 MOCK_POD_GONE=1 run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "vanished pin falls back to auto with a notice" "no longer exists — back to auto"
 
-run_input 'tn2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+run_input 'gn2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
 run_case ./jdebug status
 assert_has "CLI layer uses the remembered namespace" "kubectl -n payments"
 

@@ -19,7 +19,7 @@ certificate. Almost always: a local cluster (Rancher Desktop, k3s, minikube,
 kind, Docker Desktop) was recreated and the old kubeconfig entry went stale.
 
 - restart the local cluster app — most rewrite the kubeconfig on startup
-- or switch to a working context: press `t` in the menu, or
+- or switch to a working context: press `g` in the menu, or
   `kubectl config use-context <name>`
 
 ### …nothing answered at the cluster's address
@@ -36,7 +36,7 @@ Desktop), connect the VPN for remote clusters, or switch context.
 
 The target is wrong, not the cluster. Check the namespace (`-n`), the label
 selector (`-l app=…` — find labels with `kubectl -n <ns> get pods --show-labels`),
-or press `t` in the menu and use the pod picker.
+or press `g` in the menu and use the pod picker.
 
 ## "actuator … unreachable / not answering"
 

@@ -82,10 +82,10 @@ target_probe() {
     if [[ -n "$CLUSTER_OK" ]]; then
         TARGET_WHY+="   ${GN}✓${OFF} cluster reachable"$'\n'
     else
-        TARGET_WHY+="   ${RD}✗${OFF} cluster — not reachable (press ${GN}c${OFF} for the full why + fix, or ${GN}t${OFF} to switch context)"$'\n'
+        TARGET_WHY+="   ${RD}✗${OFF} cluster — not reachable (press ${GN}c${OFF} for the full why + fix, or g to switch context)"$'\n'
     fi
     if [[ -z "$POD_PIN" ]]; then
-        TARGET_WHY+="   ${RD}✗${OFF} pod — none selected yet (press ${GN}t${OFF}, then ${GN}p${OFF}, and pick the exact pod)"$'\n'
+        TARGET_WHY+="   ${RD}✗${OFF} pod — none selected yet (press ${GN}g${OFF}, then ${GN}p${OFF}, and pick the exact pod)"$'\n'
         TARGET_WHY+="   ${DIM}·${OFF} container — checked once a pod is selected"$'\n'
     elif [[ -n "$CLUSTER_OK" ]]; then
         local conts
@@ -134,6 +134,76 @@ box() { printf '%s╔═══════════════════�
         printf '%s║  %-60s║%s\n' "$B" "$1" "$OFF"
         printf '%s╚══════════════════════════════════════════════════════════════╝%s\n' "$B" "$OFF"; }
 hr() { printf '%s────────────────────────────────────────────────────────────────%s\n' "$DIM" "$OFF"; }
+
+# --- main-menu palette (GitHub-dark; truecolor → 16-color fallback) ----------
+# Exact hex values from the TUI redesign spec; ANSI approximations otherwise.
+if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
+    if [[ "${COLORTERM:-}" == *truecolor* || "${COLORTERM:-}" == *24bit* ]]; then
+        tc() { printf '\033[38;2;%s;%s;%sm' "$1" "$2" "$3"; }
+        C_TITLE=$(tc 230 237 243)  # #e6edf3 text-primary
+        C_BODY=$(tc 201 209 217)   # #c9d1d9 text-body
+        C_MUTED=$(tc 139 148 158)  # #8b949e text-muted
+        C_DIMT=$(tc 110 118 129)   # #6e7681 text-dim
+        C_FAINT=$(tc 72 79 88)     # #484f58 text-faint
+        C_KEY=$(tc 88 166 255)     # #58a6ff key/accent
+        C_ACC=$(tc 31 111 235)     # #1f6feb accent-strong
+        C_RULE=$(tc 33 38 45)      # #21262d rule
+        C_SAFE=$(tc 35 134 54)     # #238636 risk-safe
+        C_CAUT=$(tc 210 153 34)    # #d29922 risk-caution
+        C_DISR=$(tc 248 81 73)     # #f85149 risk-disruptive
+        C_OK=$(tc 63 185 80)       # #3fb950 status-ok
+        unset -f tc
+    else
+        C_TITLE=$'\033[1;97m'; C_BODY=$'\033[0;37m'; C_MUTED=$'\033[0;90m'
+        C_DIMT=$'\033[0;90m'; C_FAINT=$'\033[2;90m'; C_KEY=$'\033[0;94m'
+        C_ACC=$'\033[0;34m'; C_RULE=$'\033[2;90m'
+        C_SAFE=$'\033[0;32m'; C_CAUT=$'\033[0;33m'; C_DISR=$'\033[0;91m'; C_OK=$'\033[0;92m'
+    fi
+    C_R=$'\033[0m'; C_REV=$'\033[7m'
+else
+    C_TITLE="" C_BODY="" C_MUTED="" C_DIMT="" C_FAINT="" C_KEY="" C_ACC=""
+    C_RULE="" C_SAFE="" C_CAUT="" C_DISR="" C_OK="" C_R="" C_REV=""
+fi
+
+# --- main-menu render helpers -------------------------------------------------
+TW=80
+panel_width() {
+    TW=$( { command -v tput >/dev/null 2>&1 && tput cols; } 2>/dev/null || echo 80 )
+    [[ "$TW" =~ ^[0-9]+$ ]] || TW=80
+    (( TW < 78 )) && TW=78
+    (( TW > 100 )) && TW=100
+}
+mrep() { local s; s="$(printf '%*s' "$1" '')"; printf '%s' "${s// /─}"; }
+mrule() { printf ' %s%s%s\n' "$C_RULE" "$(mrep $((TW-2)))" "$C_R"; }
+
+# msection <LABEL> [sublabel] — small-caps label + trailing hairline rule
+msection() {
+    local label="$1" sub="${2:-}" used fill
+    used=$(( 1 + ${#label} + ${#sub} + (${#sub}>0 ? 2 : 0) + 1 ))
+    fill=$(( TW - used - 1 )); (( fill < 3 )) && fill=3
+    printf ' %s%s%s' "$C_DIMT" "$label" "$C_R"
+    [[ -n "$sub" ]] && printf '  %s%s%s' "$C_FAINT" "$sub" "$C_R"
+    printf ' %s%s%s\n' "$C_RULE" "$(mrep "$fill")" "$C_R"
+}
+
+# mrow <key> <name> <description> <safe|caution|disruptive> [inline-risk-text]
+# 4 columns: key(accent) name(12,body) desc(flex,muted) risk-dot(right edge)
+mrow() {
+    local key="$1" name="$2" desc="$3" risk="$4" rtext="${5:-}"
+    local dotc pad rlen
+    case "$risk" in
+        safe)       dotc="$C_SAFE" ;;
+        caution)    dotc="$C_CAUT" ;;
+        disruptive) dotc="$C_DISR" ;;
+    esac
+    rlen=$(( 1 + ${#rtext} + (${#rtext}>0 ? 1 : 0) ))
+    pad=$(( TW - 3 - 1 - 3 - 12 - ${#desc} - rlen - 1 )); (( pad < 1 )) && pad=1
+    printf '   %s%s%s   %s%-12s%s%s%s%s%*s%s●%s%s%s\n' \
+        "$C_KEY" "$key" "$C_R" "$C_BODY" "$name" "$C_R" "$C_MUTED" "$desc" "$C_R" \
+        "$pad" '' "$dotc" "${rtext:+ }${rtext}" "$C_R"
+}
+
+mprompt() { printf '\n %s❯%s %s %s' "$C_OK" "$C_R" "$C_REV" "$C_R"; }
 # Single keypress everywhere: navigation acts instantly; only confirmations
 # (destructive actions, quitting) demand a deliberate y.
 pause() {
@@ -188,38 +258,42 @@ choose_mode() {
 }
 mode_label() { case "$MODE" in 1) echo "remote · kubectl → pod";; 2) echo "in-pod · localhost";; 3) echo "bare metal · localhost";; esac; }
 
-# --- headers ----------------------------------------------------------------
+# --- headers (2 lines + rule; one glanceable status line) --------------------
+# header_line1 <right-label>
+header_line1() {
+    local title=" jvm debug kit" right="$1" pad
+    pad=$(( TW - ${#title} - ${#right} - 1 )); (( pad < 1 )) && pad=1
+    printf '%s%s%s%*s%s%s%s\n' "$C_TITLE" "$title" "$C_R" "$pad" '' "$C_DIMT" "$right" "$C_R"
+}
 header_remote() {
-    maybe_clear
-    box "JVM debug kit - remote (kubectl)"
+    maybe_clear; panel_width
     local ctx; ctx="$(kubectl config current-context 2>/dev/null)"
     cluster_probe
-    local reach
-    if [[ -n "$CLUSTER_OK" ]]; then reach="${GN}✓ cluster reachable${OFF}"
-    else reach="${RD}✗ can't connect — any command will explain why + the fix (or press t to switch)${OFF}"; fi
-    printf '  %smode%s      %s  %s(m to switch)%s\n' "$B" "$OFF" "$(mode_label)" "$DIM" "$OFF"
-    printf '  %scontext%s   %s%s%s  %s\n' "$B" "$OFF" "$GN" "${ctx:-<none — is KUBECONFIG set?>}" "$OFF" "$reach"
-    printf '  %starget%s    namespace  %s%s%s\n' "$B" "$OFF" "$GN" "$NAMESPACE" "$OFF"
-    printf '            selector   %s%s%s\n' "$GN" "${SELECTOR:-<any pod — press t to narrow to your app>}" "$OFF"
-    printf '            container  %s%s%s\n' "$GN" "$APP_CONTAINER" "$OFF"
-    printf '            pod        %s%s%s%s\n' "$GN" "${POD_PIN:-<auto: first match — pick one under t>}" "$OFF" \
-        "${SAVED_POD_GONE:+  ${YL}(your previous pin $SAVED_POD_GONE no longer exists — back to auto)${OFF}}"
-    printf '  %sactuator%s  %s%s%s\n' "$B" "$OFF" "$GN" "$ACTUATOR_BASE" "$OFF"
-    printf '            %s↳ press %st%s%s to change target/actuator · %sm%s%s to switch mode%s\n' "$DIM" "$OFF$GN" "$OFF" "$DIM" "$GN" "$OFF" "$DIM" "$OFF"
-    printf '  %skubeconfig%s %s\n' "$B" "$OFF" "${KUBECONFIG:-"(default context)"}"
-    printf '  %sExamples:  jdebug health · jdebug -n prod -l app=web memory · jdebug jcmd "GC.heap_info"%s\n' "$DIM" "$OFF"
-    hr
+    header_line1 "$(mode_label) "
+    # status line: ● ctx · ns / container [· pod] · :port/path · hints
+    local dot="${C_OK}●${C_R}" act="${ACTUATOR_BASE#http://localhost}"
+    [[ "$act" == "$ACTUATOR_BASE" ]] && act="$ACTUATOR_BASE"
+    if [[ -z "$CLUSTER_OK" ]]; then dot="${C_DISR}●${C_R}"; fi
+    # keep the status line one line: long pod names truncate to their unique tail
+    local podshow="$POD_PIN"
+    [[ ${#podshow} -gt 18 ]] && podshow="…${podshow: -15}"
+    printf ' %s %s%s%s' "$dot" "$C_MUTED" "${ctx:-<no context>}" "$C_R"
+    [[ -z "$CLUSTER_OK" ]] && printf ' %sunreachable — [c] explains why%s' "$C_DISR" "$C_R"
+    printf '  %s·%s  %s%s / %s%s%s' "$C_FAINT" "$C_R" "$C_MUTED" "$NAMESPACE" "$APP_CONTAINER" "${podshow:+ · $podshow}" "$C_R"
+    printf '  %s·%s  %s%s%s' "$C_FAINT" "$C_R" "$C_MUTED" "$act" "$C_R"
+    printf '  %s·%s  %s[g] retarget  [M] mode%s\n' "$C_FAINT" "$C_R" "$C_FAINT" "$C_R"
+    [[ -n "$SAVED_POD_GONE" ]] && printf '   %syour previous pin %s no longer exists — back to auto ([g] to re-pick)%s\n' "$C_CAUT" "$SAVED_POD_GONE" "$C_R"
+    mrule
 }
 header_local() {
-    maybe_clear
-    box "JVM debug kit - local (no kubectl)"
-    local jat="not staged"; [[ -x "$JATTACH_BIN" ]] && jat="ok"
-    printf '  %smode%s      %s  %s(m to switch)%s\n' "$B" "$OFF" "$(mode_label)" "$DIM" "$OFF"
-    printf '  %sactuator%s  %s%s%s\n' "$B" "$OFF" "$GN" "$ACTUATOR_BASE" "$OFF"
-    printf '  %sjattach%s   %s%s%s %s(%s)%s\n' "$B" "$OFF" "$GN" "$JATTACH_BIN" "$OFF" "$DIM" "$jat" "$OFF"
-    printf '            %s↳ press %ss%s%s for settings (actuator / jattach / pid) · %sm%s%s to switch mode%s\n' "$DIM" "$OFF$GN" "$OFF" "$DIM" "$GN" "$OFF" "$DIM" "$OFF"
-    printf '  %sReaches this machine'\''s JVM directly (localhost + /proc). No pod/kubectl needed.%s\n' "$DIM" "$OFF"
-    hr
+    maybe_clear; panel_width
+    header_line1 "$(mode_label) "
+    local jat="jattach missing" jatc="$C_DISR" act="${ACTUATOR_BASE#http://localhost}"
+    [[ "$act" == "$ACTUATOR_BASE" ]] && act="$ACTUATOR_BASE"
+    [[ -x "$JATTACH_BIN" ]] && { jat="jattach ok"; jatc="$C_MUTED"; }
+    printf ' %s●%s %s%s%s  %s·%s  %s%s%s  %s·%s  %s[s] settings  [M] mode%s\n' \
+        "$C_OK" "$C_R" "$C_MUTED" "$act" "$C_R" "$C_FAINT" "$C_R" "$jatc" "$jat" "$C_R" "$C_FAINT" "$C_R" "$C_FAINT" "$C_R"
+    mrule
 }
 
 # --- utilities --------------------------------------------------------------
@@ -315,14 +389,19 @@ show_help() {
                  The gap (buffers, metaspace, threads) is what 'memory' (option 4) explains.
 
   ${B}A GOOD FIRST 10 MINUTES${OFF}
-    1. ${GN}status${OFF} — is anything restarting or stuck? read the hints under the output
-    2. ${GN}health${OFF} — is a dependency (db/queue) DOWN? chase that system first
+    1. ${GN}s${OFF} status — is anything restarting or stuck? read the hints under the output
+    2. ${GN}h${OFF} health — is a dependency (db/queue) DOWN? chase that system first
     3. ${GN}w${OFF} wizard — tell it the symptom; it runs the right captures and says what's next
-    4. ${GN}d${OFF} — see what you captured and what tool opens each file
+    4. ${GN}d${OFF} — see what you captured · ${GN}a${OFF} — analyze it all in one pass
+
+  ${B}KEYS NOT SHOWN ON THE MENU${OFF}
+    ${GN}i${OFF} stage jattach in the pod · ${GN}p${OFF} push the in-pod tool (jdebug-local)
+    ${GN}g${OFF} target editor · ${GN}M${OFF} switch mode · ${GN}d${OFF} browse captures
 
   ${B}THE SAFETY RULES${OFF}
-    · everything is read-only except: ${RD}heap dumps pause the app${OFF}, log-level adds log volume
-    · anything risky asks you first — answering n is always safe
+    · everything is read-only except: ${RD}heap dumps pause the app${OFF} (H asks for a
+      second H before it fires), log-level adds log volume
+    · anything risky asks you first — cancelling is always safe
     · every capture is saved under dumps/ and every command's output goes to the
       session log — you can't lose evidence by pressing the wrong key
     · heap dumps can contain real user data: treat them like production data
@@ -418,7 +497,7 @@ pick_pod() {
     if [[ "$n" -le 9 ]]; then read -rn1 c; printf '\n'; else read -r c; fi
     if [[ "$c" =~ ^[0-9]+$ ]] && (( c >= 1 && c < i )); then
         POD_PIN="$(printf '%s\n' "$pods" | sed -n "${c}p" | awk '{print $1}')"
-        printf '  pinned: every capture now targets %s%s%s (press t to change)\n' "$GN" "$POD_PIN" "$OFF"
+        printf '  pinned: every capture now targets %s%s%s (press g to change)\n' "$GN" "$POD_PIN" "$OFF"
     else
         printf '  auto — the first matching pod is used (you will be told which)\n'
     fi
@@ -585,41 +664,51 @@ wizard() {
 }
 
 # --- menus ------------------------------------------------------------------
+# banner + footer shared by both modes
+menu_banner() {
+    printf '\n %s▎%s%s▸ w%s  %sguided diagnosis%s %s— describe the symptom, it runs the right captures%s\n\n' \
+        "$C_ACC" "$C_R" "$C_KEY" "$C_R" "$C_TITLE" "$C_R" "$C_MUTED" "$C_R"
+}
+menu_footer() {  # $1 = nav keys string (plain), printed dim; legend right-aligned
+    local nav="$1" legend_plain="●●● safe / caution / disruptive" pad
+    mrule
+    pad=$(( TW - 1 - 5 - ${#nav} - ${#legend_plain} - 1 )); (( pad < 2 )) && pad=2
+    printf ' %smore%s  %s%s%s%*s%s●%s%s●%s%s●%s %ssafe / caution / disruptive%s\n' \
+        "$C_FAINT" "$C_R" "$C_DIMT" "$nav" "$C_R" "$pad" '' \
+        "$C_SAFE" "$C_R" "$C_CAUT" "$C_R" "$C_DISR" "$C_R" "$C_FAINT" "$C_R"
+}
+
 menu_remote() {
     header_remote
     target_probe
     if [[ -z "$TARGET_OK" ]]; then
         printf '\n  %s⚠ SET UP YOUR TARGET FIRST%s — the tools appear when every line below is %s✓%s:\n\n' "$YL" "$OFF" "$GN" "$OFF"
         printf '%s' "$TARGET_WHY"
-        printf '\n  %sPress%s %st%s %sto open the target editor%s %s(Enter works too)%s — it lists your clusters,\n' "$B" "$OFF" "$GN" "$OFF" "$B" "$OFF" "$DIM" "$OFF"
+        printf '\n  %sPress%s %sg%s %sto open the target editor%s %s(Enter works too)%s — it lists your clusters,\n' "$B" "$OFF" "$C_KEY" "$OFF" "$B" "$OFF" "$DIM" "$OFF"
         printf '  namespaces, pods, and containers so you pick instead of type.\n'
-        printf '\n  %sMORE%s  %sh%s help/glossary · %sc%s check setup · %sm%s mode · %sq%s quit\n' "$B" "$OFF" "$GN" "$OFF" "$GN" "$OFF" "$GN" "$OFF" "$GN" "$OFF"
-        printf '\n  %s> %s' "$B" "$OFF"
+        printf '\n %smore%s  %s[g] target  [c] check setup  [?] help  [M] mode  [q] quit%s\n' "$C_FAINT" "$C_R" "$C_DIMT" "$C_R"
+        mprompt
         return
     fi
-    cat <<EOF
-  ${B}${CY}▶ w${OFF}  ${B}GUIDED DIAGNOSIS${OFF} ${DIM}— describe the symptom, it runs the right captures.${OFF} ${B}Start here.${OFF}
-
-  ${B}LOOK AROUND${OFF}  ${GN}all safe · read-only${OFF}
-   ${GN}1${OFF}  status      are the pods up? restarts, recent events
-   ${GN}2${OFF}  health      the app's own health checks (db, queue, disk…)
-   ${GN}3${OFF}  top         CPU + memory per pod, autoscaler state
-   ${GN}4${OFF}  memory      memory anatomy — container total vs JVM heap/non-heap
-
-  ${B}CAPTURE EVIDENCE${OFF}  ${DIM}files land in dumps/ — press${OFF} ${GN}d${OFF} ${DIM}to browse them${OFF}
-   ${GN}5${OFF}  threads     what is every thread doing right now?      ${GN}safe · instant${OFF}
-   ${GN}6${OFF}  heap        every object in memory, for leak hunting   ${RD}⚠ pauses the app${OFF}
-   ${GN}7${OFF}  jcmd        advanced JVM commands (GC, JFR, native)    ${YL}mostly safe${OFF}
-   ${GN}0${OFF}  snapshot    grab EVERYTHING in one offline bundle      ${GN}safe${OFF}${DIM} · heap optional${OFF}
-
-  ${B}LOGS${OFF}
-   ${GN}8${OFF}  logs        live log stream from every replica         ${GN}safe${OFF}
-   ${GN}9${OFF}  log-level   turn logging up/down without a restart     ${YL}adds log volume${OFF}
-
-  ${B}MORE${OFF}  ${GN}h${OFF} help/glossary · ${GN}c${OFF} check setup · ${GN}d${OFF} captures · ${GN}a${OFF} analyze them · ${GN}i${OFF} stage jattach · ${GN}p${OFF} push in-pod tool · ${GN}t${OFF} target · ${GN}m${OFF} mode · ${GN}q${OFF} quit
-  ${DIM}keys act instantly — no Enter needed${OFF}
-EOF
-    printf '\n  %s> %s' "$B" "$OFF"
+    menu_banner
+    msection "INSPECT" "read-only"
+    mrow s status  "pods up? restarts, recent events"       safe
+    mrow h health  "app checks — db, queue, disk"           safe
+    mrow o top     "CPU + memory per pod, autoscaler"       safe
+    mrow m memory  "container total vs JVM heap/non-heap"   safe
+    printf '\n'
+    msection "CAPTURE" "saves to dumps/ · [d] browse"
+    mrow t threads  "what every thread is doing now"        safe
+    mrow j jcmd     "advanced JVM — GC, JFR, native"        caution
+    mrow H heap     "every object, for leak hunting"        disruptive "pauses app"
+    mrow x snapshot "everything in one offline bundle"      safe
+    printf '\n'
+    msection "LOGS"
+    mrow l logs      "live stream from every replica"       safe
+    mrow v verbosity "change log level, no restart"         caution
+    printf '\n'
+    menu_footer "[a] analyze  [c] check setup  [?] help  [q] quit"
+    mprompt
 }
 menu_local() {
     header_local
@@ -627,67 +716,75 @@ menu_local() {
     if [[ -z "$LOCAL_OK" ]]; then
         printf '\n  %s⚠ SET UP A ROUTE TO THE JVM FIRST%s — the tools appear when at least one line is %s✓%s:\n\n' "$YL" "$OFF" "$GN" "$OFF"
         printf '%s' "$LOCAL_WHY"
-        printf '\n  %sMORE%s  %ss%s settings (actuator URL / pid) · %si%s stage jattach · %sh%s help · %sm%s mode · %sq%s quit\n' "$B" "$OFF" "$GN" "$OFF" "$GN" "$OFF" "$GN" "$OFF" "$GN" "$OFF" "$GN" "$OFF"
-        printf '\n  %s> %s' "$B" "$OFF"
+        printf '\n %smore%s  %s[s] settings  [i] stage jattach  [?] help  [M] mode  [q] quit%s\n' "$C_FAINT" "$C_R" "$C_DIMT" "$C_R"
+        mprompt
         return
     fi
-    cat <<EOF
-  ${B}${CY}▶ w${OFF}  ${B}GUIDED DIAGNOSIS${OFF} ${DIM}— describe the symptom, it runs the right captures.${OFF} ${B}Start here.${OFF}
-
-  ${B}LOOK AROUND${OFF}  ${GN}all safe · read-only${OFF}
-   ${GN}1${OFF}  health      the app's own health checks (db, queue, disk…)
-   ${GN}2${OFF}  metrics     browse JVM/process metrics, or print one value
-   ${GN}3${OFF}  memory      memory anatomy — container total vs JVM heap/non-heap
-
-  ${B}CAPTURE EVIDENCE${OFF}  ${DIM}files land in ${OUT_DIR:-/tmp} — press${OFF} ${GN}d${OFF} ${DIM}to browse them${OFF}
-   ${GN}4${OFF}  threads     what is every thread doing right now?      ${GN}safe · instant${OFF}
-   ${GN}5${OFF}  heap        every object in memory, for leak hunting   ${RD}⚠ pauses the app${OFF}
-   ${GN}6${OFF}  jcmd        advanced JVM commands (GC, JFR, native)    ${YL}needs jattach${OFF}
-   ${GN}7${OFF}  snapshot    grab EVERYTHING in one offline bundle      ${GN}safe${OFF}${DIM} · heap optional${OFF}
-
-  ${B}MORE${OFF}  ${GN}h${OFF} help/glossary · ${GN}d${OFF} captures · ${GN}a${OFF} analyze them · ${GN}i${OFF} stage jattach · ${GN}s${OFF} settings · ${GN}m${OFF} mode · ${GN}q${OFF} quit
-  ${DIM}keys act instantly — no Enter needed${OFF}
-EOF
-    printf '\n  %s> %s' "$B" "$OFF"
+    menu_banner
+    msection "INSPECT" "read-only"
+    mrow h health  "app checks — db, queue, disk"           safe
+    mrow e metrics "browse JVM metrics, or one live value"  safe
+    mrow m memory  "container total vs JVM heap/non-heap"   safe
+    printf '\n'
+    msection "CAPTURE" "saves to ${OUT_DIR:-/tmp} · [d] browse"
+    mrow t threads  "what every thread is doing now"        safe
+    mrow j jcmd     "advanced JVM — GC, JFR, native"        caution
+    mrow H heap     "every object, for leak hunting"        disruptive "pauses app"
+    mrow x snapshot "everything in one offline bundle"      safe
+    printf '\n'
+    menu_footer "[a] analyze  [i] stage jattach  [s] settings  [?] help  [q] quit"
+    mprompt
 }
 
+# confirm_disruptive <key> <message> — spec §5: disruptive actions fire only on
+# a second press of the SAME key; any other key cancels.
+confirm_disruptive() {
+    printf '  %s%s — press %s%s%s%s again to confirm, any other key cancels%s ' "$YL" "$2" "$OFF$C_KEY" "$1" "$OFF" "$YL" "$OFF"
+    local k; read -rn1 k; printf '\n'
+    [[ "$k" == "$1" ]] || { printf '  %scancelled%s\n' "$DIM" "$OFF"; return 1; }
+}
+
+# Keys are case-sensitive: H (heap) and M (mode) are deliberately shifted —
+# the spec's t/threads-vs-retarget and m/memory-vs-mode collisions are
+# resolved as g = target editor, M = mode switch.
 dispatch_remote() {
     # Not ready → only setup/help keys work; everything else explains why.
     if [[ -z "$TARGET_OK" ]]; then
         case "$1" in
-            ""|t|T) retarget ;;
-            h|H)    show_help ;;
+            ""|g|G) retarget; SKIP_PAUSE=1 ;;
+            '?')    show_help ;;
             c|C)    run "$DBG" doctor ;;
-            m|M)    choose_mode ;;
+            M)      choose_mode; SKIP_PAUSE=1 ;;
             q|Q)    confirm "quit jdebug?" && bye; return 1 ;;
-            *)      printf '  %sfinish the target setup first — press t. The tools unlock when every check is ✓.%s\n' "$YL" "$OFF"; return 1 ;;
+            *)      printf '  %sfinish the target setup first — press g. The tools unlock when every check is ✓.%s\n' "$YL" "$OFF"; return 1 ;;
         esac
         return 0
     fi
     case "$1" in
-        w|W) wizard ;;
-        1)  run "$DBG" status ;;
-        2)  run "$DBG" health ${POD_PIN:+"$POD_PIN"} ;;
-        3)  run "$DBG" top ;;
-        4)  run "$DBG" memory ${POD_PIN:+"$POD_PIN"} ;;
-        5)  ask_via; run "$DBG" threads $VIA_FLAG ${POD_PIN:+"$POD_PIN"} ;;
-        6)  ask_via; confirm "heap dump PAUSES the JVM (destructive in production) — proceed?" && run "$DBG" heap $VIA_FLAG --confirm ${POD_PIN:+"$POD_PIN"} ;;
-        7)  ask_jcmd; [[ -n "$JCMD_PICK" ]] && run "$DBG" jcmd "$JCMD_PICK" ${POD_PIN:+"$POD_PIN"} ;;
-        8)  printf '  %sstreaming — Ctrl-C to stop%s\n' "$DIM" "$OFF"; run "$DBG" logs ;;
-        9)  printf '  logger (e.g. com.example.debugdemo, ROOT): '; IFS= read -r lg
-            printf '  level: 1 TRACE · 2 DEBUG · 3 INFO · 4 WARN · 5 ERROR · 6 OFF > '
-            local lvk lv=""; read -rn1 lvk; printf '\n'
-            case "$lvk" in 1) lv=TRACE;; 2) lv=DEBUG;; 3) lv=INFO;; 4) lv=WARN;; 5) lv=ERROR;; 6) lv=OFF;; esac
-            [[ -n "$lg" && -n "$lv" ]] && run "$DBG" log-level "$lg" "$lv" ;;
-        0)  if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run "$DBG" snapshot --heap --confirm ${POD_PIN:+"$POD_PIN"}; else run "$DBG" snapshot ${POD_PIN:+"$POD_PIN"}; fi ;;
-        h|H) show_help ;;
+        w|W) wizard; SKIP_PAUSE=1 ;;
+        s|S) run "$DBG" status ;;
+        h)   run "$DBG" health ${POD_PIN:+"$POD_PIN"} ;;
+        o|O) run "$DBG" top ;;
+        m)   run "$DBG" memory ${POD_PIN:+"$POD_PIN"} ;;
+        t|T) ask_via; run "$DBG" threads $VIA_FLAG ${POD_PIN:+"$POD_PIN"} ;;
+        j|J) ask_jcmd; [[ -n "$JCMD_PICK" ]] && run "$DBG" jcmd "$JCMD_PICK" ${POD_PIN:+"$POD_PIN"} ;;
+        H)   confirm_disruptive H "heap dump pauses the app while it runs" || return 1
+             ask_via; run "$DBG" heap $VIA_FLAG --confirm ${POD_PIN:+"$POD_PIN"} ;;
+        x|X) if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run "$DBG" snapshot --heap --confirm ${POD_PIN:+"$POD_PIN"}; else run "$DBG" snapshot ${POD_PIN:+"$POD_PIN"}; fi ;;
+        l|L) printf '  %sstreaming — Ctrl-C to stop%s\n' "$DIM" "$OFF"; run "$DBG" logs ;;
+        v|V) printf '  logger (e.g. com.example.debugdemo, ROOT): '; IFS= read -r lg
+             printf '  level: 1 TRACE · 2 DEBUG · 3 INFO · 4 WARN · 5 ERROR · 6 OFF > '
+             local lvk lv=""; read -rn1 lvk; printf '\n'
+             case "$lvk" in 1) lv=TRACE;; 2) lv=DEBUG;; 3) lv=INFO;; 4) lv=WARN;; 5) lv=ERROR;; 6) lv=OFF;; esac
+             [[ -n "$lg" && -n "$lv" ]] && run "$DBG" log-level "$lg" "$lv" ;;
+        '?') show_help ;;
         c|C) run "$DBG" doctor ;;
         a|A) run "$DBG" analyze ;;
         d|D) run "$DBG" dumps ;;
-        i|I) run "$DBG" install-jattach ${POD_PIN:+"$POD_PIN"} ;;
-        p|P) run "$DBG" push-local ${POD_PIN:+"$POD_PIN"} ;;
-        t|T) retarget ;;
-        m|M) choose_mode ;;
+        i|I) run "$DBG" install-jattach ${POD_PIN:+"$POD_PIN"} ;;   # utility; listed in [?] help
+        p|P) run "$DBG" push-local ${POD_PIN:+"$POD_PIN"} ;;        # utility; listed in [?] help
+        g|G) retarget; SKIP_PAUSE=1 ;;
+        M)   choose_mode; SKIP_PAUSE=1 ;;
         q|Q) confirm "quit jdebug?" && bye; return 1 ;;
         *) return 1 ;;   # unknown key or bare Enter: just show the menu again
     esac
@@ -697,33 +794,33 @@ dispatch_local() {
     # Not ready → only setup/help keys work; everything else explains why.
     if [[ -z "$LOCAL_OK" ]]; then
         case "$1" in
-            ""|s|S) local_settings ;;
+            ""|s|S) local_settings; SKIP_PAUSE=1 ;;
             i|I)    run stage_jattach_local ;;
-            h|H)    show_help ;;
-            m|M)    choose_mode ;;
+            '?')    show_help ;;
+            M)      choose_mode; SKIP_PAUSE=1 ;;
             q|Q)    confirm "quit jdebug?" && bye; return 1 ;;
             *)      printf '  %sset up a route to the JVM first — press s (actuator URL) or i (stage jattach).%s\n' "$YL" "$OFF"; return 1 ;;
         esac
         return 0
     fi
     case "$1" in
-        w|W) wizard ;;
-        1)  run sh "$LOCAL" health ;;
-        2)  run sh "$LOCAL" metrics ;;
-        3)  jattach_fallback_check; run sh "$LOCAL" memory ;;
-        4)  jattach_fallback_check; run sh "$LOCAL" threads ;;
-        5)  jattach_fallback_check
-            confirm "heap dump PAUSES the JVM (destructive in production) — proceed?" && run sh "$LOCAL" heap --confirm ;;
-        6)  [[ -x "$JATTACH_BIN" ]] || { confirm "jcmd REQUIRES jattach and it is not staged — download now (~80 KB)?" && stage_jattach_local; }
-            ask_jcmd; [[ -n "$JCMD_PICK" ]] && run sh "$LOCAL" jcmd "$JCMD_PICK" ;;
-        7)  jattach_fallback_check
-            if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run sh "$LOCAL" snapshot --heap; else run sh "$LOCAL" snapshot; fi ;;
-        h|H) show_help ;;
+        w|W) wizard; SKIP_PAUSE=1 ;;
+        h)   run sh "$LOCAL" health ;;
+        e|E) run sh "$LOCAL" metrics ;;
+        m)   jattach_fallback_check; run sh "$LOCAL" memory ;;
+        t|T) jattach_fallback_check; run sh "$LOCAL" threads ;;
+        j|J) [[ -x "$JATTACH_BIN" ]] || { confirm "jcmd REQUIRES jattach and it is not staged — download now (~80 KB)?" && stage_jattach_local; }
+             ask_jcmd; [[ -n "$JCMD_PICK" ]] && run sh "$LOCAL" jcmd "$JCMD_PICK" ;;
+        H)   confirm_disruptive H "heap dump pauses the app while it runs" || return 1
+             jattach_fallback_check; run sh "$LOCAL" heap --confirm ;;
+        x|X) jattach_fallback_check
+             if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run sh "$LOCAL" snapshot --heap; else run sh "$LOCAL" snapshot; fi ;;
+        '?') show_help ;;
         a|A) run "$SCRIPTS_ROOT/observe/analyze.sh" "${OUT_DIR:-/tmp}" ;;
         d|D) run sh "$LOCAL" dumps ;;
         i|I) run stage_jattach_local ;;
-        s|S) local_settings ;;
-        m|M) choose_mode ;;
+        s|S) local_settings; SKIP_PAUSE=1 ;;
+        M)   choose_mode; SKIP_PAUSE=1 ;;
         q|Q) confirm "quit jdebug?" && bye; return 1 ;;
         *) return 1 ;;   # unknown key or bare Enter: just show the menu again
     esac
@@ -742,7 +839,8 @@ if [[ "$MODE" == 1 && -n "$POD_PIN" ]]; then
     fi
 fi
 while true; do
+    SKIP_PAUSE=""
     if [[ "$MODE" == 1 ]]; then menu_remote; read -rn1 choice || bye; printf '\n'; dispatch_remote "$choice" || continue
     else menu_local; read -rn1 choice || bye; printf '\n'; dispatch_local "$choice" || continue; fi
-    [[ "$choice" =~ ^[tTmMsSwW]$ || -z "$choice" ]] || pause
+    [[ -n "$SKIP_PAUSE" || -z "$choice" ]] || pause
 done

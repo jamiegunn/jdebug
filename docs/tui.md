@@ -11,20 +11,66 @@ wizard encodes the diagnostic playbooks so you don't have to remember them.
 
 ## Layout
 
-- **▶ w GUIDED DIAGNOSIS** — describe the symptom, it runs the right captures. Start here.
-- **LOOK AROUND** — status / health / top / memory. All safe, read-only.
-- **CAPTURE EVIDENCE** — threads (safe · instant), heap (**⚠ pauses the app**),
-  jcmd (quick-pick of the five useful commands), `0` snapshot (everything in one bundle).
-- **LOGS** — live tail from every replica; runtime log-level changes (level is a one-key pick).
-- **MORE** — `h` help/glossary · `c` check setup (doctor) · `d` view captures ·
-  `i` stage jattach · `p` push in-pod tool · `t` target · `m` mode · `q` quit.
+The main screen is a two-line header (title + one glanceable status line), a
+boxed **guided diagnosis** hero row, three verb-named sections with hairline
+rules, a footer with navigation keys and a risk legend, and a live `❯` prompt:
+
+```
+ jvm debug kit                                        remote · kubectl → pod
+ ● ddk3s  ·  debug-demo / app · …c6c4b5769-s9jdg  ·  :8080/actuator  ·  [g] retarget  [M] mode
+ ─────────────────────────────────────────────────────────────────────────
+
+ ▎▸ w  guided diagnosis — describe the symptom, it runs the right captures
+
+ INSPECT  read-only ──────────────────────────────────────────────────────
+   s   status      pods up? restarts, recent events                      ●
+   h   health      app checks — db, queue, disk                          ●
+   o   top         CPU + memory per pod, autoscaler                      ●
+   m   memory      container total vs JVM heap/non-heap                  ●
+
+ CAPTURE  saves to dumps/ · [d] browse ───────────────────────────────────
+   t   threads     what every thread is doing now                        ●
+   j   jcmd        advanced JVM — GC, JFR, native                        ●
+   H   heap        every object, for leak hunting             ● pauses app
+   x   snapshot    everything in one offline bundle                      ●
+
+ LOGS ────────────────────────────────────────────────────────────────────
+   l   logs        live stream from every replica                        ●
+   v   verbosity   change log level, no restart                          ●
+
+ ─────────────────────────────────────────────────────────────────────────
+ more  [a] analyze  [c] check setup  [?] help  [q] quit   ●●● safe / caution / disruptive
+
+ ❯ █
+```
+
+Every key is a **letter mnemonic from the action's own name** — no numbered
+items. Risk is a colored dot down the right edge (green safe, yellow caution,
+red disruptive); **heap is the only row with inline text** (`pauses app`, red),
+so the one dangerous action is the loudest thing on screen. The palette is
+GitHub-dark truecolor with a 16-color fallback; `NO_COLOR` strips everything.
+
+**Key collisions, resolved:** the spec's `t` (threads vs retarget) and `m`
+(memory vs mode) clashes are settled as **`g` = target editor** and
+**`M` = mode switch** — actions keep the lowercase letters, navigation moves
+to `g`/shift. **`H` (heap) is deliberately capital**: lowercase `h` is health,
+and the shift is a friction signal for the one app-pausing action.
+
+Utility keys not shown in the footer (a deliberate deviation to keep it to one
+line): `i` stage jattach, `p` push in-pod tool, `g` target, `M` mode, `d`
+browse — all listed on the `?` help screen. Typed subcommands at the prompt
+are not supported in this implementation (single-key only); the jcmd
+quick-pick's `t` option accepts any free-typed jcmd string.
 
 ## Keys act instantly
 
 Navigation is single-keypress — no Enter. The only deliberate inputs are
-**confirmations** (destructive actions like heap dumps, and quitting — both
-ask y/N) and **free-text fields** (a namespace nobody enumerated, a custom
-actuator URL). After a command's output, any key returns to the menu.
+**confirmations** and **free-text fields** (a namespace nobody enumerated, a
+custom actuator URL). After a command's output, any key returns to the menu.
+
+Disruptive actions use **press-the-same-key-again** confirmation: `H` (heap)
+prints *"heap dump pauses the app while it runs — press H again to confirm,
+any other key cancels"* and only fires on the second `H`. Quitting asks y/N.
 
 ## The tools stay hidden until the target is ready
 
@@ -44,16 +90,17 @@ the tools lock again with an explanation instead of failing captures.
 The mode chooser (first screen) also offers `u` — run the kit's own test
 suite (~10 s, mocked, touches nothing of yours) to prove the install works.
 
-## The header tells you everything
+## The header tells you everything — in one line
 
-Mode, kube context **with a live ✓/✗ reachability indicator**, namespace,
-selector, container, pinned pod, and actuator URL — you always know exactly
-what a keypress will hit. An empty selector shows as
-`<any pod — press t to narrow to your app>` rather than silently meaning "whatever".
+Line 1: title + mode. Line 2: a single status line — a **live reachability
+dot** (green = cluster answering, red + "unreachable — [c] explains why"),
+the kube context, `namespace / container · pod` (long pod names truncate to
+their unique tail), the actuator port/path, and the `[g] retarget [M] mode`
+hints. You always know exactly what a keypress will hit.
 
-## Targeting (`t`) — the field editor
+## Targeting (`g`) — the field editor
 
-`t` opens an editor where **each field is one keypress**, edited in place:
+`g` opens an editor where **each field is one keypress**, edited in place:
 
 ```
 TARGET — press a letter to change a field · Enter/b back to the menu
