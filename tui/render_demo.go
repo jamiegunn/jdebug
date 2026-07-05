@@ -21,7 +21,10 @@ func demoModel() model {
 	m.remote = probe{OK: true, Cluster: true, When: time.Now().Add(time.Hour)}
 	m.panel = panelData{When: time.Now(), Phase: "Running", Waiting: "CrashLoopBackOff",
 		Restarts: 34, LastReason: "OOMKilled",
-		MemUse: "480Mi", MemLimit: "512Mi", MemPct: 94, CPUUse: "250m", CPULimit: "500m",
+		OwnerKind: "ReplicaSet", OwnerName: "app-debug-demo-app-6c6c4b5769", DeployName: "app-debug-demo-app",
+		NodeName: "ddk3s-agent-1", ServiceAcct: "app-debug-demo",
+		Volumes: []string{"config:configmap", "creds:secret", "tmp:emptydir"},
+		MemUse:  "480Mi", MemLimit: "512Mi", MemPct: 94, CPUUse: "250m", CPULimit: "500m",
 		HPAName: "app-debug-demo-app", HPACur: 6, HPAMax: 6, HPAMin: 2,
 		HeapUsed: "121Mi", HeapMax: "1732Mi", HeapVia: "actuator", ActuatorOK: true}
 	m.local = probe{OK: true, Jattach: true, When: time.Now().Add(time.Hour),

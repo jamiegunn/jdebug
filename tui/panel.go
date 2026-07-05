@@ -27,7 +27,13 @@ type panelData struct {
 	Waiting     string // container waiting reason, e.g. CrashLoopBackOff
 	Restarts    int
 	LastReason  string // e.g. OOMKilled, Error
-	MemUse      string // from kubectl top
+	OwnerKind   string // Kubernetes owner for this pod, usually ReplicaSet/Job/StatefulSet
+	OwnerName   string
+	DeployName  string // owning Deployment when the pod is owned through a ReplicaSet
+	NodeName    string
+	ServiceAcct string
+	Volumes     []string // compact "name:type" storage/config refs from the pod spec
+	MemUse      string   // from kubectl top
 	MemLimit    string
 	MemPct      int // -1 unknown
 	CPUUse      string
@@ -56,6 +62,12 @@ func tickCmd() tea.Cmd {
 // --- fetch -----------------------------------------------------------------
 
 type podJSON struct {
+	Metadata struct {
+		OwnerReferences []struct {
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+		} `json:"ownerReferences"`
+	} `json:"metadata"`
 	Status struct {
 		Phase             string `json:"phase"`
 		ContainerStatuses []struct {
@@ -74,13 +86,34 @@ type podJSON struct {
 		} `json:"containerStatuses"`
 	} `json:"status"`
 	Spec struct {
-		Containers []struct {
+		NodeName           string `json:"nodeName"`
+		ServiceAccountName string `json:"serviceAccountName"`
+		Containers         []struct {
 			Name      string `json:"name"`
 			Resources struct {
 				Limits map[string]string `json:"limits"`
 			} `json:"resources"`
 		} `json:"containers"`
+		Volumes []struct {
+			Name                  string    `json:"name"`
+			PersistentVolumeClaim *struct{} `json:"persistentVolumeClaim"`
+			ConfigMap             *struct{} `json:"configMap"`
+			Secret                *struct{} `json:"secret"`
+			EmptyDir              *struct{} `json:"emptyDir"`
+			Projected             *struct{} `json:"projected"`
+			DownwardAPI           *struct{} `json:"downwardAPI"`
+			HostPath              *struct{} `json:"hostPath"`
+		} `json:"volumes"`
 	} `json:"spec"`
+}
+
+type replicaSetJSON struct {
+	Metadata struct {
+		OwnerReferences []struct {
+			Kind string `json:"kind"`
+			Name string `json:"name"`
+		} `json:"ownerReferences"`
+	} `json:"metadata"`
 }
 
 // fetchPanel reads the pod status + kubectl top + HPA. probeJVM gates the one
@@ -96,6 +129,12 @@ func fetchPanel(t target, probeJVM bool) tea.Cmd {
 				var pj podJSON
 				if json.Unmarshal(raw, &pj) == nil {
 					d.Phase = pj.Status.Phase
+					d.NodeName = pj.Spec.NodeName
+					d.ServiceAcct = pj.Spec.ServiceAccountName
+					if len(pj.Metadata.OwnerReferences) > 0 {
+						d.OwnerKind = pj.Metadata.OwnerReferences[0].Kind
+						d.OwnerName = pj.Metadata.OwnerReferences[0].Name
+					}
 					for _, cs := range pj.Status.ContainerStatuses {
 						if cs.Name == t.Container || len(pj.Status.ContainerStatuses) == 1 {
 							d.Restarts = cs.RestartCount
@@ -111,6 +150,22 @@ func fetchPanel(t target, probeJVM bool) tea.Cmd {
 						if c.Name == t.Container {
 							d.MemLimit = c.Resources.Limits["memory"]
 							d.CPULimit = c.Resources.Limits["cpu"]
+						}
+					}
+					for _, v := range pj.Spec.Volumes {
+						d.Volumes = append(d.Volumes, v.Name+":"+volumeKind(v))
+					}
+				}
+			}
+			if d.OwnerKind == "ReplicaSet" && d.OwnerName != "" {
+				if raw, err := exec.CommandContext(ctx, "kubectl", "-n", t.Namespace, "get", "rs", d.OwnerName, "-o", "json").Output(); err == nil {
+					var rj replicaSetJSON
+					if json.Unmarshal(raw, &rj) == nil {
+						for _, owner := range rj.Metadata.OwnerReferences {
+							if owner.Kind == "Deployment" {
+								d.DeployName = owner.Name
+								break
+							}
 						}
 					}
 				}
@@ -136,6 +191,36 @@ func fetchPanel(t target, probeJVM bool) tea.Cmd {
 		}
 		parseHPA(ctx, t.Namespace, &d)
 		return panelMsg(d)
+	}
+}
+
+func volumeKind(v struct {
+	Name                  string    `json:"name"`
+	PersistentVolumeClaim *struct{} `json:"persistentVolumeClaim"`
+	ConfigMap             *struct{} `json:"configMap"`
+	Secret                *struct{} `json:"secret"`
+	EmptyDir              *struct{} `json:"emptyDir"`
+	Projected             *struct{} `json:"projected"`
+	DownwardAPI           *struct{} `json:"downwardAPI"`
+	HostPath              *struct{} `json:"hostPath"`
+}) string {
+	switch {
+	case v.PersistentVolumeClaim != nil:
+		return "pvc"
+	case v.ConfigMap != nil:
+		return "configmap"
+	case v.Secret != nil:
+		return "secret"
+	case v.EmptyDir != nil:
+		return "emptydir"
+	case v.Projected != nil:
+		return "projected"
+	case v.DownwardAPI != nil:
+		return "downwardapi"
+	case v.HostPath != nil:
+		return "hostpath"
+	default:
+		return "volume"
 	}
 }
 

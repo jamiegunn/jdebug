@@ -221,11 +221,23 @@ func TestDashboardShowsPanes(t *testing.T) {
 	m := readyModel()
 	m.width, m.height = 200, 50
 	out := m.menuView()
-	for _, want := range []string{"LIVE LOGS", "EVENTS", "CAPTURES", "TRENDS", "PODS", "▲",
-		"OutOfMemoryError", "BackOff", "20260705T091500Z", "click switches"} {
+	for _, want := range []string{"LIVE LOGS", "WORKLOAD", "CAPTURES", "TRENDS", "PODS", "▲",
+		"OutOfMemoryError", "app-debug-demo-app", "config:configmap", "20260705T091500Z", "click switches"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dashboard missing %q", want)
 		}
+	}
+}
+
+func TestDashboardDoesNotSpendMainPaneOnEvents(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 200, 50
+	out := m.menuView()
+	if strings.Contains(out, "EVENTS") {
+		t.Fatal("main dashboard should reserve the right column for workload context, not recent events")
+	}
+	if !strings.Contains(out, "WORKLOAD") || !strings.Contains(out, "volumes") {
+		t.Fatal("main dashboard must show workload context in the right column")
 	}
 }
 
