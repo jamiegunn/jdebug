@@ -123,6 +123,11 @@ func renderDemo(what string) string {
 			cFaint.Render("   · container — checked once a pod is selected"),
 		}}
 		return m.menuView()
+	case "runbook":
+		// the demo panel is crash-looping + OOM + at-max + mem-pressure → several cards
+		m.scr = scRunbook
+		m.width, m.height = 120, 0
+		return m.runbookView()
 	case "blocked":
 		// a multi-blocked target: no selector, RBAC denial, no metrics, secured actuator
 		m.scr = scBlocked
@@ -145,5 +150,5 @@ func renderDemo(what string) string {
 		m.scr = scWizard
 		return m.wizardView()
 	}
-	return "unknown screen: " + what + " (menu|dashboard|compact|focus|output|runpane|gate|local|help|chooser|editor|wizard|blocked)"
+	return "unknown screen: " + what + " (menu|dashboard|compact|focus|output|runpane|gate|local|help|chooser|editor|wizard|blocked|runbook)"
 }

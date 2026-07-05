@@ -72,10 +72,13 @@ must never make destructive changes automatically.
   behind a recommendation (`likely  OOMKilled last restart → mem 94% of limit →
   w flow 1`). `suggestionRows()` returns structured rows (`{conf, msg, ev, key}`)
   and `suggestions()` renders them; each render site clips to its column width.
-- **Runbook cards** — the transparency card, specialised per signal (what it
-  means / why / check first / safe cmd / risky cmd / what to tell the next
-  person). Good first cards: last exit, HPA, container memory, JVM heap, probe
-  failures, CrashLoopBackOff, secured actuator.
+- **Runbook cards — SHIPPED.** `n` opens runbook cards driven by the LIVE panel
+  signals (`runbook.go`): for each firing warning — CrashLoopBackOff, OOMKilled,
+  autoscale blind/at-max, memory pressure, secured/absent actuator — a card
+  gives means / why / check-first / the SAFE command / the RISKY one / **what to
+  tell the next person**. With nothing wrong it falls back to the full
+  reference; `E` from the card jumps straight to the escalation handoff. Bash
+  shows the reference set (no live panel there). Both frontends, in help.
 - **Incident timeline — SHIPPED.** `jdebug timeline` (`observe/timeline.sh`,
   wizard flow 8) merges the pod's Kubernetes events with the capture directories
   under `dumps/pods/<pod>/` and prints them oldest→newest with a legend

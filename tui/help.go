@@ -24,6 +24,7 @@ func (m model) helpView() string {
 		h("KEYS NOT SHOWN ON THE MENU") +
 		li(".           ", "what does each command do? source, risk, deps (or right-click a row)") +
 		li("b           ", "what's blocked right now + how to unblock it (RBAC, metrics, actuator…)") +
+		li("n           ", "runbook — what your live warnings mean + the safe/risky fix + what to tell next") +
 		li("E           ", "escalation summary — a paste-ready handoff for asking a senior for help") +
 		li("r / z       ", "refresh now / cycle background refresh (auto → quiet → paused)") +
 		li("i           ", "stage jattach in the pod") +

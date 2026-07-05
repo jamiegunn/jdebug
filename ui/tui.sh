@@ -472,6 +472,7 @@ show_help() {
     ${GN}i${OFF} stage jattach in the pod · ${GN}p${OFF} push the in-pod tool (jdebug-local)
     ${GN}g${OFF} target editor · ${GN}M${OFF} switch mode · ${GN}d${OFF} browse captures
     ${GN}b${OFF} what's blocked right now + how to unblock it (RBAC, metrics, actuator…)
+    ${GN}n${OFF} runbook — what your live warnings mean + the safe/risky fix + what to tell next
     ${GN}E${OFF} escalation summary — a paste-ready handoff for asking a senior for help
 
   ${B}THE SAFETY RULES${OFF}
@@ -533,6 +534,56 @@ EOF
 EOF
     fi
     printf '\n  %spress c for the full cluster why + fix · any key returns%s\n' "$DIM" "$OFF"
+}
+# show_runbook — runbook cards ('n'): for each common incident signal, what it
+# means / why / check first / the SAFE command / the RISKY one / what to tell the
+# next person. The Go TUI shows only the signals firing on the live panel; the
+# bash menu has no live panel, so it shows the full reference.
+show_runbook() {
+    box "runbook — the common incident signals and what to do"
+    cat <<EOF
+
+  ${RD}● CrashLoopBackOff${OFF}
+      means      the container keeps starting then exiting; Kubernetes backs off restarting it
+      why        a crash on startup — bad config, a missing dependency, or an immediate OOM
+      check      the previous container's last log lines, then the pod-layer why
+      ${GN}safe${OFF}       jdebug logs --previous · jdebug why
+      ${RD}risky${OFF}      roll back the last deploy if the loop started right after a rollout
+      tell next  CrashLoopBackOff; last exit reason+code; the previous-log stack trace or exit 137
+
+  ${RD}● OOMKilled${OFF}
+      means      the kernel killed the container for exceeding its memory limit
+      why        heap too small, a leak, or off-heap/native growth outside the heap
+      check      where the memory is — Java heap vs container RSS
+      ${GN}safe${OFF}       jdebug memory · jdebug jcmd "GC.heap_info"
+      ${RD}risky${OFF}      raise the limit, or heap-dump to find the leak (⚠ the dump PAUSES the app)
+      tell next  OOMKilled at N% of limit; heap used/max; the memory report (heap vs RSS)
+
+  ${RD}● autoscale blind / at max${OFF}
+      means      the HPA can't scale (can't read metrics) or is already at its ceiling
+      why        metrics-server missing/misconfigured, or genuine saturation at max replicas
+      check      the workload tree and current vs max replicas
+      ${GN}safe${OFF}       jdebug workload · jdebug top
+      ${RD}risky${OFF}      raise maxReplicas or fix metrics-server (a cluster-level change)
+      tell next  HPA current/max; ScalingActive=False reason, or 'at max and still saturated'
+
+  ${RD}● memory pressure${OFF}
+      means      container memory is close to its limit — an OOM-kill is near if it climbs
+      why        heap or off-heap growth, or the limit is set too tight for the workload
+      check      the memory anatomy (heap or off-heap?) before deciding heap vs limit
+      ${GN}safe${OFF}       jdebug memory
+      ${RD}risky${OFF}      raise the memory limit, or heap-dump to hunt a leak (⚠ pauses the app)
+      tell next  mem N% of limit; whether it's heap or off-heap; the trend
+
+  ${RD}● secured / absent actuator${OFF}
+      means      the app's health URL didn't answer, so actuator views are unavailable
+      why        secured (needs auth), on a different path, or not exposed
+      check      secured (401/403) vs absent (404) — jdebug health says which
+      ${GN}safe${OFF}       jdebug health · set auth with k in the target editor
+      tell next  actuator not answering (secured/absent); which route you fell back to (jattach)
+
+  ${DIM}E builds a full escalation handoff · any key returns${OFF}
+EOF
 }
 # retarget — the TARGET editor ('t'). Each field is one keypress; fields the
 # cluster can enumerate open a live dropdown (contexts, namespaces, selectors
@@ -966,6 +1017,7 @@ dispatch_remote() {
             ""|g|G) retarget; SKIP_PAUSE=1 ;;
             '?')    show_help ;;
             b|B)    show_blocked ;;
+            n|N)    show_runbook ;;
             c|C)    run "$DBG" doctor ;;
             M)      choose_mode; SKIP_PAUSE=1 ;;
             q|Q)    confirm "quit jdebug?" && bye; return 1 ;;
@@ -1009,6 +1061,7 @@ dispatch_remote() {
              [[ -n "$lg" && -n "$lv" ]] && run "$DBG" log-level "$lg" "$lv" ;;
         '?') show_help ;;
         b|B) show_blocked ;;
+        n|N) show_runbook ;;
         c|C) run "$DBG" doctor ;;
         a|A) run "$DBG" analyze ;;
         d|D) run "$DBG" dumps ;;
@@ -1029,6 +1082,7 @@ dispatch_local() {
             i|I)    run stage_jattach_local ;;
             '?')    show_help ;;
             b|B)    show_blocked ;;
+            n|N)    show_runbook ;;
             M)      choose_mode; SKIP_PAUSE=1 ;;
             q|Q)    confirm "quit jdebug?" && bye; return 1 ;;
             *)      printf '  %sset up a route to the JVM first — press s (actuator URL) or i (stage jattach).%s\n' "$YL" "$OFF"; return 1 ;;
@@ -1049,6 +1103,7 @@ dispatch_local() {
              if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run sh "$LOCAL" snapshot --heap; else run sh "$LOCAL" snapshot; fi ;;
         '?') show_help ;;
         b|B) show_blocked ;;
+        n|N) show_runbook ;;
         a|A) run "$SCRIPTS_ROOT/observe/analyze.sh" "${OUT_DIR:-/tmp}" ;;
         d|D) run sh "$LOCAL" dumps ;;
         i|I) run stage_jattach_local ;;

@@ -404,6 +404,10 @@ func (m model) menuKey(key string) (tea.Model, tea.Cmd) {
 				m.prev = m.scr
 				m.scr = scBlocked
 				return m, nil
+			case "n", "N":
+				m.prev = m.scr
+				m.scr = scRunbook
+				return m, nil
 			case "c", "C":
 				return m.quickCLI(false, "doctor")
 			case "M":
@@ -432,6 +436,10 @@ func (m model) menuKey(key string) (tea.Model, tea.Cmd) {
 		case "b", "B":
 			m.prev = m.scr
 			m.scr = scBlocked
+			return m, nil
+		case "n", "N":
+			m.prev = m.scr
+			m.scr = scRunbook
 			return m, nil
 		case "M":
 			m.scr = scChooser
@@ -512,6 +520,10 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 		m.prev = m.scr
 		m.scr = scBlocked
 		return m, nil
+	case "n", "N": // runbook cards for the live warnings
+		m.prev = m.scr
+		m.scr = scRunbook
+		return m, nil
 	case "r": // refresh the dashboard now (works even while quiet/paused)
 		return m, m.refreshNow()
 	case "z", "Z": // cycle background refresh: live → quiet → paused → live
@@ -572,6 +584,10 @@ func (m model) localKey(key string) (tea.Model, tea.Cmd) {
 	case "b", "B":
 		m.prev = m.scr
 		m.scr = scBlocked
+		return m, nil
+	case "n", "N":
+		m.prev = m.scr
+		m.scr = scRunbook
 		return m, nil
 	case "a", "A":
 		return m.openQuick("analyze /tmp", nil, m.kit+"/observe/analyze.sh", "/tmp")

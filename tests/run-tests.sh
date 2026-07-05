@@ -573,6 +573,13 @@ assert_has "blocked-by: least-privilege fix" "get/list on pods"
 assert_has "blocked-by: metrics-server state" "missing metrics-server"
 assert_has "blocked-by: secured actuator fallback names jattach" "no HTTP via jattach"
 
+# runbook cards ('n') — per-signal means/why/check/safe/risky/tell-next
+run_input 'n\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "runbook: names the view" "the common incident signals"
+assert_has "runbook: OOM card" "OOMKilled"
+assert_has "runbook: pairs a safe and risky command" "risky"
+assert_has "runbook: what to tell the next person" "tell next"
+
 run_input 'zzqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_rc  "unknown key: no crash, menu redraws" 0
 

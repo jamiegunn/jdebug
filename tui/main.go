@@ -39,6 +39,7 @@ const (
 	scOutput
 	scDetail
 	scBlocked
+	scRunbook
 )
 
 type model struct {
@@ -397,6 +398,12 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case scBlocked:
 		m.scr = scMenu
 		return m, nil
+	case scRunbook:
+		if key == "E" { // jump straight to the escalation handoff
+			return m.quickCLI(true, "escalate")
+		}
+		m.scr = scMenu
+		return m, nil
 	}
 	return m, nil
 }
@@ -431,6 +438,8 @@ func (m model) View() string {
 		return m.detailView()
 	case scBlocked:
 		return m.blockedView()
+	case scRunbook:
+		return m.runbookView()
 	}
 	return ""
 }
