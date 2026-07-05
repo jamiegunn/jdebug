@@ -38,6 +38,8 @@
 #   `jdebug dumps` shows what you have and what to open it with.
 #
 #   Setup
+#     doctor            check everything BEFORE an incident: host tools, cluster
+#                       reachability, target pods, actuator, jattach cache
 #     install-jattach   pre-stage jattach into the pod before an incident
 #     push-local        copy the in-pod tool (jdebug-local) into the pod, for
 #                       when you'll have a shell but no kubectl (JRE-only image)
@@ -234,6 +236,64 @@ HINTS
         kubectl -n "$NAMESPACE" cp "$D/jdebug-local" "$POD:/tmp/jdebug-local" -c "$APP_CONTAINER" \
             && info "staged jdebug-local at $POD:/tmp/jdebug-local — now: kubectl -n $NAMESPACE exec -it $POD -c $APP_CONTAINER -- sh /tmp/jdebug-local help" \
             || err "cp failed (no tar in the pod? paste the script into the shell instead)"
+        ;;
+
+    doctor|checkup)
+        triage_parse
+        FAILS=0; WARNS=0
+        chk() { printf '  ✓ %s\n' "$1"; }
+        wrn() { printf '  ! %s\n' "$1"; WARNS=$((WARNS+1)); }
+        bad() { printf '  ✗ %s\n' "$1"; FAILS=$((FAILS+1)); }
+        echo "jdebug doctor — checking this machine, the cluster, and the target"
+        echo
+        echo "host"
+        command -v kubectl >/dev/null 2>&1 && chk "kubectl on PATH" \
+            || bad "kubectl missing — install it and/or add it to PATH"
+        command -v curl >/dev/null 2>&1 && chk "curl on PATH" \
+            || bad "curl missing — needed to download jattach (everything actuator-side still works)"
+        command -v python3 >/dev/null 2>&1 && chk "python3 on PATH" \
+            || wrn "python3 missing — 'jdebug memory' won't run; every other command is fine"
+        if mkdir -p "$JDEBUG_DUMPS" 2>/dev/null && [[ -w "$JDEBUG_DUMPS" ]]; then
+            chk "captures dir writable ($JDEBUG_DUMPS)"
+        else
+            bad "cannot write the captures dir ($JDEBUG_DUMPS) — set \$JDEBUG_DUMPS elsewhere"
+        fi
+        if ls "$JDEBUG_CACHE_DIR"/jattach-* >/dev/null 2>&1; then
+            chk "jattach cached ($JDEBUG_CACHE_DIR) — tier 2 works offline"
+        else
+            wrn "jattach not cached yet — first use downloads it (~80 KB); air-gapped? pass --binary"
+        fi
+        echo
+        echo "cluster"
+        if check_cluster >/dev/null 2>&1; then
+            chk "context '$(kubectl config current-context 2>/dev/null)' answers"
+            PODS_FOUND="$(resolve_pods 2>/dev/null | grep -c . || true)"
+            if [[ "${PODS_FOUND:-0}" -gt 0 ]]; then
+                chk "$PODS_FOUND pod(s) match namespace=$NAMESPACE selector='${SELECTOR:-<any>}'"
+                DOC_POD="$(resolve_pods 2>/dev/null | head -n1)"
+                if kubectl -n "$NAMESPACE" exec "$DOC_POD" -c "$APP_CONTAINER" -- \
+                        sh -c "$(pod_fetch "$ACTUATOR_BASE/health")" >/dev/null 2>&1; then
+                    chk "actuator answers in $DOC_POD ($ACTUATOR_BASE) — tier 1 ready"
+                else
+                    wrn "actuator not answering at $ACTUATOR_BASE in $DOC_POD — the actuator tier won't"
+                    wrn "  work there. Custom port/path? --actuator-base. No actuator at all? the"
+                    wrn "  jattach tier needs none: jdebug install-jattach"
+                fi
+            else
+                bad "no pods match namespace=$NAMESPACE selector='${SELECTOR:-<any>}' — set -n/-l (or press t in the menu)"
+            fi
+        else
+            bad "cluster unreachable — run any command (e.g. jdebug status) for the full why + fix"
+        fi
+        echo
+        if [[ $FAILS -gt 0 ]]; then
+            echo "✗ $FAILS problem(s) above need fixing before jdebug can fully work."
+            exit 1
+        elif [[ $WARNS -gt 0 ]]; then
+            echo "✓ ready, with $WARNS note(s) above worth knowing."
+        else
+            echo "✓ everything checks out. Try: jdebug (menu) or jdebug wizard"
+        fi
         ;;
 
     -h|--help)       usage_top ;;

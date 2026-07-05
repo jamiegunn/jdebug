@@ -1,0 +1,34 @@
+name: tests
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]   # GNU and BSD userlands — sed/tar/ls differences are real
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Run the test suite
+        run: tests/run-tests.sh
+
+  shellcheck:
+    # Advisory: the kit documents its deliberate violations (word-splitting
+    # for known-safe names, etc.); treat findings as review input, not gates.
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v4
+      - name: shellcheck (bash scripts)
+        run: |
+          sudo apt-get update -q && sudo apt-get install -y -q shellcheck
+          shellcheck -S warning jdebug install.sh lib/common.sh capture/*.sh observe/*.sh ui/tui.sh
+      - name: shellcheck (POSIX sh)
+        if: always()
+        run: shellcheck -s sh -S warning jdebug-local

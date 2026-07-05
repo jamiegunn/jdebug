@@ -1,0 +1,10 @@
+title: jdebug
+description: JVM debug kit for Kubernetes — thread dumps, heap dumps, memory anatomy, and guided diagnosis from any Spring Boot pod, with no JDK in the image.
+remote_theme: just-the-docs/just-the-docs
+plugins:
+  - jekyll-remote-theme
+search_enabled: true
+heading_anchors: true
+enable_copy_code_button: true
+nav_sort: case_insensitive
+footer_content: "0BSD licensed — use it however you like."

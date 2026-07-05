@@ -1,5 +1,11 @@
 # jdebug — JVM debug kit for Kubernetes
 
+**Full documentation lives in [`docs/`](docs/) — a GitHub Pages site** (after
+pushing to GitHub: Settings → Pages → Source: *GitHub Actions*; the included
+workflow builds and deploys it). Guides: install, getting started, command
+reference, capture tiers, diagnosis playbooks, troubleshooting, testing,
+roadmap.
+
 Capture and analyze JVM diagnostics from a pod **without a JDK in the image**.
 `jdebug` drives thread/heap capture, memory anatomy, an offline snapshot bundle,
 log tailing, and runtime log-level changes against **any Spring Boot / JVM pod**,
@@ -32,6 +38,7 @@ symlink install works from anywhere on PATH.)
 ```sh
 jdebug -n <namespace> -l <selector> <command> [--container <name>]
 
+jdebug doctor                                  # pre-incident checkup: host, cluster, target, actuator
 jdebug health                                  # actuator health + per-subsystem
 jdebug status                                  # pod status + events
 jdebug top                                     # top pods + HPA

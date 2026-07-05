@@ -450,7 +450,7 @@ menu_remote() {
    ${GN}8${OFF}  logs        live log stream from every replica         ${GN}safe${OFF}
    ${GN}9${OFF}  log-level   turn logging up/down without a restart     ${YL}adds log volume${OFF}
 
-  ${B}MORE${OFF}  ${GN}h${OFF} help/glossary · ${GN}d${OFF} view captures · ${GN}i${OFF} stage jattach · ${GN}p${OFF} push in-pod tool · ${GN}t${OFF} target · ${GN}m${OFF} mode · ${GN}q${OFF} quit
+  ${B}MORE${OFF}  ${GN}h${OFF} help/glossary · ${GN}c${OFF} check setup · ${GN}d${OFF} view captures · ${GN}i${OFF} stage jattach · ${GN}p${OFF} push in-pod tool · ${GN}t${OFF} target · ${GN}m${OFF} mode · ${GN}q${OFF} quit
 EOF
     printf '\n  %s> %s' "$B" "$OFF"
 }
@@ -491,6 +491,7 @@ dispatch_remote() {
             [[ -n "$lg" && -n "$lv" ]] && run "$DBG" log-level "$lg" "$lv" ;;
         10) if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run "$DBG" snapshot --heap --confirm ${POD_PIN:+"$POD_PIN"}; else run "$DBG" snapshot ${POD_PIN:+"$POD_PIN"}; fi ;;
         h|H) show_help ;;
+        c|C) run "$DBG" doctor ;;
         d|D) run "$DBG" dumps ;;
         i|I) run "$DBG" install-jattach ${POD_PIN:+"$POD_PIN"} ;;
         p|P) run "$DBG" push-local ${POD_PIN:+"$POD_PIN"} ;;

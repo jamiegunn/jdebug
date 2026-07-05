@@ -75,6 +75,23 @@ assert_has "no context: explains" "no context selected"
 run_case ./jdebug dumps
 assert_rc  "dumps needs no cluster (no preflight)" 0
 
+# --- jdebug doctor: the pre-incident checkup -----------------------------------
+section "jdebug doctor"
+MOCK_EXEC_OUT='{"status":"UP"}' run_case ./jdebug doctor
+assert_rc  "healthy setup exits 0" 0
+assert_has "checks kubectl" "kubectl on PATH"
+assert_has "checks the cluster answers" "answers"
+assert_has "checks pods match" "pod(s) match"
+assert_has "checks actuator tier" "tier 1 ready"
+
+MOCK_KUBECTL=x509 run_case ./jdebug doctor
+assert_rc  "unreachable cluster exits 1" 1
+assert_has "unreachable cluster flagged" "cluster unreachable"
+
+MOCK_PODS=none run_case ./jdebug doctor
+assert_rc  "no matching pods exits 1" 1
+assert_has "no pods: says how to fix" "set -n/-l"
+
 # --- jdebug status/health/top teach how to read them --------------------------
 section "triage guidance"
 run_case ./jdebug status
@@ -234,6 +251,7 @@ assert_rc  "remote menu: q quits cleanly" 0
 assert_has "remote menu: wizard promoted" "GUIDED DIAGNOSIS"
 assert_has "remote menu: heap risk labeled" "pauses the app"
 assert_has "remote menu: help key present" "h help/glossary"
+assert_has "remote menu: doctor key present" "c check setup"
 assert_has "remote header: reachability shown" "cluster reachable"
 assert_has "remote header: empty selector hint" "press t to narrow"
 
