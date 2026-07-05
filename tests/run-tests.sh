@@ -296,6 +296,26 @@ assert_has "context: cluster-announce warning" "verify they resolve from CLIENTS
 # a secretKeyRef VALUE must never leak, and neither should a Secret env value
 assert_not "context: no raw secret env values" "redis-pw ="
 
+# --- escalation summary: the paste-ready handoff ------------------------------
+section "escalate (handoff summary from session state)"
+ESC="$TMP/esc"; rm -rf "$ESC"; mkdir -p "$ESC/pods/pod-a/20260705T120000Z"
+printf '\n$ jdebug status\n\nout\n$ jdebug why pod-a\n' > "$ESC/session-20260705-120000.log"
+printf 'JAVA PROFILE 1.0.2\0x' > "$ESC/pods/pod-a/20260705T120000Z/heap-actuator.hprof"
+run_case env JDEBUG_DUMPS="$ESC" ./jdebug escalate -n default pod-a
+assert_rc  "escalate exits 0" 0
+assert_has "escalate: names the target" "pod pod-a · container app"
+assert_has "escalate: findings carry confidence" "[likely]"
+assert_has "escalate: OOM finding with memory chain" "last restart was OOMKilled"
+assert_has "escalate: lists commands from the session log" "\$ jdebug why pod-a"
+assert_has "escalate: lists captures with paths" "heap-actuator.hprof"
+assert_has "escalate: suggests a next action" "SUGGESTED NEXT"
+assert_has "escalate: warns about sensitive evidence" "SENSITIVE EVIDENCE"
+# with no captures/log, it still produces a valid brief and no false sensitive warning
+run_case env JDEBUG_DUMPS="$TMP/esc-empty" ./jdebug escalate -n default pod-a
+assert_rc  "escalate: empty state still works" 0
+assert_has "escalate: notes nothing sensitive yet" "nothing sensitive to warn about"
+rm -rf "$ESC"
+
 # --- lifecycle: state-changing actions, gated hard -------------------------------
 section "lifecycle (re-roll / kill)"
 run_case ./jdebug restart pod-a

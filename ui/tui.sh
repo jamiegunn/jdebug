@@ -472,6 +472,7 @@ show_help() {
     ${GN}i${OFF} stage jattach in the pod · ${GN}p${OFF} push the in-pod tool (jdebug-local)
     ${GN}g${OFF} target editor · ${GN}M${OFF} switch mode · ${GN}d${OFF} browse captures
     ${GN}b${OFF} what's blocked right now + how to unblock it (RBAC, metrics, actuator…)
+    ${GN}E${OFF} escalation summary — a paste-ready handoff for asking a senior for help
 
   ${B}THE SAFETY RULES${OFF}
     · most actions are read-only. The ones that CHANGE things ask first:
@@ -965,7 +966,8 @@ dispatch_remote() {
         s)   run "$DBG" status ;;
         y|Y) run "$DBG" why ${POD_PIN:+"$POD_PIN"} ;;
         W)   run "$DBG" topology ${POD_PIN:+"$POD_PIN"} ;;
-        e|E) run "$DBG" context ${POD_PIN:+"$POD_PIN"} ;;
+        e)   run "$DBG" context ${POD_PIN:+"$POD_PIN"} ;;
+        E)   run "$DBG" escalate ${POD_PIN:+"$POD_PIN"} ;;
         S)   run "$DBG" security ${POD_PIN:+"$POD_PIN"} ;;
         h)   run "$DBG" health ${POD_PIN:+"$POD_PIN"} ;;
         o|O) run "$DBG" top ;;

@@ -455,8 +455,10 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 		return m.quickCLI(true, "why")
 	case "W":
 		return m.quickCLI(true, "topology")
-	case "e", "E":
+	case "e":
 		return m.quickCLI(true, "context")
+	case "E": // one-key handoff brief for asking a senior for help
+		return m.quickCLI(true, "escalate")
 	case "S": // shifted deliberately: s = status is the most-pressed key
 		return m.quickCLI(true, "security")
 	case "h":

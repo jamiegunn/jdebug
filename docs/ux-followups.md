@@ -82,11 +82,14 @@ must never make destructive changes automatically.
   events since last restart, previous logs, probe failures, HPA vs Deployment
   replicas. Much of this is already in `topology` + `logs --previous`; the
   workflow names the question.
-- **Escalation summary** — one key builds a handoff: target, symptom/workflow,
-  findings + confidence, commands run (from the session log), captures + paths,
-  blocked checks + why, suggested next action, and a sensitive-evidence
-  warning. Entry point: a verb that reads the session log + current panel
-  state.
+- **Escalation summary — SHIPPED.** `jdebug escalate` (`E` in both frontends)
+  builds a paste-ready handoff from the current target + live pod state + the
+  session log + captures on disk: TARGET, FINDINGS with confidence
+  (likely/possible/unknown, reusing the NEXT tiers), BLOCKED CHECKS (RBAC /
+  metrics-server), COMMANDS ALREADY RUN (parsed from the newest
+  `session-*.log`), CAPTURES with paths, a SUGGESTED NEXT action, and a
+  sensitive-evidence warning when heap dumps/logs are present. Read-only;
+  degrades to a minimal brief without python3.
 - **Blocked-by view — SHIPPED.** `b` opens a BLOCKED-BY overlay in both
   frontends. `blockers()` (Go) reads the live signals — cluster reachability,
   selector, pinned pod, RBAC (Forbidden replies via `forbiddenRe`),
