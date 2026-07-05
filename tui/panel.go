@@ -21,6 +21,7 @@ import (
 type panelData struct {
 	When       time.Time
 	Phase      string
+	Waiting    string // container waiting reason, e.g. CrashLoopBackOff
 	Restarts   int
 	LastReason string // e.g. OOMKilled, Error
 	MemUse     string // from kubectl top
@@ -29,8 +30,10 @@ type panelData struct {
 	CPUUse     string
 	CPULimit   string
 	HPA        string
-	HeapUsed   string // JVM, from actuator
+	HeapUsed   string // JVM heap, live
 	HeapMax    string
+	HeapVia    string // "actuator" or "jcmd" — which route answered
+	ActuatorOK bool
 }
 
 type panelMsg panelData
@@ -48,7 +51,12 @@ type podJSON struct {
 		ContainerStatuses []struct {
 			Name         string `json:"name"`
 			RestartCount int    `json:"restartCount"`
-			LastState    struct {
+			State        struct {
+				Waiting *struct {
+					Reason string `json:"reason"`
+				} `json:"waiting"`
+			} `json:"state"`
+			LastState struct {
 				Terminated *struct {
 					Reason string `json:"reason"`
 				} `json:"terminated"`
@@ -81,6 +89,9 @@ func fetchPanel(t target) tea.Cmd {
 							if cs.LastState.Terminated != nil {
 								d.LastReason = cs.LastState.Terminated.Reason
 							}
+							if cs.State.Waiting != nil {
+								d.Waiting = cs.State.Waiting.Reason
+							}
 						}
 					}
 					for _, c := range pj.Spec.Containers {
@@ -98,7 +109,8 @@ func fetchPanel(t target) tea.Cmd {
 					d.MemPct = pctOf(d.MemUse, d.MemLimit)
 				}
 			}
-			d.HeapUsed, d.HeapMax = jvmHeap(t)
+			d.HeapUsed, d.HeapMax, d.HeapVia = jvmHeap(t)
+			d.ActuatorOK = d.HeapVia == "actuator"
 		}
 		if hpa := klines("-n", t.Namespace, "get", "hpa", "--no-headers"); len(hpa) > 0 {
 			f := strings.Fields(hpa[0])
@@ -139,8 +151,10 @@ func pctOf(use, limit string) int {
 	return int(u * 100 / l)
 }
 
-// jvmHeap reads jvm.memory.used/max{area=heap} through the pod's actuator.
-func jvmHeap(t target) (used, max string) {
+// jvmHeap reads live heap numbers non-invasively: the actuator first, then
+// `jcmd GC.heap_info` inside the pod (read-only, works on any JDK image —
+// no actuator required). Returns which route answered.
+func jvmHeap(t target) (used, max, via string) {
 	get := func(metric string) string {
 		snippet := fmt.Sprintf(
 			`if command -v curl >/dev/null 2>&1; then curl -fsS --max-time 3 '%s/metrics/%s?tag=area:heap'; elif command -v wget >/dev/null 2>&1; then wget -qO- '%s/metrics/%s?tag=area:heap'; fi`,
@@ -159,7 +173,58 @@ func jvmHeap(t target) (used, max string) {
 		}
 		return ""
 	}
-	return get("jvm.memory.used"), get("jvm.memory.max")
+	if u, m := get("jvm.memory.used"), get("jvm.memory.max"); u != "" {
+		return u, m, "actuator"
+	}
+	// fallback: jcmd ships with every JDK; GC.heap_info is a read-only probe
+	snippet := `PID=$(pidof java 2>/dev/null || jps -q 2>/dev/null | head -n1); [ -n "$PID" ] || PID=1; jcmd "$PID" GC.heap_info 2>/dev/null`
+	out, err := exec.Command("kubectl", "-n", t.Namespace, "exec", t.Pod, "-c", t.Container, "--", "sh", "-c", snippet).Output()
+	if err == nil {
+		if u, m := parseHeapInfo(string(out)); u != "" {
+			return u, m, "jcmd"
+		}
+	}
+	return "", "", ""
+}
+
+var heapUsedRe = regexp.MustCompile(`used (\d+)K`)
+var heapCommRe = regexp.MustCompile(`committed (\d+)K`)
+var heapTotalRe = regexp.MustCompile(` total (\d+)K`)
+
+// parseHeapInfo sums used/committed across the heap lines of `jcmd
+// GC.heap_info` (G1 has one line; the generational collectors list young +
+// old). Metaspace and class space are non-heap — stop there.
+func parseHeapInfo(out string) (used, max string) {
+	var u, c, t float64
+	for _, line := range strings.Split(out, "\n") {
+		if strings.Contains(line, "Metaspace") || strings.Contains(line, "class space") {
+			break
+		}
+		if m := heapUsedRe.FindStringSubmatch(line); m != nil {
+			v, _ := strconv.ParseFloat(m[1], 64)
+			u += v
+		}
+		if m := heapCommRe.FindStringSubmatch(line); m != nil {
+			v, _ := strconv.ParseFloat(m[1], 64)
+			c += v
+		}
+		if m := heapTotalRe.FindStringSubmatch(line); m != nil {
+			v, _ := strconv.ParseFloat(m[1], 64)
+			t += v
+		}
+	}
+	if u <= 0 {
+		return "", ""
+	}
+	denom := c
+	if denom <= 0 {
+		denom = t
+	}
+	used = fmt.Sprintf("%.0fMi", u/1024)
+	if denom > 0 {
+		max = fmt.Sprintf("%.0fMi", denom/1024)
+	}
+	return used, max
 }
 
 // --- suggestions: the app tells you what to do next --------------------------
@@ -175,7 +240,9 @@ func (m model) suggestions() []string {
 	} else if d.MemPct >= 75 {
 		s = append(s, cWarn.Render(fmt.Sprintf("! memory %d%% of limit", d.MemPct))+cMuted.Render(" → ")+cKey.Render("m"))
 	}
-	if d.Phase != "" && d.Phase != "Running" {
+	if d.Waiting == "CrashLoopBackOff" {
+		s = append(s, cDisr.Render("⚠ CrashLoopBackOff")+cMuted.Render(" → ")+cKey.Render("w")+cMuted.Render(" flow 7"))
+	} else if d.Phase != "" && d.Phase != "Running" {
 		s = append(s, cWarn.Render("! pod is "+d.Phase)+cMuted.Render(" → ")+cKey.Render("s")+cMuted.Render(" events"))
 	} else if d.Restarts > 3 && d.LastReason != "OOMKilled" {
 		s = append(s, cWarn.Render(fmt.Sprintf("! %d restarts", d.Restarts))+cMuted.Render(" → ")+cKey.Render("w")+cMuted.Render(" diagnose"))
@@ -186,6 +253,9 @@ func (m model) suggestions() []string {
 		} else {
 			s = append(s, cMuted.Render("evidence captured → ")+cKey.Render("a")+cMuted.Render(" analyzes it"))
 		}
+	}
+	if !d.When.IsZero() && !d.ActuatorOK && len(s) < 3 {
+		s = append(s, cMuted.Render("no actuator — captures still work (jattach/jcmd)"))
 	}
 	if len(s) > 3 {
 		s = s[:3]
@@ -223,28 +293,44 @@ func (m model) panelView(w, h int, trends bool) string {
 			pod = "…" + pod[len(pod)-22:]
 		}
 		rows = append(rows, line("pod", dash(pod), false))
-		rows = append(rows, line("phase", dash(d.Phase), d.Phase != "" && d.Phase != "Running"))
+		phase := dash(d.Phase)
+		if d.Waiting != "" {
+			phase = d.Waiting // the waiting reason is the real story
+		}
+		rows = append(rows, line("phase", phase, d.Waiting != "" || (d.Phase != "" && d.Phase != "Running")))
 		rows = append(rows, line("restarts", fmt.Sprintf("%d", d.Restarts), d.Restarts > 3))
 		if d.LastReason != "" {
 			rows = append(rows, line("last exit", d.LastReason, d.LastReason == "OOMKilled"))
 		}
+		// "usage of limit" — usage from kubectl top, limit from the pod spec
 		mem := dash(d.MemUse)
-		if d.MemLimit != "" {
-			mem += " / " + d.MemLimit
+		if d.MemUse != "" && d.MemLimit != "" {
+			mem = d.MemUse + " of " + d.MemLimit + " limit"
 			if d.MemPct >= 0 {
 				mem += fmt.Sprintf("  %d%%", d.MemPct)
 			}
+		} else if d.MemUse != "" {
+			mem = d.MemUse + " used · no limit set"
 		}
 		rows = append(rows, line("mem", mem, d.MemPct >= 90))
 		cpu := dash(d.CPUUse)
-		if d.CPULimit != "" {
-			cpu += " / " + d.CPULimit
+		if d.CPUUse != "" && d.CPULimit != "" {
+			cpu = d.CPUUse + " of " + d.CPULimit + " limit"
+		} else if d.CPUUse != "" {
+			cpu = d.CPUUse + " used · no limit set"
 		}
 		rows = append(rows, line("cpu", cpu, false))
 		rows = append(rows, line("hpa", dash(d.HPA), false))
-		heap := dash(d.HeapUsed)
-		if d.HeapMax != "" {
-			heap += " / " + d.HeapMax
+		heap := d.HeapUsed
+		switch {
+		case heap != "" && d.HeapMax != "":
+			heap += " / " + d.HeapMax + "  via " + d.HeapVia
+		case heap != "":
+			heap += "  via " + d.HeapVia
+		case d.When.IsZero():
+			heap = "–"
+		default:
+			heap = "– needs actuator or jcmd"
 		}
 		rows = append(rows, line("jvm heap", heap, false))
 	} else {

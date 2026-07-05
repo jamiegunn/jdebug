@@ -209,6 +209,13 @@ run_case ./observe/tail-logs.sh
 assert_rc  "logs w/o selector exits 64" 64
 assert_has "logs w/o selector says how to fix" "pass -l <selector>"
 
+run_case ./jdebug logs --previous pod-a
+assert_rc  "logs --previous exits 0" 0
+assert_has "logs --previous: dead container's last lines" "OutOfMemoryError"
+assert_has "logs --previous: reading guide" "last lines before it died"
+run_case ./jdebug logs --previous
+assert_has "logs --previous resolves the pod itself" "OutOfMemoryError"
+
 run_case ./observe/set-log-level.sh onlyonearg
 assert_rc  "log-level w/o level exits 64" 64
 
@@ -465,6 +472,11 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         run_case ./tui/jdebug-tui -render runpane
         assert_has "tui: output replaces the log strip" "OUTPUT"
         assert_has "tui: strip verdict + way back" "esc back to logs"
+        run_case ./tui/jdebug-tui -render wizard
+        assert_has "tui: crash-loop flow offered" "CrashLoopBackOff"
+        run_case ./tui/jdebug-tui -render dashboard
+        assert_has "tui: limits are labeled" "of 512Mi limit"
+        assert_has "tui: heap names its route" "via actuator"
         # full interactive round-trip on a real pty at 200x50: dashboard with
         # live panes → commands stream into the bottom pane → wizard keeps
         # the ExecProcess drop-out → quit

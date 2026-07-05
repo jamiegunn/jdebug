@@ -399,6 +399,95 @@ func TestFocusToggle(t *testing.T) {
 	}
 }
 
+func TestHeaderFullTarget(t *testing.T) {
+	m := readyModel()
+	m.width = 200
+	h := m.headerRemote(true)
+	if !strings.Contains(h, "debug-demo / app-debug-demo-app-6c6c4b5769-s9jdg / app") {
+		t.Fatal("header must show namespace / pod / container untruncated")
+	}
+}
+
+func TestPanelExplainsLimits(t *testing.T) {
+	m := readyModel()
+	v := m.panelView(46, 20, true)
+	for _, want := range []string{"480Mi of 512Mi limit", "250m of 500m limit", "via actuator", "CrashLoopBackOff"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("panel missing %q", want)
+		}
+	}
+}
+
+func TestHeapUnavailableExplainsItself(t *testing.T) {
+	m := readyModel()
+	m.panel.HeapUsed, m.panel.HeapMax, m.panel.HeapVia = "", "", ""
+	v := m.panelView(46, 20, false)
+	if !strings.Contains(v, "needs actuator or jcmd") {
+		t.Fatal("a missing heap value must say why and name the routes")
+	}
+}
+
+func TestParseHeapInfo(t *testing.T) {
+	// G1, classic form (JDK 11/17)
+	u, mx := parseHeapInfo(" garbage-first heap   total 524288K, used 123456K [0x0000...\n Metaspace       used 40870K, committed 41216K")
+	if u != "121Mi" || mx != "512Mi" {
+		t.Fatalf("G1 classic: got %s/%s, want 121Mi/512Mi", u, mx)
+	}
+	// G1, JDK 21 form (committed beats reserved)
+	u, mx = parseHeapInfo(" garbage-first heap   total reserved 2097152K, committed 986112K, used 123456K\n Metaspace       used 40870K")
+	if u != "121Mi" || mx != "963Mi" {
+		t.Fatalf("G1 jdk21: got %s/%s, want 121Mi/963Mi", u, mx)
+	}
+	// generational: young + old sum, metaspace excluded
+	u, mx = parseHeapInfo(" PSYoungGen      total 76288K, used 10240K\n ParOldGen       total 175104K, used 20480K\n Metaspace       used 999999K, committed 999999K")
+	if u != "30Mi" || mx != "246Mi" {
+		t.Fatalf("generational: got %s/%s, want 30Mi/246Mi", u, mx)
+	}
+	if u, _ := parseHeapInfo("no heap here"); u != "" {
+		t.Fatal("garbage input must return empty, not zero values")
+	}
+}
+
+func TestCrashLoopSuggestion(t *testing.T) {
+	m := readyModel()
+	m.panel.Waiting = "CrashLoopBackOff"
+	m.panel.LastReason = ""
+	m.panel.MemPct = 50
+	got := strings.Join(m.suggestions(), "\n")
+	if !strings.Contains(got, "CrashLoopBackOff") || !strings.Contains(got, "7") {
+		t.Fatalf("CrashLoopBackOff must route to wizard flow 7, got %q", got)
+	}
+}
+
+func TestNoActuatorHint(t *testing.T) {
+	m := readyModel()
+	m.panel = panelData{When: time.Now(), Phase: "Running", MemPct: 50}
+	got := strings.Join(m.suggestions(), "\n")
+	if !strings.Contains(got, "no actuator") || !strings.Contains(got, "jattach") {
+		t.Fatalf("missing actuator must be surfaced with the working routes, got %q", got)
+	}
+}
+
+func TestWizardHasCrashFlow(t *testing.T) {
+	m := readyModel()
+	m.scr = scWizard
+	if !strings.Contains(m.wizardView(), "CrashLoopBackOff") {
+		t.Fatal("wizard must offer a crash-loop flow")
+	}
+	found := false
+	for _, f := range wizardFlows {
+		if f.key == "7" {
+			found = true
+			if len(f.steps) < 2 || f.steps[1].args[1] != "--previous" {
+				t.Fatal("flow 7 must read the previous container's logs")
+			}
+		}
+	}
+	if !found {
+		t.Fatal("flow 7 missing")
+	}
+}
+
 func TestVerbosityFlow(t *testing.T) {
 	out := press(t, readyModel(), "v")
 	mm := out.(model)

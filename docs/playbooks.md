@@ -89,6 +89,27 @@ One bundle: describe, health, metrics, threads, memory report, and the jcmd
 set (GC, VM.flags, code cache, classloaders, NMT). Hand it to a colleague or
 analyze offline — production is touched once.
 
+## Crash-looping / CrashLoopBackOff
+
+The pod dies right at (or shortly after) startup and kubernetes backs off
+between retries. Two questions: how often, and what did it say on the way
+down?
+
+```sh
+jdebug status            # RESTARTS count + the events k8s recorded
+jdebug logs --previous   # the PREVIOUS container's last lines
+```
+
+The crash reason is almost always in the previous container's final lines:
+
+- **`OutOfMemoryError` / exit 137** → it's memory — run the OOM playbook
+  above (wizard flow 1).
+- **A stack trace** → the failing class names the culprit; startup config or
+  a missing dependency is the usual story.
+- **Nothing useful in the logs** → the events from `status` carry the
+  kubernetes-side reasons: image pull failures, failed probes killing the
+  container, scheduling problems.
+
 ## Reading the analyzers
 
 All recommended tools are free and run locally — evidence never has to leave

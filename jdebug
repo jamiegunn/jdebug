@@ -17,6 +17,7 @@
 #     metrics       list JVM/process metric names, or one metric's live value:
 #                   metrics jvm.gc.pause — run twice to see a trend
 #     logs          stream logs from all replicas         (tail-logs.sh)
+#                   logs --previous [pod]: the crashed container's last lines
 #     log-level     runtime logger change: log-level <logger> <LEVEL>
 #
 #   Capture (three tiers — actuator, jattach, jdk)

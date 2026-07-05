@@ -36,7 +36,7 @@ case "$*" in
         printf 'app\nsidecar\n' ;;
     *" get pod "*"-o json"*)
         [ "${MOCK_POD_GONE:-}" = 1 ] && exit 1
-        printf '{"status":{"phase":"Running","containerStatuses":[{"name":"app","restartCount":3,"lastState":{"terminated":{"reason":"OOMKilled"}}}]},"spec":{"containers":[{"name":"app","resources":{"limits":{"memory":"512Mi","cpu":"500m"}}}]}}' ;;
+        printf '{"status":{"phase":"Running","containerStatuses":[{"name":"app","restartCount":3,"state":{"waiting":{"reason":"CrashLoopBackOff"}},"lastState":{"terminated":{"reason":"OOMKilled"}}}]},"spec":{"containers":[{"name":"app","resources":{"limits":{"memory":"512Mi","cpu":"500m"}}}]}}' ;;
     *" top pod "*)
         printf 'pod-a   250m   480Mi\n' ;;
     *"get hpa"*"--no-headers"*)
@@ -59,6 +59,8 @@ case "$*" in
         printf '%s\n' "${MOCK_EXEC_OUT:-ok}" ;;
     *" cp "*)
         exit 0 ;;
+    *"logs"*"--previous"*)
+        printf 'Exception in thread "main" java.lang.OutOfMemoryError: Java heap space\n\tat com.example.Boot.main(Boot.java:12)\n' ;;
     *"logs"*"--tail=200"*)
         # the TUI's live log pane; includes every severity the classifier knows
         printf '10:00:01 INFO  Started DebugDemoApplication in 3.2 seconds\n10:00:02 WARN  HikariPool-1 pool is near capacity\n10:00:03 ERROR java.lang.OutOfMemoryError: Java heap space\n\tat com.example.Leak.grow(Leak.java:42)\n10:00:04 INFO  request served in 12ms\n' ;;

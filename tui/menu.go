@@ -43,18 +43,21 @@ func (m model) headerRemote(reachable bool) string {
 		dot = cDisr.Render("●")
 		extra = " " + cDisr.Render("unreachable — [c] explains why")
 	}
-	pod := m.t.Pod
-	if len(pod) > 18 {
-		pod = "…" + pod[len(pod)-15:]
+	// namespace / pod / container, never truncated — this is the one line
+	// that must be copy-pasteable into kubectl
+	tgt := m.t.Namespace
+	if m.t.Pod != "" {
+		tgt += " / " + m.t.Pod
 	}
-	tgt := m.t.Namespace + " / " + m.t.Container
-	if pod != "" {
-		tgt += " · " + pod
-	}
+	tgt += " / " + m.t.Container
 	act := strings.TrimPrefix(m.t.Actuator, "http://localhost")
+	actSeg := cMuted.Render(act)
+	if m.t.Pod != "" && !m.panel.When.IsZero() && !m.panel.ActuatorOK {
+		actSeg = cFaint.Render(act) + cWarn.Render(" ✗")
+	}
 	sep := cFaint.Render("  ·  ")
 	b.WriteString(" " + dot + " " + cMuted.Render(currentContext()) + extra +
-		sep + cMuted.Render(tgt) + sep + cMuted.Render(act) +
+		sep + cMuted.Render(tgt) + sep + actSeg +
 		sep + cFaint.Render("[g] retarget  [M] mode") + "\n")
 	if m.staleP != "" {
 		b.WriteString("   " + cWarn.Render("your previous pin "+m.staleP+" no longer exists — back to auto ([g] to re-pick)") + "\n")

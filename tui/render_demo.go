@@ -19,9 +19,11 @@ func demoModel() model {
 	}
 	ctxOverride = "ddk3s"
 	m.remote = probe{OK: true, Cluster: true, When: time.Now().Add(time.Hour)}
-	m.panel = panelData{When: time.Now(), Phase: "Running", Restarts: 34, LastReason: "OOMKilled",
+	m.panel = panelData{When: time.Now(), Phase: "Running", Waiting: "CrashLoopBackOff",
+		Restarts: 34, LastReason: "OOMKilled",
 		MemUse: "480Mi", MemLimit: "512Mi", MemPct: 94, CPUUse: "250m", CPULimit: "500m",
-		HPA: "app-debug-demo-app 4 replicas", HeapUsed: "121Mi", HeapMax: "1732Mi"}
+		HPA: "app-debug-demo-app 4 replicas", HeapUsed: "121Mi", HeapMax: "1732Mi",
+		HeapVia: "actuator", ActuatorOK: true}
 	m.local = probe{OK: true, Jattach: true, When: time.Now().Add(time.Hour),
 		Lines: []string{cSafe.Render("   ✓") + cMuted.Render(" actuator answering"), cSafe.Render("   ✓") + cMuted.Render(" jattach staged")}}
 
