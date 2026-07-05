@@ -432,6 +432,42 @@ assert_has "environment still outranks the remembered value" "kubectl -n zzz"
 
 rm -f "$TMP/config/target"
 
+# --- Go TUI frontend (runs when a Go toolchain is present) ---------------------------
+if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
+    section "Go TUI frontend"
+    if (cd tui && go build -o jdebug-tui . 2>"$TMP/gobuild.err"); then ok "go build"
+    else bad "go build" "$(head -3 "$TMP/gobuild.err")"; fi
+    if (cd tui && go vet ./... >/dev/null 2>&1); then ok "go vet"; else bad "go vet" "see go vet ./tui/..."; fi
+    if (cd tui && go test ./... >/dev/null 2>"$TMP/gotest.err"); then ok "go test (update-logic + parity)"
+    else bad "go test" "$(head -3 "$TMP/gotest.err")"; fi
+    if [[ -x tui/jdebug-tui ]]; then
+        run_case ./tui/jdebug-tui -version
+        assert_has "tui: --version" "jdebug-tui"
+        run_case ./tui/jdebug-tui -render menu
+        assert_has "tui: menu sections" "INSPECT"
+        assert_has "tui: heap inline risk" "pauses app"
+        assert_has "tui: risk legend" "safe / caution / disruptive"
+        assert_has "tui: hero banner" "guided diagnosis"
+        run_case ./tui/jdebug-tui -render gate
+        assert_has "tui: gate panel parity" "SET UP YOUR TARGET FIRST"
+        run_case ./tui/jdebug-tui -render help
+        assert_has "tui: glossary parity" "one running copy of the app"
+        run_case ./tui/jdebug-tui -render chooser
+        assert_has "tui: chooser self-test entry" "self-test"
+        # full interactive round-trip on a real pty: menu → run status →
+        # post-run pause → quit confirm → transcript
+        if command -v python3 >/dev/null 2>&1; then
+            if pty_out="$(python3 tests/pty-drive.py "$KIT" "$TMP/ptydrive" 2>&1)"; then
+                printf '%s\n' "$pty_out"; PASS=$((PASS+6))
+            else
+                printf '%s\n' "$pty_out"; bad "pty: interactive round-trip" "see lines above"
+            fi
+        fi
+    fi
+else
+    printf '\n== Go TUI frontend ==\n  (skipped — no Go toolchain; the bash TUI is the fallback)\n'
+fi
+
 # --- install.sh ----------------------------------------------------------------------
 section "install.sh"
 run_case ./install.sh --prefix "$TMP/bin"

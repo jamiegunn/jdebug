@@ -33,6 +33,10 @@ that work anyway, and falls back only when it has to.
 Or run it in place: `./jdebug <cmd>`. (The CLI resolves symlinks, so the
 symlink install works from anywhere on PATH.)
 
+Optional, nicer menu: `make tui` builds the Go (Bubble Tea) frontend — same
+keys and features, richer rendering; `jdebug` prefers it automatically once
+built (`JDEBUG_CLASSIC=1` forces the zero-dependency bash menu).
+
 ## Usage
 
 ```sh

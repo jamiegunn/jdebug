@@ -14,11 +14,20 @@ lib/common.sh     shared: target parsing, pod resolution, pod_fetch (curl-or-wge
                   check_cluster, cache + dumps locations
 capture/          the three tiers: actuator.sh · jattach.sh · jdk-threads.sh · jdk-heap.sh
 observe/          memory-report.sh · snapshot.sh · tail-logs.sh · set-log-level.sh
-ui/tui.sh         interactive menu, wizard, help, pickers, session log
+ui/tui.sh         interactive menu (classic bash frontend)
+tui/              Go (Bubble Tea) frontend — same keys/screens, shells out to
+                  the bash CLI; `make tui` builds tui/jdebug-tui, which
+                  `jdebug` then prefers (JDEBUG_CLASSIC=1 forces bash)
 install.sh        PATH symlink install/uninstall
-tests/            run-tests.sh + mocks/{kubectl,curl}
+tests/            run-tests.sh + mocks/{kubectl,curl} + pty-drive.py
 docs/             this site (Jekyll, GitHub Pages)
 ```
+
+The Go frontend is a thin renderer: all capture logic, error translation, and
+safety gates live in the bash CLI it drives. Its suite runs inside
+`tests/run-tests.sh` when a Go toolchain is present — `go vet`, update-logic
+unit tests, `-render` parity assertions against the bash screens, and a full
+interactive round-trip on a real pty (`tests/pty-drive.py`).
 
 ## Conventions that matter
 

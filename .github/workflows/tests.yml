@@ -15,7 +15,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
-      - name: Run the test suite
+      - uses: actions/setup-go@v5
+        with:
+          go-version: 'stable'
+          cache-dependency-path: tui/go.sum
+      - name: Run the test suite (bash kit + Go TUI)
         run: tests/run-tests.sh
 
   shellcheck:

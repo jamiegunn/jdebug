@@ -117,7 +117,13 @@ case "$cmd" in
 esac
 
 case "$cmd" in
-    tui|menu|"")     exec "$D/ui/tui.sh" ;;
+    tui|menu|"")
+        # Prefer the Go frontend when it's built (richer rendering, same
+        # features); JDEBUG_CLASSIC=1 forces the zero-dependency bash menu.
+        if [[ -z "${JDEBUG_CLASSIC:-}" && -x "$D/tui/jdebug-tui" ]]; then
+            JDEBUG_KIT="$D" exec "$D/tui/jdebug-tui"
+        fi
+        exec "$D/ui/tui.sh" ;;
     wizard|guide)    exec "$D/ui/tui.sh" wizard ;;
 
     status)

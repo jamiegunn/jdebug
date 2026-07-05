@@ -9,6 +9,23 @@ nav_order: 5
 every action is labeled with what it answers and how risky it is, and the
 wizard encodes the diagnostic playbooks so you don't have to remember them.
 
+## Two frontends, one contract
+
+The menu ships in two implementations with identical keys, screens, gating,
+config, and session-log behavior:
+
+- **Go (Bubble Tea)** — the preferred frontend. Build once with `make tui`
+  (needs a Go toolchain); `jdebug` automatically prefers the built binary at
+  `tui/jdebug-tui`. Richer rendering, real text input, arrow-key pickers.
+  Runs inline (no alternate screen), and commands execute with your real
+  terminal — output stays in scrollback and the session log, exactly like
+  the classic menu. Every action shells out to the same tested bash CLI.
+- **bash (classic)** — the zero-dependency fallback; always available.
+  Force it with `JDEBUG_CLASSIC=1`.
+
+Both read and write the same remembered target (`~/.config/jdebug/target`),
+so you can switch between them freely.
+
 ## Layout
 
 The main screen is a two-line header (title + one glanceable status line), a
