@@ -16,14 +16,19 @@ config, and session-log behavior:
 
 - **Go (Bubble Tea)** — the preferred frontend. Build once with `make tui`
   (needs a Go toolchain); `jdebug` automatically prefers the built binary at
-  `tui/jdebug-tui`. A **full-screen dashboard**: no menu-scroll clutter, a
-  **live TARGET panel** on the right (pod phase, restarts, last exit reason,
-  memory/CPU vs limits, HPA, JVM heap vs max — refreshed every 20 s), and a
-  **NEXT box** that turns that data into concrete key presses ("OOMKilled
-  last restart → w flow 1", "memory 94% of limit → m"). Commands still run
-  on your normal screen — output stays in scrollback and the session log,
-  with a ✓/✗ verdict and an any-key pause before the dashboard resumes.
-  Every action shells out to the same tested bash CLI.
+  `tui/jdebug-tui`. A **full-screen dashboard that scales to your terminal**:
+  on a big window (≥140×34) it becomes a grid — menu on the left, a **live
+  TARGET panel with sparkline TRENDS** (memory %, CPU, restart ▲ markers)
+  and a **NEXT box** of concrete key-press suggestions in the middle,
+  **EVENTS and CAPTURES** on the right, and a **live log tail** filling the
+  bottom (5 s refresh, errors red, `f` expands it full-screen with
+  scrollback). Quick reads (status, memory, threads, analyze, …) render in
+  an **in-app scrollable pane**; long-lived or disruptive commands (log
+  stream, heap dump, snapshot, wizard) still drop to your normal screen with
+  a ✓/✗ verdict and an any-key pause, so their output stays in scrollback.
+  Both paths tee to the session log. On smaller terminals it degrades
+  gracefully to the classic menu+panel layout. Every action shells out to
+  the same tested bash CLI.
 - **bash (classic)** — the zero-dependency fallback; always available.
   Force it with `JDEBUG_CLASSIC=1`.
 

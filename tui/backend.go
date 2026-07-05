@@ -188,8 +188,8 @@ func useContext(ctx string) error {
 
 type probe struct {
 	OK      bool
-	Cluster bool // remote: cluster reachable
-	Jattach bool // local: jattach staged
+	Cluster bool     // remote: cluster reachable
+	Jattach bool     // local: jattach staged
 	Lines   []string // rendered checklist lines
 	When    time.Time
 }

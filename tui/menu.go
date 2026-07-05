@@ -8,31 +8,11 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
-func (m model) tw() int {
-	w := m.width
-	if w < 78 {
-		w = 78
-	}
-	if w > 132 {
-		w = 132
-	}
-	return w
-}
-
-// showPanel: the live target panel needs room; drop it on narrow terminals.
-func (m model) showPanel() bool { return m.tw() >= 104 }
-
-// leftW is the width the menu body uses (full width minus the panel column).
-func (m model) leftW() int {
-	if m.showPanel() {
-		return m.tw() - panelW - 2
-	}
-	return m.tw()
-}
+// (tw/tier/showPanel/leftW live in layout.go)
 
 func rule(w int) string { return " " + cRule.Render(strings.Repeat("─", w-2)) }
 
@@ -207,10 +187,35 @@ var localActions = struct{ inspect, capture []action }{
 	},
 }
 
+// remoteBody builds the banner + INSPECT/CAPTURE/LOGS sections at leftW.
+func (m model) remoteBody() string {
+	var body strings.Builder
+	body.WriteString(m.banner() + "\n")
+	body.WriteString(m.section("INSPECT", "read-only") + "\n")
+	for _, a := range remoteActions.inspect {
+		body.WriteString(m.row(a) + "\n")
+	}
+	body.WriteString("\n" + m.section("CAPTURE", "saves to dumps/ · [d] browse") + "\n")
+	for _, a := range remoteActions.capture {
+		body.WriteString(m.row(a) + "\n")
+	}
+	body.WriteString("\n" + m.section("LOGS", "") + "\n")
+	for _, a := range remoteActions.logs {
+		body.WriteString(m.row(a) + "\n")
+	}
+	return body.String()
+}
+
 func (m model) menuView() string {
 	var b strings.Builder
 	if m.mode == 1 {
 		p := m.remote
+		if p.OK && m.logs.focus {
+			return m.logFocusView()
+		}
+		if p.OK && m.tier() == 2 {
+			return m.dashboardView()
+		}
 		b.WriteString(m.headerRemote(p.Cluster))
 		if !p.OK {
 			b.WriteString("\n  " + cWarn.Render("⚠ SET UP YOUR TARGET FIRST") +
@@ -222,23 +227,15 @@ func (m model) menuView() string {
 			b.WriteString(prompt())
 			return b.String()
 		}
-		var body strings.Builder
-		body.WriteString(m.banner() + "\n")
-		body.WriteString(m.section("INSPECT", "read-only") + "\n")
-		for _, a := range remoteActions.inspect {
-			body.WriteString(m.row(a) + "\n")
+		b.WriteString("\n" + m.withPanel(m.remoteBody()))
+		suffix := "\n" + m.footer("[a] analyze  [c] check setup  [?] help  [q] quit") + prompt()
+		if m.showLogPane() {
+			logH := m.height - m.overlayLines() - (strings.Count(b.String(), "\n") + 1) - strings.Count(suffix, "\n") - 1
+			if logH >= 6 {
+				b.WriteString("\n" + rule(m.tw()) + "\n" + m.logPane(m.tw(), logH))
+			}
 		}
-		body.WriteString("\n" + m.section("CAPTURE", "saves to dumps/ · [d] browse") + "\n")
-		for _, a := range remoteActions.capture {
-			body.WriteString(m.row(a) + "\n")
-		}
-		body.WriteString("\n" + m.section("LOGS", "") + "\n")
-		for _, a := range remoteActions.logs {
-			body.WriteString(m.row(a) + "\n")
-		}
-		b.WriteString("\n" + m.withPanel(body.String()))
-		b.WriteString("\n" + m.footer("[a] analyze  [c] check setup  [?] help  [q] quit"))
-		b.WriteString(prompt())
+		b.WriteString(suffix)
 		return b.String()
 	}
 
@@ -275,7 +272,7 @@ func (m model) withPanel(body string) string {
 	}
 	h := strings.Count(body, "\n") + 1
 	left := lipgloss.NewStyle().Width(m.leftW()).Render(body)
-	return lipgloss.JoinHorizontal(lipgloss.Top, left, m.panelView(h))
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, m.panelView(panelW, h, false))
 }
 
 // --- key handling ---------------------------------------------------------------
@@ -283,6 +280,9 @@ func (m model) withPanel(body string) string {
 func (m model) menuKey(key string) (tea.Model, tea.Cmd) {
 	if key == "ctrl+c" {
 		return m, tea.Quit
+	}
+	if m.logs.focus {
+		return m.logFocusKey(key)
 	}
 	if m.mode == 1 {
 		m.probeRemote(false)
@@ -337,15 +337,21 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 	case "w", "W":
 		return m.openWizard()
 	case "s", "S":
-		return m, m.runCLI(false, "status")
+		return m.quickCLI(false, "status")
 	case "h":
-		return m, m.runCLI(true, "health")
+		return m.quickCLI(true, "health")
 	case "o", "O":
-		return m, m.runCLI(false, "top")
+		return m.quickCLI(false, "top")
 	case "m":
-		return m, m.runCLI(true, "memory")
+		return m.quickCLI(true, "memory")
 	case "t", "T":
 		m.scr = scVia
+		return m, nil
+	case "f", "F":
+		if m.showLogPane() {
+			m.logs.focus = true
+			m.logs.off = 0
+		}
 		return m, nil
 	case "j", "J":
 		m.scr = scJcmd
@@ -367,11 +373,11 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 		m.scr = scHelp
 		return m, nil
 	case "c", "C":
-		return m, m.runCLI(false, "doctor")
+		return m.quickCLI(false, "doctor")
 	case "a", "A":
-		return m, m.runCLI(false, "analyze")
+		return m.quickCLI(false, "analyze")
 	case "d", "D":
-		return m, m.runCLI(false, "dumps")
+		return m.quickCLI(false, "dumps")
 	case "i", "I":
 		return m, m.runCLI(true, "install-jattach")
 	case "p", "P":
@@ -396,13 +402,13 @@ func (m model) localKey(key string) (tea.Model, tea.Cmd) {
 	case "w", "W":
 		return m.openWizard()
 	case "h":
-		return m, m.runLocal("health")
+		return m.quickLocal("health")
 	case "e", "E":
-		return m, m.runLocal("metrics")
+		return m.quickLocal("metrics")
 	case "m":
-		return m, m.runLocal("memory")
+		return m.quickLocal("memory")
 	case "t", "T":
-		return m, m.runLocal("threads")
+		return m.quickLocal("threads")
 	case "j", "J":
 		m.scr = scJcmd
 		return m, nil
@@ -417,9 +423,9 @@ func (m model) localKey(key string) (tea.Model, tea.Cmd) {
 		m.scr = scHelp
 		return m, nil
 	case "a", "A":
-		return m, runShell(nil, m.kit+"/observe/analyze.sh", "/tmp")
+		return m.openQuick("analyze /tmp", nil, m.kit+"/observe/analyze.sh", "/tmp")
 	case "d", "D":
-		return m, m.runLocal("dumps")
+		return m.quickLocal("dumps")
 	case "i", "I":
 		return m, m.stageJattachLocal()
 	case "s", "S":
@@ -454,18 +460,20 @@ func (m model) viaKey(key string) (tea.Model, tea.Cmd) {
 	}
 	m.scr = scMenu
 	m.prev = scMenu
-	args := []string{"threads"}
-	if m.pendHeap {
-		args = []string{"heap"}
+	if m.pendHeap { // heap pauses the JVM and can run long — watch it live
+		args := []string{"heap"}
+		if m.viaFlag != "" {
+			args = append(args, "--via", m.viaFlag)
+		}
+		args = append(args, "--confirm")
+		m.pendHeap = false
+		return m, m.runCLI(true, args...)
 	}
+	args := []string{"threads"}
 	if m.viaFlag != "" {
 		args = append(args, "--via", m.viaFlag)
 	}
-	if m.pendHeap {
-		args = append(args, "--confirm")
-		m.pendHeap = false
-	}
-	return m, m.runCLI(true, args...)
+	return m.quickCLI(true, args...)
 }
 
 // --- jcmd quick pick ---------------------------------------------------------------
@@ -495,9 +503,9 @@ func (m model) jcmdKey(key string) (tea.Model, tea.Cmd) {
 		if key == j.key {
 			m.prev = scMenu
 			if m.mode == 1 {
-				return m, m.runCLI(true, "jcmd", j.cmd)
+				return m.quickCLI(true, "jcmd", j.cmd)
 			}
-			return m, m.runLocal("jcmd", j.cmd)
+			return m.quickLocal("jcmd", j.cmd)
 		}
 	}
 	if key == "t" || key == "T" {
@@ -521,7 +529,7 @@ func (m model) levelKey(key string) (tea.Model, tea.Cmd) {
 	if key >= "1" && key <= "6" {
 		lv := levels[key[0]-'1']
 		m.prev = scMenu
-		return m, m.runCLI(false, "log-level", m.logger, lv)
+		return m.quickCLI(false, "log-level", m.logger, lv)
 	}
 	return m, nil
 }

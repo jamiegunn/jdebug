@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
 """pty-drive.py — drive the Go TUI through a real pty (answering the terminal
 queries Bubble Tea makes) and assert the interaction contract end to end:
-menu renders, a command runs via ExecProcess with its output visible, the
-post-run pause appears, and quit confirms. Exit 0 = all assertions hold.
+the tier-2 dashboard renders its live panes, a quick command runs in the
+in-app output pane, a long-lived command still drops out via ExecProcess with
+the post-run pause, and quit confirms. Exit 0 = all assertions hold.
 
 Usage: pty-drive.py <kit-dir> <sandbox-dir>   (sandbox gets config/ + dumps/)
 """
-import os, pty, sys, time, select
+import os, pty, sys, time, select, fcntl, struct, termios
 
 kit, sandbox = sys.argv[1], sys.argv[2]
 os.makedirs(sandbox + "/config", exist_ok=True)
@@ -22,6 +23,9 @@ env = dict(os.environ,
 pid, fd = pty.fork()
 if pid == 0:
     os.execve(kit + "/tui/jdebug-tui", ["jdebug-tui"], env)
+
+# 200x50 so the tier-2 grid (live logs, events, captures, trends) engages
+fcntl.ioctl(fd, termios.TIOCSWINSZ, struct.pack("HHHH", 50, 200, 0, 0))
 
 buf = b""
 
@@ -46,20 +50,25 @@ def press(k, wait=1.0):
     os.write(fd, k.encode())
     drain(wait)
 
-drain(3)                # startup + first render
-press("s", 4)           # run `jdebug status` via ExecProcess (mock kubectl)
-press(" ", 1.5)         # any key back to the menu
+drain(3)                # startup + first render (Init fetches logs/events)
+press("s", 4)           # quick read → IN-APP output pane (mock kubectl)
+press("q", 1)           # leave the pane, back to the dashboard
+press("l", 4)           # long-lived logs → ExecProcess drop-out
+press(" ", 1.5)         # any key back to the dashboard
 press("q", 1)           # quit → confirm
 press("y", 2)
 
 txt = buf.decode("utf-8", "replace")
 checks = {
-    "menu rendered":          "guided diagnosis" in txt,
-    "command output visible": "how to read this" in txt,
-    "post-run pause":         "any key for the menu" in txt,
-    "session log path shown": "/dumps/session-" in txt,
-    "quit confirms":          "quit jdebug?" in txt,
-    "transcript on exit":     "transcript of everything" in txt,
+    "dashboard rendered":      "guided diagnosis" in txt,
+    "live log pane":           "LIVE LOGS" in txt and "OutOfMemoryError" in txt,
+    "events + captures panes": "EVENTS" in txt and "CAPTURES" in txt,
+    "trends sparklines":       "TRENDS" in txt,
+    "in-app output pane":      "how to read this" in txt and "scroll" in txt,
+    "exec drop-out pause":     "any key for the menu" in txt,
+    "session log path shown":  "/dumps/session-" in txt,
+    "quit confirms":           "quit jdebug?" in txt,
+    "transcript on exit":      "transcript of everything" in txt,
 }
 fail = 0
 for name, ok in checks.items():

@@ -310,9 +310,9 @@ func (m model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.prev = scMenu
 			m.scr = scMenu
 			if m.mode == 1 {
-				return m, m.runCLI(true, "jcmd", v)
+				return m.quickCLI(true, "jcmd", v)
 			}
-			return m, m.runLocal("jcmd", v)
+			return m.quickLocal("jcmd", v)
 		case inputNamespace:
 			m.t.Namespace = v
 			m.t.Pod = ""

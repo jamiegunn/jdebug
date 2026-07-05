@@ -2,7 +2,8 @@ package main
 
 // render_demo.go — `-render <screen>` prints a screen with canned state and
 // exits. No kubectl, no tty: this is how the kit's test suite asserts parity
-// between the Go and bash frontends.
+// between the Go and bash frontends. `menu` stays at 120 cols / unmeasured
+// height on purpose — tier 1, byte-identical to the classic layout.
 
 import "time"
 
@@ -20,9 +21,45 @@ func demoModel() model {
 	m.remote = probe{OK: true, Cluster: true, When: time.Now().Add(time.Hour)}
 	m.panel = panelData{When: time.Now(), Phase: "Running", Restarts: 34, LastReason: "OOMKilled",
 		MemUse: "480Mi", MemLimit: "512Mi", MemPct: 94, CPUUse: "250m", CPULimit: "500m",
-		HPA: "app-debug-demo-app 4 replicas", HeapUsed: "121Mi", HeapMax: "1732Mi", HasDumps: true}
+		HPA: "app-debug-demo-app 4 replicas", HeapUsed: "121Mi", HeapMax: "1732Mi"}
 	m.local = probe{OK: true, Jattach: true, When: time.Now().Add(time.Hour),
 		Lines: []string{cSafe.Render("   ✓") + cMuted.Render(" actuator answering"), cSafe.Render("   ✓") + cMuted.Render(" jattach staged")}}
+
+	// live-pane demo data: a memory ramp with one restart, a stack trace in
+	// the logs, a back-off event, three captures.
+	for i := 0; i < 20; i++ {
+		s := sample{When: time.Now(), MemPct: 60 + i*2, CPUMilli: 120 + i*7, Restarts: 33}
+		if i >= 12 {
+			s.Restarts = 34
+		}
+		m.hist = pushSample(m.hist, s)
+	}
+	m.events = []eventLine{
+		{Age: "2m", Type: "Warning", Reason: "BackOff", Msg: "Back-off restarting failed container app in pod"},
+		{Age: "5m", Type: "Warning", Reason: "Unhealthy", Msg: "Liveness probe failed: HTTP probe failed with statuscode 503"},
+		{Age: "7m", Type: "Normal", Reason: "Pulled", Msg: "Container image already present on machine"},
+		{Age: "9m", Type: "Normal", Reason: "Started", Msg: "Started container app"},
+	}
+	m.caps = []capEntry{
+		{Name: "threads-pod-a-20260705-1030.txt", Size: 12 << 10, Mod: time.Now().Add(-3 * time.Minute)},
+		{Name: "heap-pod-a-20260705-0940.hprof", Size: 210 << 20, Mod: time.Now().Add(-time.Hour)},
+		{Name: "snapshot-pod-a-20260705-0915", Size: 34 << 20, Mod: time.Now().Add(-2 * time.Hour), Dir: true},
+	}
+	m.logs.lines = classifyLogs([]string{
+		"10:29:51 INFO  [http-nio-8080-exec-3] c.e.d.DemoController : request served in 12ms",
+		"10:29:53 INFO  [scheduler-1] c.e.d.CacheWarmer : warmed 1200 entries",
+		"10:29:55 WARN  [HikariPool-1 housekeeper] com.zaxxer.hikari.pool.HikariPool : pool is near capacity",
+		"10:29:57 INFO  [http-nio-8080-exec-7] c.e.d.DemoController : request served in 9ms",
+		"10:30:01 ERROR [http-nio-8080-exec-2] o.a.c.c.C.[.[.[/].[dispatcherServlet] : Servlet.service() threw exception",
+		"java.lang.OutOfMemoryError: Java heap space",
+		"\tat com.example.debugdemo.LeakyService.grow(LeakyService.java:42)",
+		"\tat com.example.debugdemo.DemoController.leak(DemoController.java:31)",
+		"10:30:02 INFO  [http-nio-8080-exec-4] c.e.d.DemoController : request served in 14ms",
+		"10:30:04 INFO  [scheduler-1] c.e.d.MetricsPusher : flushed 40 metrics",
+		"10:30:06 INFO  [http-nio-8080-exec-1] c.e.d.DemoController : request served in 11ms",
+		"10:30:08 INFO  [http-nio-8080-exec-5] c.e.d.DemoController : request served in 10ms",
+	})
+	m.logs.when = time.Now()
 	return m
 }
 
@@ -32,6 +69,22 @@ func renderDemo(what string) string {
 	case "menu":
 		m.scr = scMenu
 		return m.menuView()
+	case "dashboard":
+		m.scr = scMenu
+		m.width, m.height = 200, 50
+		return m.menuView()
+	case "focus":
+		m.scr = scMenu
+		m.width, m.height = 200, 50
+		m.logs.focus = true
+		return m.menuView()
+	case "output":
+		m.scr = scOutput
+		m.width, m.height = 120, 40
+		m.out = outState{title: "jdebug status", done: true, ok: true,
+			raw: "how to read this: STATUS should be Running; RESTARTS counts crashes\n\nNAME    READY   STATUS    RESTARTS   AGE\npod-a   1/1     Running   34         2d\n\nrecent events:\n5m  Warning  BackOff  pod/pod-a  Back-off restarting failed container"}
+		m.rewrapOut()
+		return m.outputView()
 	case "gate":
 		m.t.Pod = ""
 		m.remote = probe{OK: false, Cluster: true, When: time.Now().Add(time.Hour), Lines: []string{
@@ -53,5 +106,5 @@ func renderDemo(what string) string {
 		m.scr = scWizard
 		return m.wizardView()
 	}
-	return "unknown screen: " + what + " (menu|gate|local|help|chooser|editor|wizard)"
+	return "unknown screen: " + what + " (menu|dashboard|focus|output|gate|local|help|chooser|editor|wizard)"
 }

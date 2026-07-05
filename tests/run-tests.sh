@@ -454,11 +454,19 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         assert_has "tui: glossary parity" "one running copy of the app"
         run_case ./tui/jdebug-tui -render chooser
         assert_has "tui: chooser self-test entry" "self-test"
-        # full interactive round-trip on a real pty: menu → run status →
-        # post-run pause → quit confirm → transcript
+        run_case ./tui/jdebug-tui -render dashboard
+        assert_has "tui: dashboard log pane" "LIVE LOGS"
+        assert_has "tui: dashboard events pane" "EVENTS"
+        assert_has "tui: dashboard captures pane" "CAPTURES"
+        assert_has "tui: dashboard trends" "TRENDS"
+        assert_has "tui: restart marker" "▲"
+        run_case ./tui/jdebug-tui -render output
+        assert_has "tui: in-app output pane" "scroll"
+        # full interactive round-trip on a real pty at 200x50: dashboard with
+        # live panes → in-app quick command → ExecProcess drop-out → quit
         if command -v python3 >/dev/null 2>&1; then
             if pty_out="$(python3 tests/pty-drive.py "$KIT" "$TMP/ptydrive" 2>&1)"; then
-                printf '%s\n' "$pty_out"; PASS=$((PASS+6))
+                printf '%s\n' "$pty_out"; PASS=$((PASS+9))
             else
                 printf '%s\n' "$pty_out"; bad "pty: interactive round-trip" "see lines above"
             fi

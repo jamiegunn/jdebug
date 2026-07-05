@@ -6,11 +6,10 @@ package main
 // command, and turned into concrete "press X" suggestions.
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"os/exec"
-	"path/filepath"
 	"regexp"
 	"strconv"
 	"strings"
@@ -32,7 +31,6 @@ type panelData struct {
 	HPA        string
 	HeapUsed   string // JVM, from actuator
 	HeapMax    string
-	HasDumps   bool
 }
 
 type panelMsg panelData
@@ -67,11 +65,13 @@ type podJSON struct {
 	} `json:"spec"`
 }
 
-func fetchPanel(kit string, t target) tea.Cmd {
+func fetchPanel(t target) tea.Cmd {
 	return func() tea.Msg {
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
+		defer cancel()
 		d := panelData{When: time.Now(), MemPct: -1}
 		if t.Pod != "" {
-			if raw, err := exec.Command("kubectl", "-n", t.Namespace, "get", "pod", t.Pod, "-o", "json").Output(); err == nil {
+			if raw, err := exec.CommandContext(ctx, "kubectl", "-n", t.Namespace, "get", "pod", t.Pod, "-o", "json").Output(); err == nil {
 				var pj podJSON
 				if json.Unmarshal(raw, &pj) == nil {
 					d.Phase = pj.Status.Phase
@@ -91,7 +91,7 @@ func fetchPanel(kit string, t target) tea.Cmd {
 					}
 				}
 			}
-			if out, err := exec.Command("kubectl", "-n", t.Namespace, "top", "pod", t.Pod, "--no-headers").Output(); err == nil {
+			if out, err := exec.CommandContext(ctx, "kubectl", "-n", t.Namespace, "top", "pod", t.Pod, "--no-headers").Output(); err == nil {
 				f := strings.Fields(string(out))
 				if len(f) >= 3 {
 					d.CPUUse, d.MemUse = f[1], f[2]
@@ -104,14 +104,6 @@ func fetchPanel(kit string, t target) tea.Cmd {
 			f := strings.Fields(hpa[0])
 			if len(f) >= 6 {
 				d.HPA = f[0] + " " + f[len(f)-1] + " replicas"
-			}
-		}
-		if entries, err := os.ReadDir(dumpsDir(kit)); err == nil {
-			for _, e := range entries {
-				if !strings.HasPrefix(e.Name(), "session-") {
-					d.HasDumps = true
-					break
-				}
 			}
 		}
 		return panelMsg(d)
@@ -189,7 +181,7 @@ func (m model) suggestions() []string {
 		s = append(s, cWarn.Render(fmt.Sprintf("! %d restarts", d.Restarts))+cMuted.Render(" → ")+cKey.Render("w")+cMuted.Render(" diagnose"))
 	}
 	if len(s) == 0 {
-		if !d.HasDumps {
+		if len(m.caps) == 0 {
 			s = append(s, cMuted.Render("new here? ")+cKey.Render("w")+cMuted.Render(" — describe the symptom"))
 		} else {
 			s = append(s, cMuted.Render("evidence captured → ")+cKey.Render("a")+cMuted.Render(" analyzes it"))
@@ -205,7 +197,10 @@ func (m model) suggestions() []string {
 
 const panelW = 38
 
-func (m model) panelView(h int) string {
+// panelView renders the TARGET LIVE column at width w, padded to h rows.
+// trends adds the sparkline section (tier-2 only; tier 1 keeps the classic
+// 38-col layout byte-identical for frontend-parity tests).
+func (m model) panelView(w, h int, trends bool) string {
 	d := m.panel
 	line := func(k, v string, warn bool) string {
 		vs := cMuted
@@ -221,7 +216,7 @@ func (m model) panelView(h int) string {
 		return s
 	}
 	var rows []string
-	rows = append(rows, " "+cDim.Render("TARGET LIVE")+"  "+cRule.Render(strings.Repeat("─", panelW-15)))
+	rows = append(rows, " "+cDim.Render("TARGET LIVE")+"  "+cRule.Render(strings.Repeat("─", w-15)))
 	if m.mode == 1 {
 		pod := m.t.Pod
 		if len(pod) > 24 {
@@ -261,7 +256,11 @@ func (m model) panelView(h int) string {
 		rows = append(rows, line("jattach", jat, !m.local.Jattach))
 	}
 	rows = append(rows, "")
-	rows = append(rows, " "+cDim.Render("NEXT")+"  "+cRule.Render(strings.Repeat("─", panelW-8)))
+	if trends && m.mode == 1 {
+		rows = append(rows, m.trendsRows(w)...)
+		rows = append(rows, "")
+	}
+	rows = append(rows, " "+cDim.Render("NEXT")+"  "+cRule.Render(strings.Repeat("─", w-8)))
 	for _, s := range m.suggestions() {
 		rows = append(rows, " "+s)
 	}
@@ -276,5 +275,3 @@ func (m model) panelView(h int) string {
 	}
 	return strings.Join(rows, "\n")
 }
-
-var _ = filepath.Join // keep import if unused paths change

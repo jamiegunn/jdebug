@@ -2,9 +2,10 @@ package main
 
 // jdebug-tui — the Bubble Tea frontend for the jdebug kit. It draws and
 // handles keys; every action shells out to the tested bash CLI (`jdebug`) or
-// the in-pod tool (`jdebug-local`). Runs inline (no altscreen) so command
-// output stays in your scrollback and the session log, exactly like the
-// classic bash menu.
+// the in-pod tool (`jdebug-local`). A full-screen dashboard: quick reads
+// render in an in-app scrollable pane; long-lived/interactive commands drop
+// to the normal screen (ExecProcess) so their output stays in scrollback and
+// the session log, exactly like the classic bash menu.
 
 import (
 	"flag"
@@ -33,6 +34,7 @@ const (
 	scJcmd
 	scLevel
 	scPostRun
+	scOutput
 )
 
 type model struct {
@@ -42,6 +44,7 @@ type model struct {
 	scr    screen
 	prev   screen // where PostRun / pickers return to
 	width  int
+	height int    // 0 = never measured: render content-height
 	staleP string // remembered pod that vanished at startup
 
 	// cached probes (20s, like bash)
@@ -67,15 +70,42 @@ type model struct {
 	pendHeap bool // snapshot: include heap?
 	logger   string
 
-	panel   panelData
+	// live panes (dashboard v3)
+	panel     panelData
+	logs      logState
+	events    []eventLine
+	eventsErr string
+	hist      []sample // sparkline history, one point per panel fetch
+	caps      []capEntry
+	out       outState // in-app command output (scOutput)
+
+	// in-flight fetch guards: a slow cluster must not stack goroutines
+	panelBusy bool
+	logBusy   bool
+
 	quitMsg string
+}
+
+// panelFetch/logsFetch dispatch a fetch and raise its busy flag (cleared
+// when the reply message lands).
+func (m *model) panelFetch() tea.Cmd {
+	m.panelBusy = true
+	return fetchPanel(m.t)
+}
+func (m *model) logsFetch() tea.Cmd {
+	m.logBusy = true
+	return fetchLogs(m.t)
 }
 
 func (m model) Init() tea.Cmd {
 	if m.mode == 1 {
-		return tea.Batch(fetchPanel(m.kit, m.t), tickCmd())
+		cmds := []tea.Cmd{fetchPanel(m.t), fetchEvents(m.t), fetchCaps(m.kit), tickCmd(), logTickCmd()}
+		if m.t.Pod != "" {
+			cmds = append(cmds, fetchLogs(m.t))
+		}
+		return tea.Batch(cmds...)
 	}
-	return tickCmd()
+	return tea.Batch(fetchCaps(m.kit), tickCmd())
 }
 
 func (m *model) probeRemote(force bool) probe {
@@ -94,7 +124,10 @@ func (m *model) probeLocal(force bool) probe {
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch v := msg.(type) {
 	case tea.WindowSizeMsg:
-		m.width = v.Width
+		m.width, m.height = v.Width, v.Height
+		if m.scr == scOutput {
+			m.rewrapOut()
+		}
 		return m, nil
 	case execDoneMsg:
 		if m.scr == scWizard && m.wiz.active {
@@ -103,15 +136,62 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.scr != scChooser {
 			m.scr = scMenu
 		}
-		return m, fetchPanel(m.kit, m.t)
+		cmds := []tea.Cmd{m.panelFetch(), fetchCaps(m.kit)}
+		if m.mode == 1 {
+			cmds = append(cmds, fetchEvents(m.t))
+			if m.showLogPane() && !m.logBusy {
+				cmds = append(cmds, m.logsFetch())
+			}
+		}
+		return m, tea.Batch(cmds...)
+	case cmdOutMsg:
+		if m.scr != scOutput {
+			return m, nil // user already left the pane; drop the stale result
+		}
+		m.out.running = false
+		m.out.done = true
+		m.out.ok = v.err == nil
+		if v.err != nil {
+			m.out.errStr = firstLine(v.err.Error())
+		}
+		m.out.raw = string(v.out)
+		m.rewrapOut()
+		return m, tea.Batch(m.panelFetch(), fetchCaps(m.kit))
 	case panelMsg:
 		m.panel = panelData(v)
+		m.panelBusy = false
+		if m.mode == 1 && v.Phase != "" {
+			m.hist = pushSample(m.hist, sample{When: v.When, MemPct: v.MemPct,
+				CPUMilli: cpuMilli(v.CPUUse), Restarts: v.Restarts})
+		}
+		return m, nil
+	case logMsg:
+		m.logs.lines = v.lines
+		m.logs.err = v.err
+		m.logs.when = time.Now()
+		m.logBusy = false
+		return m, nil
+	case eventsMsg:
+		m.events = v.lines
+		m.eventsErr = v.err
+		return m, nil
+	case capsMsg:
+		m.caps = []capEntry(v)
 		return m, nil
 	case tickMsg:
 		if m.scr == scMenu && m.mode == 1 && m.remote.OK {
-			return m, tea.Batch(fetchPanel(m.kit, m.t), tickCmd())
+			cmds := []tea.Cmd{fetchEvents(m.t), fetchCaps(m.kit), tickCmd()}
+			if !m.panelBusy {
+				cmds = append(cmds, m.panelFetch())
+			}
+			return m, tea.Batch(cmds...)
 		}
 		return m, tickCmd()
+	case logTickMsg:
+		if m.scr == scMenu && m.mode == 1 && m.remote.OK && m.showLogPane() && !m.logBusy {
+			return m, tea.Batch(m.logsFetch(), logTickCmd())
+		}
+		return m, logTickCmd()
 	case tea.KeyMsg:
 		return m.handleKey(v)
 	}
@@ -144,6 +224,8 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.inputKey(k)
 	case scWizard:
 		return m.wizardKey(key)
+	case scOutput:
+		return m.outputKey(key)
 	}
 	return m, nil
 }
@@ -172,6 +254,8 @@ func (m model) View() string {
 		return m.inputView()
 	case scWizard:
 		return m.wizardView()
+	case scOutput:
+		return m.outputView()
 	}
 	return ""
 }
@@ -216,7 +300,7 @@ func (m model) confirmKeyPress(key string) (tea.Model, tea.Cmd) {
 // --- entry ---------------------------------------------------------------------
 
 func main() {
-	renderFlag := flag.String("render", "", "print a screen with canned demo state and exit (menu|gate|help|chooser|local)")
+	renderFlag := flag.String("render", "", "print a screen with canned demo state and exit (menu|dashboard|focus|output|gate|local|help|chooser|editor|wizard)")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 

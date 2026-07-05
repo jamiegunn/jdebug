@@ -15,19 +15,27 @@ live in the scripts; if the CLI's behavior changes, this frontend inherits it.
 
 Two consequences worth knowing:
 
-- It is a **full-screen (altscreen) dashboard**, but commands execute via
-  `tea.ExecProcess`, which drops back to your normal screen: output streams
-  to your real terminal and scrollback, tees to `dumps/session-<ts>.log`,
-  prints a ✓/✗ verdict, and pauses for a key before the dashboard resumes.
+- It is a **full-screen (altscreen) dashboard** with hybrid execution:
+  quick reads run captured and render in an in-app scrollable pane
+  (`output.go`), while long-lived/interactive commands execute via
+  `tea.ExecProcess`, dropping to your normal screen — output streams to
+  your real terminal and scrollback, prints a ✓/✗ verdict, and pauses for
+  a key before the dashboard resumes. Both paths tee the same transcript
+  block to `dumps/session-<ts>.log`.
 - It reads and writes the same `~/.config/jdebug/target`, so you can switch
   between the frontends freely (`JDEBUG_CLASSIC=1` forces bash).
 
-The dashboard's right column is the **live TARGET panel** (`panel.go`):
-pod phase/restarts/last-exit, memory & CPU vs limits (kubectl top + pod
-spec), HPA state, and JVM heap used/max read through the pod's actuator —
-fetched asynchronously, refreshed every 20 s and after every command. Below
-it, the **NEXT box** converts that data into suggested key presses, so the
-app brings the mental model instead of demanding one.
+The layout scales in three tiers (`layout.go`): compact (<104 cols), the
+classic menu + 38-col TARGET LIVE sidebar (104–139), and the full grid
+(≥140×34) — menu | TARGET LIVE + TRENDS sparklines + NEXT | EVENTS +
+CAPTURES, with a **live log tail** strip filling the remaining height.
+The log pane polls `kubectl logs --tail=200` every 5 s (errors and stack
+traces red, warnings amber; `f` expands it full-screen with j/k scrollback);
+events and captures refresh on the 20 s tick; trend samples piggyback on
+every panel fetch. The **NEXT box** converts live data into suggested key
+presses, so the app brings the mental model instead of demanding one.
+Every fixed-height frame is exact: overlay screens (confirm, jcmd, …)
+budget their extra lines so the header never scrolls off.
 
 ## Build / run / test
 
@@ -49,8 +57,14 @@ interactive session on a real pty (`tests/pty-drive.py`).
 | `palette.go` | adaptive Lipgloss styles (dark + light variants per token) |
 | `backend.go` | kit/config/dumps paths, target load/save (bash-compatible), kubectl enumeration, readiness probes |
 | `exec.go` | `ExecProcess` command runner with session-log tee; local jattach staging |
-| `menu.go` | header/status line, gate panels, main menu + two-column layout, action key dispatch, tier/jcmd/level picks |
+| `menu.go` | header/status line, gate panels, main menu, action key dispatch, tier/jcmd/level picks |
+| `layout.go` | size tiers, column/row math, tier-2 grid assembly, overlay budgeting |
 | `panel.go` | live TARGET panel data fetch/render + the NEXT suggestion engine |
+| `logs.go` | live log tail: 5 s poll, severity classifier, focus mode |
+| `events.go` | kubernetes events pane for the target pod |
+| `captures.go` | dumps/ browser pane (name/size/age) |
+| `spark.go` | sample ring + sparkline/restart-marker rendering |
+| `output.go` | in-app output pane: captured quick commands, scroll viewport |
 | `editor.go` | target editor (`g`), generic picker + text input widgets |
 | `wizard.go` | the six guided-diagnosis flows as step queues |
 | `chooser.go` | the where-is-the-JVM opening screen (+ `u` self-test) |

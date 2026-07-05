@@ -26,6 +26,23 @@ func initSessionLog(kit string) {
 	sessionLog = filepath.Join(dumpsDir(kit), "session-"+time.Now().Format("20060102-150405")+".log")
 }
 
+// appendSessionLog writes the same "$ cmd … ✓/✗" transcript block that
+// runShell's tee produces, so in-app (captured) runs keep the session-log
+// contract of the drop-out path.
+func appendSessionLog(display string, out []byte, err error) {
+	_ = os.MkdirAll(filepath.Dir(sessionLog), 0o755)
+	f, ferr := os.OpenFile(sessionLog, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
+	if ferr != nil {
+		return
+	}
+	defer f.Close()
+	verdict := "✓ done"
+	if err != nil {
+		verdict = "✗ " + err.Error()
+	}
+	fmt.Fprintf(f, "\n$ %s\n\n%s\n%s\n", display, strings.TrimRight(string(out), "\n"), verdict)
+}
+
 // runShell echoes the command, runs it on the NORMAL screen (the dashboard is
 // an altscreen app; ExecProcess drops out of it), tees to the session log,
 // prints ✓/✗, and pauses for a key so the output can be read before the

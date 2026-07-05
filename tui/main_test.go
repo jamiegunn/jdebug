@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/lipgloss"
 )
 
 func key(s string) tea.KeyMsg {
@@ -152,6 +153,213 @@ func TestMenuParityStrings(t *testing.T) {
 	}
 	if strings.Contains(out, "fastthread") {
 		t.Error("no cloud analyzers may be recommended")
+	}
+}
+
+// --- dashboard v3 -------------------------------------------------------------
+
+func TestLayoutTiers(t *testing.T) {
+	cases := []struct {
+		w, h, tier int
+		strip      bool
+	}{
+		{100, 50, 0, false}, // compact
+		{120, 0, 1, false},  // classic sidebar, unmeasured height
+		{120, 40, 1, true},  // sidebar + log strip
+		{140, 34, 2, true},  // smallest grid
+		{200, 50, 2, true},  // 15" laptop full screen
+	}
+	for _, c := range cases {
+		m := readyModel()
+		m.width, m.height = c.w, c.h
+		if got := m.tier(); got != c.tier {
+			t.Errorf("%dx%d: tier = %d, want %d", c.w, c.h, got, c.tier)
+		}
+		if got := m.showLogPane(); got != c.strip {
+			t.Errorf("%dx%d: showLogPane = %v, want %v", c.w, c.h, got, c.strip)
+		}
+		if m.tier() == 2 {
+			menuW, midW, evW := m.cols()
+			if menuW+midW+evW+4 != m.tw() {
+				t.Errorf("%dx%d: columns %d+%d+%d+4 != tw %d", c.w, c.h, menuW, midW, evW, m.tw())
+			}
+		}
+	}
+}
+
+// The single most valuable regression test for a fixed frame: every screen
+// that renders the dashboard must fill the terminal exactly — no scrolling,
+// no overflow — including the overlay screens that append lines underneath.
+func TestDashboardFrameExact(t *testing.T) {
+	for _, scr := range []screen{scMenu, scConfirm, scVia, scLevel, scJcmd} {
+		m := readyModel()
+		m.width, m.height = 200, 50
+		m.scr = scr
+		m.confirmMsg = "sure? [y/N]"
+		m.logger = "ROOT"
+		out := m.View()
+		lines := strings.Split(out, "\n")
+		if len(lines) != 50 {
+			t.Errorf("screen %v: frame is %d rows, want exactly 50", scr, len(lines))
+		}
+		for i, l := range lines {
+			if w := lipgloss.Width(l); w > 200 {
+				t.Errorf("screen %v row %d: %d cols wide (>200)", scr, i+1, w)
+			}
+		}
+	}
+}
+
+func TestDashboardShowsPanes(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 200, 50
+	out := m.menuView()
+	for _, want := range []string{"LIVE LOGS", "EVENTS", "CAPTURES", "TRENDS", "▲",
+		"OutOfMemoryError", "BackOff", "threads-pod-a"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("dashboard missing %q", want)
+		}
+	}
+}
+
+func TestQuickRunsInApp(t *testing.T) {
+	m := readyModel()
+	out, cmd := m.Update(key("s"))
+	mm := out.(model)
+	if mm.scr != scOutput || !mm.out.running || cmd == nil {
+		t.Fatalf("s must open the in-app output pane running, got screen %v", mm.scr)
+	}
+	out, _ = mm.Update(cmdOutMsg{title: "jdebug status", out: []byte("hello\nworld")})
+	mm = out.(model)
+	if !mm.out.done || !mm.out.ok || len(mm.out.lines) != 2 {
+		t.Fatalf("output must land in the pane, got done=%v lines=%d", mm.out.done, len(mm.out.lines))
+	}
+	out = press(t, mm, "q")
+	if out.(model).scr != scMenu {
+		t.Fatal("q must return to the menu")
+	}
+}
+
+func TestLongLivedStaysExec(t *testing.T) {
+	m := readyModel()
+	out, cmd := m.Update(key("l")) // live log stream: interactive, drops out
+	mm := out.(model)
+	if mm.scr == scOutput {
+		t.Fatal("logs must NOT run in the in-app pane")
+	}
+	if cmd == nil {
+		t.Fatal("logs must still run")
+	}
+}
+
+func TestHeapStaysExec(t *testing.T) {
+	out := press(t, readyModel(), "H", "H")
+	mm := out.(model)
+	if mm.scr != scVia {
+		t.Fatalf("H,H must open the tier pick, got %v", mm.scr)
+	}
+	res, cmd := mm.Update(key("enter"))
+	mm = res.(model)
+	if mm.scr == scOutput {
+		t.Fatal("heap dump must NOT run in the in-app pane (long, pauses the JVM)")
+	}
+	if cmd == nil {
+		t.Fatal("heap dump must run after the tier pick")
+	}
+}
+
+func TestThreadsRunInApp(t *testing.T) {
+	out := press(t, readyModel(), "t", "enter")
+	if out.(model).scr != scOutput {
+		t.Fatal("threads (auto tier) must run in the in-app pane")
+	}
+}
+
+func TestLogClassifier(t *testing.T) {
+	ls := classifyLogs([]string{
+		"10:00 INFO all fine",
+		"10:01 WARN pool near capacity",
+		"10:02 ERROR boom",
+		"\tat com.example.App.run(App.java:1)", // stack frame inherits error
+		"10:03 INFO recovered",
+		"java.lang.OutOfMemoryError: Java heap space",
+	})
+	want := []int{0, 1, 2, 2, 0, 2}
+	for i, w := range want {
+		if ls[i].Sev != w {
+			t.Errorf("line %d: sev = %d, want %d (%q)", i, ls[i].Sev, w, ls[i].Text)
+		}
+	}
+}
+
+func TestSparkRender(t *testing.T) {
+	if got := spark([]int{0, 50, 100}, 0, 100, 10); got != "▁▄█" {
+		t.Errorf("spark = %q, want ▁▄█", got)
+	}
+	if got := spark([]int{-1, 100}, 0, 100, 5); got != " █" {
+		t.Errorf("unknowns must render as gaps, got %q", got)
+	}
+	if got := spark([]int{1, 2, 3, 4}, 0, 100, 2); len([]rune(got)) != 2 {
+		t.Errorf("spark must window to the last w samples, got %q", got)
+	}
+}
+
+func TestCpuMilli(t *testing.T) {
+	for in, want := range map[string]int{"250m": 250, "1": 1000, "": -1, "0.5": 500} {
+		if got := cpuMilli(in); got != want {
+			t.Errorf("cpuMilli(%q) = %d, want %d", in, got, want)
+		}
+	}
+}
+
+func TestSampleRingCaps(t *testing.T) {
+	var h []sample
+	for i := 0; i < histCap+5; i++ {
+		h = pushSample(h, sample{MemPct: i})
+	}
+	if len(h) != histCap {
+		t.Fatalf("ring len = %d, want %d", len(h), histCap)
+	}
+	if h[len(h)-1].MemPct != histCap+4 {
+		t.Fatal("ring must keep the newest samples")
+	}
+}
+
+func TestOutputScrollKeys(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 120, 20
+	m.scr = scOutput
+	var raw []string
+	for i := 0; i < 40; i++ {
+		raw = append(raw, "line")
+	}
+	m.out = outState{done: true, ok: true, raw: strings.Join(raw, "\n")}
+	m.rewrapOut()
+	vis := m.outVisible()
+	out := press(t, m, "G")
+	if got := out.(model).out.off; got != 40-vis {
+		t.Fatalf("G must scroll to the bottom, off = %d want %d", got, 40-vis)
+	}
+	out = press(t, out, "g", "j")
+	if got := out.(model).out.off; got != 1 {
+		t.Fatalf("g then j must land on off=1, got %d", got)
+	}
+}
+
+func TestFocusToggle(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 200, 50
+	out := press(t, m, "f")
+	mm := out.(model)
+	if !mm.logs.focus {
+		t.Fatal("f must expand the log pane")
+	}
+	if !strings.Contains(mm.menuView(), "f/esc back") {
+		t.Fatal("focus view must show the way back")
+	}
+	out = press(t, mm, "f")
+	if out.(model).logs.focus {
+		t.Fatal("second f must collapse the log pane")
 	}
 }
 
