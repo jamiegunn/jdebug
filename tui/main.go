@@ -224,6 +224,8 @@ func main() {
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 
+	applyTheme(os.Getenv("JDEBUG_THEME"))
+
 	if *showVersion {
 		fmt.Println("jdebug-tui " + version)
 		return
