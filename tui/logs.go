@@ -121,42 +121,47 @@ func (m model) logPane(w, h int) string {
 		right = fmt.Sprintf("%ds ago · ", int(time.Since(ls.when).Seconds())) + right
 	}
 	rows := []string{paneTitle(w, "LIVE LOGS", podShort(m.t.Pod, 28), right)}
-	visible := h - 1
 	switch {
 	case ls.err != "" && len(ls.lines) == 0:
 		rows = append(rows, " "+cFaint.Render("– logs unavailable: "+ls.err+" –"))
 	case len(ls.lines) == 0:
 		rows = append(rows, " "+cFaint.Render("– waiting for logs… –"))
 	default:
-		end := len(ls.lines) - ls.off
-		if end < 1 {
-			end = 1
-		}
-		if end > len(ls.lines) {
-			end = len(ls.lines)
-		}
-		start := end - visible
-		if start < 0 {
-			start = 0
-		}
-		for _, l := range ls.lines[start:end] {
-			st := cMuted
-			switch l.Sev {
-			case 2:
-				st = cDisr
-			case 1:
-				st = cWarn
-			}
-			rows = append(rows, " "+st.Render(ansi.Truncate(l.Text, w-2, "…")))
-		}
+		rows = append(rows, renderTail(ls.lines, ls.off, h-1, w)...)
 	}
 	for len(rows) < h {
 		rows = append(rows, "")
 	}
-	if len(rows) > h {
-		rows = rows[:h]
+	return strings.Join(rows[:h], "\n")
+}
+
+// renderTail renders a window of severity-colored lines that ends `off`
+// lines back from the tail (0 = follow), pinned so scrolling past the top
+// still shows a full window.
+func renderTail(ls []logLine, off, visible, w int) []string {
+	end := len(ls) - off
+	if end < visible {
+		end = visible
 	}
-	return strings.Join(rows, "\n")
+	if end > len(ls) {
+		end = len(ls)
+	}
+	start := end - visible
+	if start < 0 {
+		start = 0
+	}
+	var rows []string
+	for _, l := range ls[start:end] {
+		st := cMuted
+		switch l.Sev {
+		case 2:
+			st = cDisr
+		case 1:
+			st = cWarn
+		}
+		rows = append(rows, " "+st.Render(ansi.Truncate(l.Text, w-2, "…")))
+	}
+	return rows
 }
 
 // logFocusView: the expanded pane — header, one-line target summary, logs

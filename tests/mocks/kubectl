@@ -59,7 +59,7 @@ case "$*" in
         printf '%s\n' "${MOCK_EXEC_OUT:-ok}" ;;
     *" cp "*)
         exit 0 ;;
-    *"logs"*"--tail"*)
+    *"logs"*"--tail=200"*)
         # the TUI's live log pane; includes every severity the classifier knows
         printf '10:00:01 INFO  Started DebugDemoApplication in 3.2 seconds\n10:00:02 WARN  HikariPool-1 pool is near capacity\n10:00:03 ERROR java.lang.OutOfMemoryError: Java heap space\n\tat com.example.Leak.grow(Leak.java:42)\n10:00:04 INFO  request served in 12ms\n' ;;
     *"logs"*)

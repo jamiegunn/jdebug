@@ -95,9 +95,10 @@ func (m *model) runLocal(args ...string) tea.Cmd {
 	return runShell(targetEnv(m.t), words...)
 }
 
-// stageJattachLocal downloads the arch-matched jattach for THIS machine into
+// jattachScript downloads the arch-matched jattach for THIS machine into
 // the shared cache and copies it to $JATTACH_BIN (mirrors the bash helper).
-func (m *model) stageJattachLocal() tea.Cmd {
+// Runs through the streaming output pane.
+func jattachScript() string {
 	cache := os.Getenv("JDEBUG_CACHE_DIR")
 	if cache == "" {
 		if x := os.Getenv("XDG_CACHE_HOME"); x != "" {
@@ -111,7 +112,7 @@ func (m *model) stageJattachLocal() tea.Cmd {
 	if ver == "" {
 		ver = "v2.2"
 	}
-	script := fmt.Sprintf(`set -e
+	return fmt.Sprintf(`set -e
 BIN=%s; CACHE=%s; VER=%s
 [ -x "$BIN" ] && { echo "jattach already staged at $BIN"; exit 0; }
 case "$(uname -s)-$(uname -m)" in
@@ -129,6 +130,4 @@ if [ ! -f "$F" ]; then
 fi
 cp "$F" "$BIN" && chmod +x "$BIN" && echo "staged jattach at $BIN"`,
 		shq(jattachBin()), shq(cache), shq(ver))
-	c := exec.Command("bash", "-c", script)
-	return tea.ExecProcess(c, func(err error) tea.Msg { return execDoneMsg{err} })
 }

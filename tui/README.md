@@ -15,13 +15,15 @@ live in the scripts; if the CLI's behavior changes, this frontend inherits it.
 
 Two consequences worth knowing:
 
-- It is a **full-screen (altscreen) dashboard** with hybrid execution:
-  quick reads run captured and render in an in-app scrollable pane
-  (`output.go`), while long-lived/interactive commands execute via
-  `tea.ExecProcess`, dropping to your normal screen — output streams to
-  your real terminal and scrollback, prints a ✓/✗ verdict, and pauses for
-  a key before the dashboard resumes. Both paths tee the same transcript
-  block to `dumps/session-<ts>.log`.
+- It is a **full-screen (altscreen) dashboard** and commands **stream into
+  it**: every run (quick reads and the long ones alike) pipes its output
+  live into the bottom pane, replacing the log tail while it's held — the
+  menu stays interactive, `esc` stops/dismisses, ↑↓ scrolls, the title
+  carries the ✓/✗ verdict (`output.go`). Terminals too small for the strip
+  get the same stream in a full-screen view. Only the **wizard** still
+  drops to the normal screen via `tea.ExecProcess` — its narrated
+  step-by-step chain rides on that contract. Every run appends the same
+  `$ cmd … ✓/✗` transcript block to `dumps/session-<ts>.log`.
 - It reads and writes the same `~/.config/jdebug/target`, so you can switch
   between the frontends freely (`JDEBUG_CLASSIC=1` forces bash).
 
@@ -64,7 +66,7 @@ interactive session on a real pty (`tests/pty-drive.py`).
 | `events.go` | kubernetes events pane for the target pod |
 | `captures.go` | dumps/ browser pane (name/size/age) |
 | `spark.go` | sample ring + sparkline/restart-marker rendering |
-| `output.go` | in-app output pane: captured quick commands, scroll viewport |
+| `output.go` | streaming output pane: pipe-fed runner, strip + full-screen views, scroll/stop keys |
 | `editor.go` | target editor (`g`), generic picker + text input widgets |
 | `wizard.go` | the six guided-diagnosis flows as step queues |
 | `chooser.go` | the where-is-the-JVM opening screen (+ `u` self-test) |

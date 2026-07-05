@@ -462,11 +462,15 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         assert_has "tui: restart marker" "▲"
         run_case ./tui/jdebug-tui -render output
         assert_has "tui: in-app output pane" "scroll"
+        run_case ./tui/jdebug-tui -render runpane
+        assert_has "tui: output replaces the log strip" "OUTPUT"
+        assert_has "tui: strip verdict + way back" "esc back to logs"
         # full interactive round-trip on a real pty at 200x50: dashboard with
-        # live panes → in-app quick command → ExecProcess drop-out → quit
+        # live panes → commands stream into the bottom pane → wizard keeps
+        # the ExecProcess drop-out → quit
         if command -v python3 >/dev/null 2>&1; then
             if pty_out="$(python3 tests/pty-drive.py "$KIT" "$TMP/ptydrive" 2>&1)"; then
-                printf '%s\n' "$pty_out"; PASS=$((PASS+9))
+                printf '%s\n' "$pty_out"; PASS=$((PASS+11))
             else
                 printf '%s\n' "$pty_out"; bad "pty: interactive round-trip" "see lines above"
             fi

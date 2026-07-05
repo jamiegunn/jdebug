@@ -82,9 +82,17 @@ func renderDemo(what string) string {
 		m.scr = scOutput
 		m.width, m.height = 120, 40
 		m.out = outState{title: "jdebug status", done: true, ok: true,
-			raw: "how to read this: STATUS should be Running; RESTARTS counts crashes\n\nNAME    READY   STATUS    RESTARTS   AGE\npod-a   1/1     Running   34         2d\n\nrecent events:\n5m  Warning  BackOff  pod/pod-a  Back-off restarting failed container"}
+			raw: []byte("how to read this: STATUS should be Running; RESTARTS counts crashes\n\nNAME    READY   STATUS    RESTARTS   AGE\npod-a   1/1     Running   34         2d\n\nrecent events:\n5m  Warning  BackOff  pod/pod-a  Back-off restarting failed container")}
 		m.rewrapOut()
 		return m.outputView()
+	case "runpane":
+		// the dashboard with a finished command held in the bottom strip
+		m.scr = scMenu
+		m.width, m.height = 200, 50
+		m.out = outState{title: "jdebug status", done: true, ok: true, show: true,
+			raw: []byte("how to read this: STATUS should be Running; RESTARTS counts crashes\n\nNAME    READY   STATUS    RESTARTS   AGE\npod-a   1/1     Running   34         2d")}
+		m.rewrapOut()
+		return m.menuView()
 	case "gate":
 		m.t.Pod = ""
 		m.remote = probe{OK: false, Cluster: true, When: time.Now().Add(time.Hour), Lines: []string{
@@ -106,5 +114,5 @@ func renderDemo(what string) string {
 		m.scr = scWizard
 		return m.wizardView()
 	}
-	return "unknown screen: " + what + " (menu|dashboard|focus|output|gate|local|help|chooser|editor|wizard)"
+	return "unknown screen: " + what + " (menu|dashboard|focus|output|runpane|gate|local|help|chooser|editor|wizard)"
 }

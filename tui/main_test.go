@@ -5,6 +5,7 @@ package main
 // confirms, pickers apply values, and the shared config round-trips.
 
 import (
+	"context"
 	"os"
 	"strings"
 	"testing"
@@ -222,17 +223,22 @@ func TestDashboardShowsPanes(t *testing.T) {
 	}
 }
 
-func TestQuickRunsInApp(t *testing.T) {
-	m := readyModel()
+func TestQuickStreamsFullScreenWhenNoStrip(t *testing.T) {
+	m := readyModel() // 120×0: no bottom strip → full-screen fallback
 	out, cmd := m.Update(key("s"))
 	mm := out.(model)
 	if mm.scr != scOutput || !mm.out.running || cmd == nil {
-		t.Fatalf("s must open the in-app output pane running, got screen %v", mm.scr)
+		t.Fatalf("s must open the streaming output view, got screen %v", mm.scr)
 	}
-	out, _ = mm.Update(cmdOutMsg{title: "jdebug status", out: []byte("hello\nworld")})
+	out, _ = mm.Update(streamChunkMsg{id: mm.out.id, data: []byte("hello\nworld\n")})
 	mm = out.(model)
-	if !mm.out.done || !mm.out.ok || len(mm.out.lines) != 2 {
-		t.Fatalf("output must land in the pane, got done=%v lines=%d", mm.out.done, len(mm.out.lines))
+	if len(mm.out.lines) != 2 {
+		t.Fatalf("chunk must land in the pane, got %d lines", len(mm.out.lines))
+	}
+	out, _ = mm.Update(streamDoneMsg{id: mm.out.id})
+	mm = out.(model)
+	if !mm.out.done || !mm.out.ok {
+		t.Fatalf("done must set the verdict, got done=%v ok=%v", mm.out.done, mm.out.ok)
 	}
 	out = press(t, mm, "q")
 	if out.(model).scr != scMenu {
@@ -240,38 +246,69 @@ func TestQuickRunsInApp(t *testing.T) {
 	}
 }
 
-func TestLongLivedStaysExec(t *testing.T) {
-	m := readyModel()
-	out, cmd := m.Update(key("l")) // live log stream: interactive, drops out
-	mm := out.(model)
-	if mm.scr == scOutput {
-		t.Fatal("logs must NOT run in the in-app pane")
-	}
-	if cmd == nil {
-		t.Fatal("logs must still run")
+func TestCommandsStreamIntoStrip(t *testing.T) {
+	for _, k := range []string{"s", "l"} { // quick read AND the old drop-outs
+		m := readyModel()
+		m.width, m.height = 200, 50
+		out, cmd := m.Update(key(k))
+		mm := out.(model)
+		if mm.scr != scMenu || !mm.out.show || !mm.out.running || cmd == nil {
+			t.Fatalf("%q must stream into the bottom strip with the menu live, got screen %v show=%v", k, mm.scr, mm.out.show)
+		}
+		if !strings.Contains(mm.menuView(), "OUTPUT") {
+			t.Fatalf("%q: strip must switch from LIVE LOGS to OUTPUT", k)
+		}
 	}
 }
 
-func TestHeapStaysExec(t *testing.T) {
-	out := press(t, readyModel(), "H", "H")
+func TestHeapStreamsIntoStrip(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 200, 50
+	out := press(t, m, "H", "H")
 	mm := out.(model)
 	if mm.scr != scVia {
 		t.Fatalf("H,H must open the tier pick, got %v", mm.scr)
 	}
 	res, cmd := mm.Update(key("enter"))
 	mm = res.(model)
-	if mm.scr == scOutput {
-		t.Fatal("heap dump must NOT run in the in-app pane (long, pauses the JVM)")
-	}
-	if cmd == nil {
-		t.Fatal("heap dump must run after the tier pick")
+	if !mm.out.running || !strings.Contains(mm.out.title, "heap") || cmd == nil {
+		t.Fatalf("heap must stream into the pane, got title %q", mm.out.title)
 	}
 }
 
-func TestThreadsRunInApp(t *testing.T) {
-	out := press(t, readyModel(), "t", "enter")
-	if out.(model).scr != scOutput {
-		t.Fatal("threads (auto tier) must run in the in-app pane")
+func TestStaleStreamIgnored(t *testing.T) {
+	m := readyModel()
+	out, _ := m.Update(key("s"))
+	mm := out.(model)
+	out, _ = mm.Update(streamChunkMsg{id: mm.out.id - 1, data: []byte("stale\n")})
+	if len(out.(model).out.lines) != 0 {
+		t.Fatal("chunks from a superseded stream must be dropped")
+	}
+}
+
+func TestEscStopsThenDismisses(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 200, 50
+	stopped := false
+	m.out = outState{id: 7, title: "jdebug logs", running: true, show: true,
+		cancel: func() { stopped = true }}
+	m.scr = scMenu
+	out := press(t, m, "esc")
+	mm := out.(model)
+	if !stopped || !mm.out.show {
+		t.Fatal("first esc must stop the stream but keep the pane")
+	}
+	out, _ = mm.Update(streamDoneMsg{id: 7, err: context.Canceled})
+	mm = out.(model)
+	if mm.out.errStr != "stopped" {
+		t.Fatalf("cancel must read as stopped, got %q", mm.out.errStr)
+	}
+	out = press(t, mm, "esc")
+	if out.(model).out.show {
+		t.Fatal("second esc must dismiss back to the live logs")
+	}
+	if !strings.Contains(out.(model).menuView(), "LIVE LOGS") {
+		t.Fatal("dismissing must restore the log tail")
 	}
 }
 
@@ -333,16 +370,15 @@ func TestOutputScrollKeys(t *testing.T) {
 	for i := 0; i < 40; i++ {
 		raw = append(raw, "line")
 	}
-	m.out = outState{done: true, ok: true, raw: strings.Join(raw, "\n")}
+	m.out = outState{done: true, ok: true, raw: []byte(strings.Join(raw, "\n"))}
 	m.rewrapOut()
-	vis := m.outVisible()
-	out := press(t, m, "G")
-	if got := out.(model).out.off; got != 40-vis {
-		t.Fatalf("G must scroll to the bottom, off = %d want %d", got, 40-vis)
+	out := press(t, m, "g") // top (clamped to len-1, pinned at render)
+	if got := out.(model).out.off; got != 39 {
+		t.Fatalf("g must scroll to the top, off = %d want 39", got)
 	}
-	out = press(t, out, "g", "j")
+	out = press(t, out, "G", "k") // bottom, then one line back
 	if got := out.(model).out.off; got != 1 {
-		t.Fatalf("g then j must land on off=1, got %d", got)
+		t.Fatalf("G then k must land on off=1, got %d", got)
 	}
 }
 

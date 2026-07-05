@@ -8,6 +8,8 @@ package main
 // the session log, exactly like the classic bash menu.
 
 import (
+	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -136,6 +138,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.scr != scChooser {
 			m.scr = scMenu
 		}
+		m.out.show = false // a wizard run supersedes any held output pane
 		cmds := []tea.Cmd{m.panelFetch(), fetchCaps(m.kit)}
 		if m.mode == 1 {
 			cmds = append(cmds, fetchEvents(m.t))
@@ -144,19 +147,31 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			}
 		}
 		return m, tea.Batch(cmds...)
-	case cmdOutMsg:
-		if m.scr != scOutput {
-			return m, nil // user already left the pane; drop the stale result
+	case streamChunkMsg:
+		if v.id != m.out.id {
+			return m, nil // superseded stream
+		}
+		m.appendChunk(v.data)
+		return m, waitStream(m.out.ch)
+	case streamDoneMsg:
+		if v.id != m.out.id {
+			return m, nil
 		}
 		m.out.running = false
 		m.out.done = true
 		m.out.ok = v.err == nil
-		if v.err != nil {
+		m.out.cancel = nil
+		if errors.Is(v.err, context.Canceled) {
+			m.out.errStr = "stopped"
+		} else if v.err != nil {
 			m.out.errStr = firstLine(v.err.Error())
 		}
-		m.out.raw = string(v.out)
-		m.rewrapOut()
-		return m, tea.Batch(m.panelFetch(), fetchCaps(m.kit))
+		appendSessionLog(m.out.display, m.out.raw, v.err)
+		cmds := []tea.Cmd{m.panelFetch(), fetchCaps(m.kit)}
+		if m.mode == 1 {
+			cmds = append(cmds, fetchEvents(m.t))
+		}
+		return m, tea.Batch(cmds...)
 	case panelMsg:
 		m.panel = panelData(v)
 		m.panelBusy = false
@@ -188,7 +203,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tickCmd()
 	case logTickMsg:
-		if m.scr == scMenu && m.mode == 1 && m.remote.OK && m.showLogPane() && !m.logBusy {
+		// skip while the strip is showing command output — no point tailing
+		// logs nobody can see
+		if m.scr == scMenu && m.mode == 1 && m.remote.OK && m.showLogPane() && !m.logBusy && !m.out.show {
 			return m, tea.Batch(m.logsFetch(), logTickCmd())
 		}
 		return m, logTickCmd()
@@ -364,7 +381,12 @@ func main() {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
-	if fm, ok := final.(model); ok && fm.quitMsg != "" {
-		fmt.Println(fm.quitMsg)
+	if fm, ok := final.(model); ok {
+		if fm.out.cancel != nil {
+			fm.out.cancel() // don't orphan a streaming child
+		}
+		if fm.quitMsg != "" {
+			fmt.Println(fm.quitMsg)
+		}
 	}
 }

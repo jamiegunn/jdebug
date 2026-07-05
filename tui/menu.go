@@ -232,7 +232,7 @@ func (m model) menuView() string {
 		if m.showLogPane() {
 			logH := m.height - m.overlayLines() - (strings.Count(b.String(), "\n") + 1) - strings.Count(suffix, "\n") - 1
 			if logH >= 6 {
-				b.WriteString("\n" + rule(m.tw()) + "\n" + m.logPane(m.tw(), logH))
+				b.WriteString("\n" + rule(m.tw()) + "\n" + m.bottomPane(m.tw(), logH))
 			}
 		}
 		b.WriteString(suffix)
@@ -284,6 +284,11 @@ func (m model) menuKey(key string) (tea.Model, tea.Cmd) {
 	if m.logs.focus {
 		return m.logFocusKey(key)
 	}
+	if m.out.show {
+		if mm, cmd, handled := m.menuOutKey(key); handled {
+			return mm, cmd
+		}
+	}
 	if m.mode == 1 {
 		m.probeRemote(false)
 		if !m.remote.OK {
@@ -294,8 +299,7 @@ func (m model) menuKey(key string) (tea.Model, tea.Cmd) {
 				m.scr = scHelp
 				return m, nil
 			case "c", "C":
-				m.prev = scMenu
-				return m, m.runCLI(false, "doctor")
+				return m.quickCLI(false, "doctor")
 			case "M":
 				m.scr = scChooser
 				return m, nil
@@ -315,8 +319,7 @@ func (m model) menuKey(key string) (tea.Model, tea.Cmd) {
 		case "enter", "s", "S":
 			return m.openLocalSettings()
 		case "i", "I":
-			m.prev = scMenu
-			return m, m.stageJattachLocal()
+			return m.openQuick("stage jattach", nil, "bash", "-c", jattachScript())
 		case "?":
 			m.scr = scHelp
 			return m, nil
@@ -361,10 +364,10 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 			func(mm *model) tea.Cmd { mm.viaFlag = ""; mm.scr = scVia; mm.pendHeap = true; return nil })
 	case "x", "X":
 		return m.askConfirm2("include a heap dump in the bundle? (PAUSES the JVM) [y/N]", "",
-			func(mm *model) tea.Cmd { return mm.runCLI(true, "snapshot", "--heap", "--confirm") },
-			func(mm *model) tea.Cmd { return mm.runCLI(true, "snapshot") })
+			func(mm *model) tea.Cmd { return mm.quickTo(true, "snapshot", "--heap", "--confirm") },
+			func(mm *model) tea.Cmd { return mm.quickTo(true, "snapshot") })
 	case "l", "L":
-		return m, m.runCLI(false, "logs")
+		return m.quickCLI(false, "logs")
 	case "v", "V":
 		m.input = inputBox{title: "logger (e.g. com.example.debugdemo, ROOT):", then: inputLogger}
 		m.scr = scInput
@@ -379,9 +382,9 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 	case "d", "D":
 		return m.quickCLI(false, "dumps")
 	case "i", "I":
-		return m, m.runCLI(true, "install-jattach")
+		return m.quickCLI(true, "install-jattach")
 	case "p", "P":
-		return m, m.runCLI(true, "push-local")
+		return m.quickCLI(true, "push-local")
 	case "g", "G", "enter":
 		return m.openEditor()
 	case "M":
@@ -414,11 +417,11 @@ func (m model) localKey(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case "H":
 		return m.askConfirm("heap dump pauses the app while it runs — press H again to confirm, any other key cancels", "H",
-			func(mm *model) tea.Cmd { return mm.runLocal("heap", "--confirm") })
+			func(mm *model) tea.Cmd { return mm.quickToLocal("heap", "--confirm") })
 	case "x", "X":
 		return m.askConfirm2("include a heap dump in the bundle? (PAUSES the JVM) [y/N]", "",
-			func(mm *model) tea.Cmd { return mm.runLocal("snapshot", "--heap") },
-			func(mm *model) tea.Cmd { return mm.runLocal("snapshot") })
+			func(mm *model) tea.Cmd { return mm.quickToLocal("snapshot", "--heap") },
+			func(mm *model) tea.Cmd { return mm.quickToLocal("snapshot") })
 	case "?":
 		m.scr = scHelp
 		return m, nil
@@ -427,7 +430,7 @@ func (m model) localKey(key string) (tea.Model, tea.Cmd) {
 	case "d", "D":
 		return m.quickLocal("dumps")
 	case "i", "I":
-		return m, m.stageJattachLocal()
+		return m.openQuick("stage jattach", nil, "bash", "-c", jattachScript())
 	case "s", "S":
 		return m.openLocalSettings()
 	case "M":
@@ -460,18 +463,16 @@ func (m model) viaKey(key string) (tea.Model, tea.Cmd) {
 	}
 	m.scr = scMenu
 	m.prev = scMenu
-	if m.pendHeap { // heap pauses the JVM and can run long — watch it live
-		args := []string{"heap"}
-		if m.viaFlag != "" {
-			args = append(args, "--via", m.viaFlag)
-		}
-		args = append(args, "--confirm")
-		m.pendHeap = false
-		return m, m.runCLI(true, args...)
-	}
 	args := []string{"threads"}
+	if m.pendHeap {
+		args = []string{"heap"}
+	}
 	if m.viaFlag != "" {
 		args = append(args, "--via", m.viaFlag)
+	}
+	if m.pendHeap {
+		args = append(args, "--confirm")
+		m.pendHeap = false
 	}
 	return m.quickCLI(true, args...)
 }

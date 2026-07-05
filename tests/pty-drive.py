@@ -1,19 +1,20 @@
 #!/usr/bin/env python3
 """pty-drive.py — drive the Go TUI through a real pty (answering the terminal
 queries Bubble Tea makes) and assert the interaction contract end to end:
-the tier-2 dashboard renders its live panes, a quick command runs in the
-in-app output pane, a long-lived command still drops out via ExecProcess with
-the post-run pause, and quit confirms. Exit 0 = all assertions hold.
+the tier-2 dashboard renders its live panes, commands stream into the bottom
+OUTPUT pane in place of the log tail, the wizard still drops out via
+ExecProcess with the post-run pause, and quit confirms. Exit 0 = all
+assertions hold.
 
 Usage: pty-drive.py <kit-dir> <sandbox-dir>   (sandbox gets config/ + dumps/)
 """
-import os, pty, sys, time, select, fcntl, struct, termios
+import glob, os, pty, sys, time, select, fcntl, struct, termios
 
 kit, sandbox = sys.argv[1], sys.argv[2]
 os.makedirs(sandbox + "/config", exist_ok=True)
 os.makedirs(sandbox + "/dumps", exist_ok=True)
 with open(sandbox + "/config/target", "w") as f:
-    f.write("SAVED_NAMESPACE=default\nSAVED_SELECTOR=''\nSAVED_CONTAINER=app\nSAVED_POD=pod-a\n")
+    f.write("SAVED_NAMESPACE=default\nSAVED_SELECTOR='app=web'\nSAVED_CONTAINER=app\nSAVED_POD=pod-a\n")
 
 env = dict(os.environ,
            PATH=kit + "/tests/mocks:" + os.environ["PATH"],
@@ -51,24 +52,38 @@ def press(k, wait=1.0):
     drain(wait)
 
 drain(3)                # startup + first render (Init fetches logs/events)
-press("s", 4)           # quick read → IN-APP output pane (mock kubectl)
-press("q", 1)           # leave the pane, back to the dashboard
-press("l", 4)           # long-lived logs → ExecProcess drop-out
-press(" ", 1.5)         # any key back to the dashboard
+press("s", 4)           # status → streams into the bottom OUTPUT pane
+press("\x1b", 1)        # esc dismisses back to the live logs
+press("l", 4)           # the old drop-out: now streams into the pane too
+press("\x1b", 1)        # esc back
+press("w", 1)           # wizard keeps the ExecProcess drop-out
+press("2", 4)           #   flow 2: threads step runs with the pause
+press(" ", 2)           #   any key back → next step (health)
+press(" ", 2)           #   back again → flow complete
+press(" ", 1)           #   leave the done screen
+press("b", 1)           #   back to the dashboard
 press("q", 1)           # quit → confirm
 press("y", 2)
 
 txt = buf.decode("utf-8", "replace")
+
+logtxt = ""
+for p in glob.glob(sandbox + "/dumps/session-*.log"):
+    with open(p, errors="replace") as f:
+        logtxt += f.read()
+
 checks = {
-    "dashboard rendered":      "guided diagnosis" in txt,
-    "live log pane":           "LIVE LOGS" in txt and "OutOfMemoryError" in txt,
-    "events + captures panes": "EVENTS" in txt and "CAPTURES" in txt,
-    "trends sparklines":       "TRENDS" in txt,
-    "in-app output pane":      "how to read this" in txt and "scroll" in txt,
-    "exec drop-out pause":     "any key for the menu" in txt,
-    "session log path shown":  "/dumps/session-" in txt,
-    "quit confirms":           "quit jdebug?" in txt,
-    "transcript on exit":      "transcript of everything" in txt,
+    "dashboard rendered":       "guided diagnosis" in txt,
+    "live log pane":            "LIVE LOGS" in txt and "OutOfMemoryError" in txt,
+    "events + captures panes":  "EVENTS" in txt and "CAPTURES" in txt,
+    "trends sparklines":        "TRENDS" in txt,
+    "status streams into pane": "OUTPUT" in txt and "how to read this" in txt,
+    "logs stream into pane":    "mock log line" in txt,
+    "wizard drop-out pause":    "any key for the menu" in txt,
+    "wizard flow completes":    "flow complete" in txt,
+    "session log transcript":   "$ " in logtxt and "status" in logtxt,
+    "quit confirms":            "quit jdebug?" in txt,
+    "transcript on exit":       "transcript of everything" in txt,
 }
 fail = 0
 for name, ok in checks.items():

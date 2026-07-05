@@ -133,7 +133,7 @@ func (m model) dashboardView() string {
 	suffix := "\n" + m.footer("[a] analyze  [c] check setup  [?] help  [q] quit") + prompt()
 	logH := m.height - m.overlayLines() - (strings.Count(prefix, "\n") + 1) - strings.Count(suffix, "\n") - 1
 	if m.showLogPane() && logH >= 6 {
-		return prefix + "\n" + rule(w) + "\n" + m.logPane(w, logH) + suffix
+		return prefix + "\n" + rule(w) + "\n" + m.bottomPane(w, logH) + suffix
 	}
 	return prefix + suffix
 }
