@@ -658,6 +658,75 @@ func TestNextConfidenceLevels(t *testing.T) {
 	}
 }
 
+func TestBlockedByStatesAndFixes(t *testing.T) {
+	m := readyModel()
+	m.mode = 1
+	m.remote = probe{OK: true, Cluster: true, When: time.Now().Add(time.Hour)}
+	m.t.Selector = ""
+	m.panel = panelData{When: time.Now(), NoMetrics: true, ActuatorOK: false}
+	m.podsErr = "pods is forbidden: User cannot list resource pods"
+	var states, fixes string
+	for _, b := range m.blockers() {
+		states += b.state + "\n"
+		fixes += b.fix + "\n"
+		if b.fix == "" {
+			t.Fatalf("every blocked state must name a fix, got none for %q", b.state)
+		}
+	}
+	for _, want := range []string{"no selector", "RBAC", "metrics-server", "actuator"} {
+		if !strings.Contains(states, want) {
+			t.Fatalf("blockers must surface %q as a state:\n%s", want, states)
+		}
+	}
+	// RBAC fix must name a least-privilege permission, not "become admin"
+	if !strings.Contains(fixes, "get/list") {
+		t.Fatalf("RBAC fix must name the least-privilege verbs:\n%s", fixes)
+	}
+}
+
+func TestBlockedByClusterShortCircuits(t *testing.T) {
+	m := readyModel()
+	m.mode = 1
+	m.remote = probe{OK: false, Cluster: false, When: time.Now().Add(time.Hour)}
+	bs := m.blockers()
+	if len(bs) != 1 || !strings.Contains(bs[0].state, "cluster") {
+		t.Fatalf("an unreachable cluster must be the only (root) blocker, got %+v", bs)
+	}
+}
+
+func TestBlockedKeyOpensAndDismisses(t *testing.T) {
+	m := readyModel()
+	out := press(t, m, "b")
+	if out.(model).scr != scBlocked {
+		t.Fatal("b must open the blocked-by view")
+	}
+	if back := press(t, out.(model), "x"); back.(model).scr != scMenu {
+		t.Fatal("any key must dismiss the blocked-by view")
+	}
+	// reachable even while the target gate is up (that's when it matters most)
+	g := readyModel()
+	g.remote = probe{OK: false, Cluster: true, When: time.Now().Add(time.Hour)}
+	g.t.Pod = ""
+	if gated := press(t, g, "b"); gated.(model).scr != scBlocked {
+		t.Fatal("b must open blocked-by even while gated")
+	}
+}
+
+func TestNothingBlocked(t *testing.T) {
+	m := readyModel()
+	m.mode = 1
+	m.remote = probe{OK: true, Cluster: true, When: time.Now().Add(time.Hour)}
+	m.t.Selector = "app=demo"
+	m.panel = panelData{When: time.Now(), ActuatorOK: true}
+	m.podsErr, m.eventsErr = "", ""
+	if bs := m.blockers(); len(bs) != 0 {
+		t.Fatalf("a healthy target must have no blockers, got %+v", bs)
+	}
+	if v := ansiStrip(m.blockedView()); !strings.Contains(v, "nothing is blocked") {
+		t.Fatalf("blocked view must reassure when clear:\n%s", v)
+	}
+}
+
 func TestAutoscaleLine(t *testing.T) {
 	cases := []struct {
 		d        panelData

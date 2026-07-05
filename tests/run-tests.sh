@@ -472,6 +472,15 @@ assert_has "help: heap dump risk in glossary" "Pauses the app"
 assert_has "help: first-10-minutes workflow" "A GOOD FIRST 10 MINUTES"
 assert_has "help: safety rules" "cancelling is always safe"
 assert_has "help: hidden utility keys documented" "KEYS NOT SHOWN ON THE MENU"
+assert_has "help: blocked-by key documented" "what's blocked right now"
+
+# blocked-by view ('b') — each blocked check shown as a state + its fix
+run_input 'b\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "blocked-by: names the view" "what can't run right now"
+assert_has "blocked-by: RBAC state" "blocked by RBAC"
+assert_has "blocked-by: least-privilege fix" "get/list on pods"
+assert_has "blocked-by: metrics-server state" "missing metrics-server"
+assert_has "blocked-by: secured actuator fallback names jattach" "no HTTP via jattach"
 
 run_input 'zzqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_rc  "unknown key: no crash, menu redraws" 0

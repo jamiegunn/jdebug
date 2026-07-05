@@ -82,11 +82,14 @@ must never make destructive changes automatically.
   blocked checks + why, suggested next action, and a sensitive-evidence
   warning. Entry point: a verb that reads the session log + current panel
   state.
-- **Blocked-by view** — surface a failed check as an operator state (blocked by
-  RBAC / metrics-server / secured actuator / missing jattach / no selector /
-  no previous logs), each with the least-privilege fix or fallback route. The
-  building block (`explain_kubectl_error`) exists; this aggregates it into a
-  view.
+- **Blocked-by view — SHIPPED.** `b` opens a BLOCKED-BY overlay in both
+  frontends. `blockers()` (Go) reads the live signals — cluster reachability,
+  selector, pinned pod, RBAC (Forbidden replies via `forbiddenRe`),
+  metrics-server, actuator — and lists each currently-blocked check as an
+  operator state paired with the least-privilege permission, setup step, or
+  fallback route (a dead cluster short-circuits as the one root blocker). The
+  bash side mirrors the same catalog and echoes the live gate checks. Reachable
+  even while the target gate is up (that's when it matters most).
 - **Confidence levels — SHIPPED.** `likely / possible / unknown` prefixes lead
   each NEXT row (coloured by certainty) so a junior knows which warnings are
   certain: a named OOM/crash-loop is `likely`, a blind autoscaler is `unknown`.

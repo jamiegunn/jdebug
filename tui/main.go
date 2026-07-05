@@ -38,6 +38,7 @@ const (
 	scPostRun
 	scOutput
 	scDetail
+	scBlocked
 )
 
 type model struct {
@@ -351,6 +352,9 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.outputKey(key)
 	case scDetail:
 		return m.detailKey(key)
+	case scBlocked:
+		m.scr = scMenu
+		return m, nil
 	}
 	return m, nil
 }
@@ -383,6 +387,8 @@ func (m model) View() string {
 		return m.outputView()
 	case scDetail:
 		return m.detailView()
+	case scBlocked:
+		return m.blockedView()
 	}
 	return ""
 }

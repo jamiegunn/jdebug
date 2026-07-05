@@ -399,6 +399,10 @@ func (m model) menuKey(key string) (tea.Model, tea.Cmd) {
 			case "?":
 				m.scr = scHelp
 				return m, nil
+			case "b", "B":
+				m.prev = m.scr
+				m.scr = scBlocked
+				return m, nil
 			case "c", "C":
 				return m.quickCLI(false, "doctor")
 			case "M":
@@ -423,6 +427,10 @@ func (m model) menuKey(key string) (tea.Model, tea.Cmd) {
 			return m.openQuick("stage jattach", nil, "bash", "-c", jattachScript())
 		case "?":
 			m.scr = scHelp
+			return m, nil
+		case "b", "B":
+			m.prev = m.scr
+			m.scr = scBlocked
 			return m, nil
 		case "M":
 			m.scr = scChooser
@@ -495,6 +503,10 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ".":
 		return m.openDetail("") // transparency cards for every command
+	case "b", "B":
+		m.prev = m.scr
+		m.scr = scBlocked
+		return m, nil
 	case "c", "C":
 		return m.quickCLI(false, "doctor")
 	case "a", "A":
@@ -547,6 +559,10 @@ func (m model) localKey(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ".":
 		return m.openDetail("")
+	case "b", "B":
+		m.prev = m.scr
+		m.scr = scBlocked
+		return m, nil
 	case "a", "A":
 		return m.openQuick("analyze /tmp", nil, m.kit+"/observe/analyze.sh", "/tmp")
 	case "d", "D":

@@ -25,9 +25,14 @@ anywhere on PATH.
 |---|---|---|
 | `kubectl` + a reachable context | your machine | everything remote goes through it |
 | `curl` | your machine | downloads the jattach helper (once, then cached) |
-| `python3` | your machine | only `jdebug memory` needs it |
+| `python3` | your machine | deeper reports and tests: `memory`, `why`, `security`, `topology`, lifecycle ownership checks, selector discovery, and the pty integration test |
 | `curl` **or** busybox `wget` | in the pod | the actuator tier uses whichever exists — a stock JRE-alpine image works untouched |
 | same uid as the JVM | your `kubectl exec` | the jattach tier attaches same-uid only |
+
+`python3` is not required to build the Go TUI with `make tui`, and many basic
+checks still run without it. Treat it as a recommended macOS prerequisite for
+the full diagnostic experience: the richer Kubernetes/JVM reports use it to
+parse JSON and turn raw pod specs into plain-language findings.
 
 ## Build the optional Go TUI on a new Mac
 
@@ -50,7 +55,8 @@ make tui                     # writes tui/jdebug-tui
 
 If Homebrew is not installed, install Go and kubectl by your normal Mac
 software-management path; the important pieces for `make tui` are `make` and
-`go`.
+`go`. Install Python 3 as well if you want the full diagnostic command set and
+test suite.
 
 If you copied the repo in a way that stripped executable bits, repair them:
 

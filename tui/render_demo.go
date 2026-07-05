@@ -119,6 +119,15 @@ func renderDemo(what string) string {
 			cFaint.Render("   · container — checked once a pod is selected"),
 		}}
 		return m.menuView()
+	case "blocked":
+		// a multi-blocked target: no selector, RBAC denial, no metrics, secured actuator
+		m.scr = scBlocked
+		m.width, m.height = 120, 0
+		m.t.Selector = ""
+		m.podsErr = "pods is forbidden: User \"dev\" cannot list resource \"pods\""
+		m.panel.NoMetrics = true
+		m.panel.ActuatorOK = false
+		return m.blockedView()
 	case "local":
 		m.mode = 2
 		return m.menuView()
@@ -132,5 +141,5 @@ func renderDemo(what string) string {
 		m.scr = scWizard
 		return m.wizardView()
 	}
-	return "unknown screen: " + what + " (menu|dashboard|compact|focus|output|runpane|gate|local|help|chooser|editor|wizard)"
+	return "unknown screen: " + what + " (menu|dashboard|compact|focus|output|runpane|gate|local|help|chooser|editor|wizard|blocked)"
 }
