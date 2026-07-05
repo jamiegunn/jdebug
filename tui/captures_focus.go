@@ -2,9 +2,11 @@ package main
 
 // captures_focus.go — the full-screen captures browser (d). The dashboard pane
 // is a compact click-to-drill preview; this is the keyboard-navigable view a
-// junior can trust: a FLAT list of every capture for the pod (newest first,
-// across sessions), with filter tabs, an explicit scope + "last refreshed", and
-// invalid-heap markers. ↑↓ select · ↵ open · a analyze · Tab filter · esc back.
+// junior can trust: a FLAT list of captures (newest first, across sessions),
+// scoped to the current pod — or every pod for the "recent" filter — with
+// filter tabs, a per-file route tag (actuator/jattach/jdk), an explicit scope +
+// "last refreshed", and invalid-heap markers.
+// ↑↓ select · ↵ open · a analyze · Tab filter · r refresh · esc back.
 
 import (
 	"io/fs"
@@ -17,22 +19,17 @@ import (
 	"github.com/charmbracelet/x/ansi"
 )
 
-var capsFilters = []string{"all", "heaps", "threads", "logs", "snapshots"}
+var capsFilters = []string{"all", "heaps", "threads", "logs", "snapshots", "recent"}
+
+const recentCap = 40 // the "recent" (across-all-pods) view shows at most this many
 
 type capsFlatMsg struct{ entries []capEntry }
 
-// capsFocusRoot is the tree the flat browser scans: the selected pod, else all.
-func (m model) capsFocusRoot() string {
-	if m.t.Pod != "" {
-		return filepath.Join(capsRoot(m.kit), m.t.Pod)
-	}
-	return capsRoot(m.kit)
-}
-
-// fetchCapsFlat walks the pod's capture tree and returns every file as one entry
-// (Name = "<session>/<file>"), newest first — the source list the focus browser
-// filters in memory.
-func fetchCapsFlat(kit, root string) tea.Cmd {
+// fetchCapsFlat walks the WHOLE captures tree (all pods) once and returns every
+// file as one entry, newest first. capsFocusList then scopes to the current pod
+// (or shows all pods for the "recent" filter) in memory — the view does no I/O.
+func fetchCapsFlat(kit string) tea.Cmd {
+	root := capsRoot(kit)
 	return func() tea.Msg {
 		var out []capEntry
 		_ = filepath.WalkDir(root, func(p string, d fs.DirEntry, err error) error {
@@ -44,7 +41,13 @@ func fetchCapsFlat(kit, root string) tea.Cmd {
 				return nil
 			}
 			sdir := filepath.Dir(p)
-			ce := capEntry{Name: filepath.Base(sdir) + "/" + d.Name(), Path: p,
+			// path under root is <pod>/<session>/<file>
+			rel, _ := filepath.Rel(root, p)
+			pod := ""
+			if parts := strings.Split(rel, string(filepath.Separator)); len(parts) >= 1 {
+				pod = parts[0]
+			}
+			ce := capEntry{Name: filepath.Base(sdir) + "/" + d.Name(), Path: p, Pod: pod,
 				Size: info.Size(), Mod: info.ModTime()}
 			if _, e := os.Stat(filepath.Join(sdir, ".snapshot")); e == nil {
 				ce.Snap = true
@@ -58,6 +61,21 @@ func fetchCapsFlat(kit, root string) tea.Cmd {
 		sort.SliceStable(out, func(i, j int) bool { return out[i].Mod.After(out[j].Mod) })
 		return capsFlatMsg{entries: out}
 	}
+}
+
+// capRoute extracts the capture tier from a filename (heap-actuator.hprof →
+// actuator), so a junior can see which route produced each artifact.
+func capRoute(name string) string {
+	base := name
+	if i := strings.LastIndex(base, "/"); i >= 0 {
+		base = base[i+1:]
+	}
+	for _, r := range []string{"actuator", "jattach", "jdk"} {
+		if strings.Contains(base, r) {
+			return r
+		}
+	}
+	return ""
 }
 
 // capFileKind classifies a capture file for the filter tabs.
@@ -85,10 +103,21 @@ func capMatchesFilter(ce capEntry, filter string) bool {
 	}
 }
 
-// capsFocusList is the filtered view over the flat list.
+// capsFocusList is the filtered view over the flat list. Every filter except
+// "recent" is scoped to the current pod; "recent" spans all pods (capped).
 func (m model) capsFocusList() []capEntry {
+	if m.capsFilter == "recent" {
+		out := m.capsFlat
+		if len(out) > recentCap {
+			out = out[:recentCap]
+		}
+		return out
+	}
 	var out []capEntry
 	for _, ce := range m.capsFlat {
+		if m.t.Pod != "" && ce.Pod != m.t.Pod {
+			continue
+		}
 		if capMatchesFilter(ce, m.capsFilter) {
 			out = append(out, ce)
 		}
@@ -114,7 +143,7 @@ func (m model) openCapsFocus() (tea.Model, tea.Cmd) {
 	if m.capsFilter == "" {
 		m.capsFilter = "all"
 	}
-	return m, fetchCapsFlat(m.kit, m.capsFocusRoot())
+	return m, fetchCapsFlat(m.kit)
 }
 
 func (m model) capsFocusKey(key string) (tea.Model, tea.Cmd) {
@@ -139,7 +168,7 @@ func (m model) capsFocusKey(key string) (tea.Model, tea.Cmd) {
 		m.capsFilter = cycleFilter(m.capsFilter, -1)
 		m.capsSel = 0
 	case "r":
-		return m, fetchCapsFlat(m.kit, m.capsFocusRoot())
+		return m, fetchCapsFlat(m.kit)
 	case "enter":
 		if m.capsSel < len(list) {
 			mm, cmd := m.viewFile(list[m.capsSel].Path)
@@ -162,6 +191,9 @@ func (m model) capsFocusView() string {
 	scope := "this pod"
 	if m.t.Pod == "" {
 		scope = "all pods"
+	}
+	if m.capsFilter == "recent" {
+		scope = "recent · all pods"
 	}
 	refreshed := "…"
 	if !m.capsWhen.IsZero() {
@@ -207,16 +239,23 @@ func (m model) capsFocusView() string {
 		} else if ce.Snap {
 			mark = cKey.Render("▸ ")
 		}
-		next := capHint(ce)
-		meta := cFaint.Render(fmtSize(ce.Size) + " · " + fmtAge(ce.Mod) + " · " + next)
-		line := mark + st.Render(ce.Name) + "  " + meta
-		line = ansi.Truncate(line, w-2, "…")
-		if i == m.capsSel {
-			line = cFocus.Render(ansi.Truncate(" "+mark+st.Render(ce.Name)+"  "+meta, w, "…"))
-		} else {
-			line = " " + line
+		// in the cross-pod "recent" view, prefix each row with its pod
+		disp := ce.Name
+		if m.capsFilter == "recent" && ce.Pod != "" {
+			disp = podShort(ce.Pod, 16) + " " + ce.Name
 		}
-		rows = append(rows, line)
+		metaStr := fmtSize(ce.Size) + " · " + fmtAge(ce.Mod)
+		if r := capRoute(ce.Name); r != "" {
+			metaStr += " · " + r // which tier produced it: actuator/jattach/jdk
+		}
+		metaStr += " · " + capHint(ce)
+		meta := cFaint.Render(metaStr)
+		body := mark + st.Render(disp) + "  " + meta
+		if i == m.capsSel {
+			rows = append(rows, cFocus.Render(ansi.Truncate(" "+body, w, "…")))
+		} else {
+			rows = append(rows, " "+ansi.Truncate(body, w-2, "…"))
+		}
 	}
 	for len(rows) < h {
 		rows = append(rows, "")

@@ -194,14 +194,16 @@ classic “works inside the pod, clients fail from elsewhere” incident shape.
 - **"Last refreshed" state** — the title shows `refreshed Ns ago`; `r` forces a
   refresh; each entry shows type·size·age·next-action, invalid `.hprof` marked `⚠`.
 - **Full keyboard browser + filter tabs** — `d` opens a full-screen captures
-  browser (`captures_focus.go`): a FLAT, newest-first list of every capture for
-  the pod across sessions, with filter tabs (`all / heaps / threads / logs /
-  snapshots`), `↑↓` select · `↵` open · `a` analyze · `Tab` filter · `r` refresh
-  · `esc` back, invalid heaps marked. Go-only richer interaction (bash `d` keeps
-  the `jdebug dumps` text listing; the `jdebug dumps` CLI is unchanged).
+  browser (`captures_focus.go`): a FLAT, newest-first list of captures across
+  sessions, with filter tabs (`all / heaps / threads / logs / snapshots /
+  recent`), `↑↓` select · `↵` open · `a` analyze · `Tab` filter · `r` refresh ·
+  `esc` back, invalid heaps marked. Every filter except **`recent`** is scoped to
+  the current pod; **`recent`** spans all pods (newest first, capped, pod-prefixed).
+  Each row shows a **route tag** (`capRoute`: actuator / jattach / jdk) so you can
+  see which tier produced it. Go-only richer interaction (bash `d` keeps the
+  `jdebug dumps` text listing; the `jdebug dumps` CLI is unchanged).
 
-Remaining refinement: a per-entry route/source tag (which capture tier produced
-each file) and a `recent`-across-all-pods filter.
+The junior-SRE UX backlog is now fully cleared.
 
 ## Invalid heap capture recovery — SHIPPED
 

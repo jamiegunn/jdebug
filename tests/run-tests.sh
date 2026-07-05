@@ -706,8 +706,10 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         # captures focus browser (Go 'd' opens this; bash 'd' keeps the text listing)
         run_case ./tui/jdebug-tui -render capsfocus
         assert_has "tui: captures browser filter tabs" "[all]"
+        assert_has "tui: captures browser recent (all-pods) tab" "recent"
         assert_has "tui: captures browser keyboard hints" "select"
         assert_has "tui: captures browser marks invalid heaps" "not a heap dump"
+        assert_has "tui: captures browser tags the capture route" "actuator"
         run_case ./tui/jdebug-tui -render output
         assert_has "tui: in-app output pane" "scroll"
         run_case ./tui/jdebug-tui -render runpane

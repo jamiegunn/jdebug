@@ -129,11 +129,12 @@ func renderDemo(what string) string {
 		m.capsFocus = true
 		m.capsFilter = "all"
 		m.capsWhen = time.Now()
+		pod := m.t.Pod
 		m.capsFlat = []capEntry{
-			{Name: "20260705T103000Z/heap-actuator.hprof", Path: "/x", Size: 34 << 20, Mod: time.Now().Add(-3 * time.Minute)},
-			{Name: "20260705T103000Z/threads-actuator.txt", Path: "/x", Size: 12 << 10, Mod: time.Now().Add(-4 * time.Minute)},
-			{Name: "20260705T091500Z/heap-actuator.hprof", Path: "/x", Size: 8 << 10, Mod: time.Now().Add(-2 * time.Hour), Invalid: true},
-			{Name: "20260705T091500Z/tail-logs.txt", Path: "/x", Size: 40 << 10, Mod: time.Now().Add(-2 * time.Hour)},
+			{Name: "20260705T103000Z/heap-actuator.hprof", Path: "/x", Pod: pod, Size: 34 << 20, Mod: time.Now().Add(-3 * time.Minute)},
+			{Name: "20260705T103000Z/threads-jattach.txt", Path: "/x", Pod: pod, Size: 12 << 10, Mod: time.Now().Add(-4 * time.Minute)},
+			{Name: "20260705T091500Z/heap-actuator.hprof", Path: "/x", Pod: pod, Size: 8 << 10, Mod: time.Now().Add(-2 * time.Hour), Invalid: true},
+			{Name: "20260705T091500Z/tail-logs.txt", Path: "/x", Pod: pod, Size: 40 << 10, Mod: time.Now().Add(-2 * time.Hour)},
 		}
 		return m.capsFocusView()
 	case "runbook":
