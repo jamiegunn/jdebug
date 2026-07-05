@@ -507,6 +507,11 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 		m.prev = m.scr
 		m.scr = scBlocked
 		return m, nil
+	case "r": // refresh the dashboard now (works even while quiet/paused)
+		return m, m.refreshNow()
+	case "z", "Z": // cycle background refresh: live → quiet → paused → live
+		m.bgMode = (m.bgMode + 1) % 3
+		return m, nil
 	case "c", "C":
 		return m.quickCLI(false, "doctor")
 	case "a", "A":

@@ -727,6 +727,59 @@ func TestNothingBlocked(t *testing.T) {
 	}
 }
 
+func TestBackgroundModeCycle(t *testing.T) {
+	m := readyModel()
+	if m.bgMode != bgLive {
+		t.Fatal("default background mode must be live")
+	}
+	m = press(t, m, "z").(model)
+	if m.bgMode != bgQuiet {
+		t.Fatal("z must move live → quiet")
+	}
+	if s := m.bgStatus(); !strings.Contains(s, "QUIET") || !strings.Contains(s, "JVM") {
+		t.Fatalf("quiet status must name what's off: %q", s)
+	}
+	m = press(t, m, "z").(model)
+	if m.bgMode != bgPaused {
+		t.Fatal("z must move quiet → paused")
+	}
+	if s := m.bgStatus(); !strings.Contains(s, "PAUSED") || !strings.Contains(s, "r ") {
+		t.Fatalf("paused status must point at r: %q", s)
+	}
+	m = press(t, m, "z").(model)
+	if m.bgMode != bgLive {
+		t.Fatal("z must wrap paused → live")
+	}
+}
+
+func TestQuietRefreshHoldsLastHeap(t *testing.T) {
+	// a quiet-mode panel refresh skips the JVM probe, so the last-known heap and
+	// actuator status must be carried forward, not blanked to "no route".
+	m := readyModel()
+	m.panel = panelData{When: time.Now(), HeapUsed: "121Mi", HeapMax: "512Mi", HeapVia: "actuator", ActuatorOK: true}
+	out, _ := m.Update(panelMsg{When: time.Now(), Phase: "Running", HeapSkipped: true})
+	got := out.(model).panel
+	if got.HeapUsed != "121Mi" || got.HeapVia != "actuator" || !got.ActuatorOK {
+		t.Fatalf("a skipped JVM probe must keep the last heap/actuator status, got %+v", got)
+	}
+}
+
+func TestRefreshKeyReturnsCommand(t *testing.T) {
+	m := readyModel()
+	if _, cmd := m.Update(key("r")); cmd == nil {
+		t.Fatal("r must trigger a manual refresh command")
+	}
+}
+
+func TestTrendsLegend(t *testing.T) {
+	m := readyModel()
+	rows := strings.Join(m.trendsRows(46), "\n")
+	got := ansiStrip(rows)
+	if !strings.Contains(got, "mem=%limit") || !strings.Contains(got, "▲=restart") {
+		t.Fatalf("trends must carry a self-explanatory legend:\n%s", got)
+	}
+}
+
 func TestAutoscaleLine(t *testing.T) {
 	cases := []struct {
 		d        panelData

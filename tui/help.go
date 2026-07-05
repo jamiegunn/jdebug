@@ -24,9 +24,16 @@ func (m model) helpView() string {
 		h("KEYS NOT SHOWN ON THE MENU") +
 		li(".           ", "what does each command do? source, risk, deps (or right-click a row)") +
 		li("b           ", "what's blocked right now + how to unblock it (RBAC, metrics, actuator…)") +
+		li("r / z       ", "refresh now / cycle background refresh (auto → quiet → paused)") +
 		li("i           ", "stage jattach in the pod") +
 		li("p           ", "push the in-pod tool (jdebug-local)") +
 		li("g / M       ", "target editor / switch mode") +
+		h("TRENDS + WHAT THE SCREEN DOES WHILE IDLE") +
+		li("trends      ", "point-in-time samples (not averages), one per 20s: mem=% of limit, cpu=vs limit, ▲=a restart") +
+		li("gaps        ", "a blank in a sparkline = that sample had no metric (metrics-server, or unknown)") +
+		li("auto (live) ", "logs every 5s · pod/top/hpa/events every 20s · actuator heap every 20s (touches the app)") +
+		li("z quiet     ", "stops log polling + the JVM/actuator probe; cheap kubectl reads stay (last heap held)") +
+		li("z paused    ", "nothing runs on its own; r does one full refresh when you want it") +
 		h("THE SAFETY RULES") +
 		"    " + cMuted.Render("· most actions are read-only. The ones that CHANGE things ask first:") + "\n" +
 		"        " + cDisr.Render("H heap / x --heap") + cMuted.Render("  PAUSE the JVM while they write (H asks for a second H)") + "\n" +

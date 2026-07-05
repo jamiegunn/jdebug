@@ -165,7 +165,7 @@ func (m model) switchPod(pod string) (tea.Model, tea.Cmd) {
 	m.hist = nil
 	saveTarget(m.t)
 	m.remote = remoteProbe(m.t)
-	cmds := []tea.Cmd{m.panelFetch(), fetchEvents(m.t), fetchPodList(m.t)}
+	cmds := []tea.Cmd{m.panelFetch(m.bgMode == bgLive), fetchEvents(m.t), fetchPodList(m.t)}
 	if !m.logBusy {
 		cmds = append(cmds, m.logsFetch())
 	}

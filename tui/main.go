@@ -95,6 +95,7 @@ type model struct {
 	panelBusy bool
 	logBusy   bool
 
+	bgMode    int    // background refresh: bgLive | bgQuiet | bgPaused
 	logTickOn bool   // the 5s log ticker is armed (must never double-arm)
 	autoRan   bool   // the one-shot startup auto-status already fired
 	postExec  string // command to auto-run after an ExecProcess returns
@@ -102,22 +103,55 @@ type model struct {
 	quitMsg string
 }
 
+// background refresh modes: what the TUI does on its own while you just look.
+const (
+	bgLive   = iota // logs 5s, kubectl 20s, JVM/actuator probe 20s
+	bgQuiet         // cheap kubectl 20s only — no log polling, no JVM/actuator poke
+	bgPaused        // nothing automatic; r refreshes once
+)
+
 // panelFetch/logsFetch dispatch a fetch and raise its busy flag (cleared
-// when the reply message lands).
-func (m *model) panelFetch() tea.Cmd {
+// when the reply message lands). probeJVM gates the app/JVM-touching read.
+func (m *model) panelFetch(probeJVM bool) tea.Cmd {
 	m.panelBusy = true
-	return fetchPanel(m.t)
+	return fetchPanel(m.t, probeJVM)
 }
 func (m *model) logsFetch() tea.Cmd {
 	m.logBusy = true
 	return fetchLogs(m.t)
 }
 
+// refreshNow does one full refresh regardless of the background mode — the
+// manual 'r' escape hatch when paused/quiet, or just "update now".
+func (m *model) refreshNow() tea.Cmd {
+	cmds := []tea.Cmd{fetchEvents(m.t), fetchCaps(m.kit, m.capsDir()), fetchPodList(m.t)}
+	if !m.panelBusy {
+		cmds = append(cmds, m.panelFetch(true))
+	}
+	if m.t.Pod != "" && !m.logBusy {
+		cmds = append(cmds, m.logsFetch())
+	}
+	return tea.Batch(cmds...)
+}
+
+// bgStatus is the one-line "what's running in the background" label shown under
+// the panel, so the screen's idle activity is never a mystery.
+func (m model) bgStatus() string {
+	switch m.bgMode {
+	case bgQuiet:
+		return "QUIET · 20s kubectl · JVM+logs off · z pauses"
+	case bgPaused:
+		return "PAUSED · r refreshes · z resumes"
+	default:
+		return "auto 20s · logs 5s · z quiets"
+	}
+}
+
 func (m model) Init() tea.Cmd {
 	// (the 5s log ticker arms on the first WindowSizeMsg — the one event
 	// every entry path shares exactly once)
 	if m.mode == 1 {
-		cmds := []tea.Cmd{fetchPanel(m.t), fetchEvents(m.t), fetchCaps(m.kit, m.capsDir()),
+		cmds := []tea.Cmd{fetchPanel(m.t, true), fetchEvents(m.t), fetchCaps(m.kit, m.capsDir()),
 			fetchPodList(m.t), tickCmd(), autoStatusCmd()}
 		if m.t.Pod != "" {
 			cmds = append(cmds, fetchLogs(m.t))
@@ -165,7 +199,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.scr != scChooser {
 			m.scr = scMenu
 		}
-		cmds := []tea.Cmd{m.panelFetch(), fetchCaps(m.kit, m.capsDir())}
+		cmds := []tea.Cmd{m.panelFetch(m.bgMode == bgLive), fetchCaps(m.kit, m.capsDir())}
 		if m.mode == 1 {
 			cmds = append(cmds, fetchEvents(m.t), fetchPodList(m.t))
 			if m.showLogPane() && !m.logBusy {
@@ -205,7 +239,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.out.errStr = firstLine(v.err.Error())
 		}
 		appendSessionLog(m.out.display, m.out.raw, v.err)
-		cmds := []tea.Cmd{m.panelFetch(), fetchCaps(m.kit, m.capsDir())}
+		cmds := []tea.Cmd{m.panelFetch(m.bgMode == bgLive), fetchCaps(m.kit, m.capsDir())}
 		if m.mode == 1 {
 			cmds = append(cmds, fetchEvents(m.t))
 		}
@@ -215,7 +249,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Batch(cmds...)
 	case panelMsg:
-		m.panel = panelData(v)
+		nd := panelData(v)
+		if nd.HeapSkipped { // quiet refresh: keep the last-known heap/actuator status
+			nd.HeapUsed, nd.HeapMax, nd.HeapVia, nd.ActuatorOK =
+				m.panel.HeapUsed, m.panel.HeapMax, m.panel.HeapVia, m.panel.ActuatorOK
+		}
+		m.panel = nd
 		m.panelBusy = false
 		if m.mode == 1 && v.Phase != "" {
 			m.hist = pushSample(m.hist, sample{When: v.When, MemPct: v.MemPct,
@@ -250,18 +289,19 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case tea.MouseMsg:
 		return m.handleMouse(v)
 	case tickMsg:
-		if m.scr == scMenu && m.mode == 1 && m.remote.OK {
+		// paused → reschedule only; quiet → cheap kubectl reads but no JVM probe
+		if m.bgMode != bgPaused && m.scr == scMenu && m.mode == 1 && m.remote.OK {
 			cmds := []tea.Cmd{fetchEvents(m.t), fetchCaps(m.kit, m.capsDir()), fetchPodList(m.t), tickCmd()}
 			if !m.panelBusy {
-				cmds = append(cmds, m.panelFetch())
+				cmds = append(cmds, m.panelFetch(m.bgMode == bgLive))
 			}
 			return m, tea.Batch(cmds...)
 		}
 		return m, tickCmd()
 	case logTickMsg:
-		// skip while the strip is showing command output — no point tailing
-		// logs nobody can see
-		if m.scr == scMenu && m.mode == 1 && m.remote.OK && m.showLogPane() && !m.logBusy && !m.out.show {
+		// only live mode polls logs (quiet/paused stop it); and skip while the
+		// strip is showing command output — no point tailing logs nobody sees
+		if m.bgMode == bgLive && m.scr == scMenu && m.mode == 1 && m.remote.OK && m.showLogPane() && !m.logBusy && !m.out.show {
 			return m, tea.Batch(m.logsFetch(), logTickCmd())
 		}
 		return m, logTickCmd()

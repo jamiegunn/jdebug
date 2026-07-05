@@ -198,49 +198,29 @@ rather than sending the user toward Eclipse MAT.
 Test fixtures cover bad magic, HTML login, JSON error, empty, and valid HPROF
 (bash `run-tests.sh` + Go `hprof_test.go`).
 
-## Trends transparency
+## Trends transparency — SHIPPED
 
-**Goal:** make the trends pane understandable without reading source code.
+The TRENDS section now carries an inline legend (`spark.go`) —
+`mem=%limit cpu=vs-limit ▲=restart · point-in-time, 1/20s` (a "collecting…"
+variant until there are 2 samples) — and the help screen (`?`) adds a full
+"TRENDS + WHAT THE SCREEN DOES WHILE IDLE" section spelling out point-in-time
+(not averaged) semantics, the ~20s cadence, the ~30-min (`histCap`) window, and
+that a gap in a sparkline is a missing metric sample.
 
-The UI should explain:
+## Idle/background activity transparency — SHIPPED
 
-- One sample is added per panel refresh, currently about every 20 seconds.
-- Values are point-in-time samples from Kubernetes/JVM reads, not averages
-  computed by jdebug.
-- `mem` means container memory percentage of limit.
-- `cpu` means Kubernetes CPU usage scaled against the limit when available.
-- `rst` means restart count markers; `▲` means the restart count increased at
-  that sample.
-- History is capped at `histCap` samples, roughly 30 minutes at 20 seconds per
-  sample.
-- Gaps mean missing metrics or unknown values.
+The panel now shows a live status line of what runs on its own
+(`auto 20s · logs 5s · z quiets`), and a three-state background mode cycles with
+`z`:
 
-Prefer `restarts` over `rst` where width allows, and provide a trends detail
-card or inline legend.
+- **live** (default) — logs every 5s, pod/top/hpa/events/pods every 20s, plus the
+  app/JVM-touching actuator heap probe (with its `jcmd GC.heap_info` fallback).
+- **quiet** — stops log polling AND the JVM/actuator probe; the cheap kubectl
+  reads stay, and the last-known heap/actuator status is held (`HeapSkipped`
+  carry-forward) rather than blanked.
+- **paused** — nothing runs automatically.
 
-## Idle/background activity transparency
-
-**Goal:** answer “what is the TUI doing in the background while I am just
-looking at it?” and let the operator control that activity.
-
-Current shape to expose:
-
-- Live logs refresh about every 5 seconds.
-- Target/panel/dashboard reads refresh around every 20 seconds and may burst
-  several Kubernetes reads.
-- Actuator heap metric reads touch the app/JVM when actuator works.
-- `jcmd GC.heap_info` fallback is read-only but heavier and should not be
-  repeated in quiet mode.
-
-Controls to add:
-
-- Visible status such as `idle refresh: logs 5s · target 20s · actuator heap 20s`.
-- Background probes summary: `kubectl logs, pod/top/hpa, actuator metrics`.
-- Pause/resume background refresh.
-- Manual refresh once.
-- Slow down / speed up intervals.
-- Quiet mode: disable logs and JVM probes, keep manual refresh.
-
-Classify cost/risk in the transparency card: low-cost Kubernetes reads,
-medium-cost logs/top, app/JVM-touching actuator metrics, heavier JVM-touching
-`jcmd` fallback.
+`r` does one full refresh on demand (works in every mode). The help screen
+classifies the cost/risk of each probe (cheap kubectl vs medium logs/top vs
+app/JVM-touching actuator + jcmd). Implemented in `main.go` (mode + tick gating +
+`refreshNow`/`bgStatus`), `panel.go` (`fetchPanel(probeJVM)`), `menu.go` (`r`/`z`).

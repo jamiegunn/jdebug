@@ -22,27 +22,28 @@ import (
 )
 
 type panelData struct {
-	When       time.Time
-	Phase      string
-	Waiting    string // container waiting reason, e.g. CrashLoopBackOff
-	Restarts   int
-	LastReason string // e.g. OOMKilled, Error
-	MemUse     string // from kubectl top
-	MemLimit   string
-	MemPct     int // -1 unknown
-	CPUUse     string
-	CPULimit   string
-	HPAName    string // autoscale (HPA)
-	HPACur     int
-	HPAMax     int
-	HPAMin     int
-	HPAFailing bool
-	HPAReason  string // plain-language why it can't scale
-	HeapUsed   string // JVM heap, live
-	HeapMax    string
-	HeapVia    string // "actuator" or "jcmd" — which route answered
-	ActuatorOK bool
-	NoMetrics  bool // kubectl top failed because metrics-server is absent
+	When        time.Time
+	Phase       string
+	Waiting     string // container waiting reason, e.g. CrashLoopBackOff
+	Restarts    int
+	LastReason  string // e.g. OOMKilled, Error
+	MemUse      string // from kubectl top
+	MemLimit    string
+	MemPct      int // -1 unknown
+	CPUUse      string
+	CPULimit    string
+	HPAName     string // autoscale (HPA)
+	HPACur      int
+	HPAMax      int
+	HPAMin      int
+	HPAFailing  bool
+	HPAReason   string // plain-language why it can't scale
+	HeapUsed    string // JVM heap, live
+	HeapMax     string
+	HeapVia     string // "actuator" or "jcmd" — which route answered
+	ActuatorOK  bool
+	NoMetrics   bool // kubectl top failed because metrics-server is absent
+	HeapSkipped bool // quiet mode: the JVM/actuator probe was deliberately not run
 }
 
 type panelMsg panelData
@@ -82,7 +83,10 @@ type podJSON struct {
 	} `json:"spec"`
 }
 
-func fetchPanel(t target) tea.Cmd {
+// fetchPanel reads the pod status + kubectl top + HPA. probeJVM gates the one
+// app/JVM-touching read (the actuator heap metric, with its jcmd fallback) so
+// quiet mode can keep the cheap kubectl reads without poking the process.
+func fetchPanel(t target, probeJVM bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
@@ -123,8 +127,12 @@ func fetchPanel(t target) tea.Cmd {
 			} else if s := strings.ToLower(topErr.String()); strings.Contains(s, "metrics") {
 				d.NoMetrics = true // absence explained, not a silent dash
 			}
-			d.HeapUsed, d.HeapMax, d.HeapVia = jvmHeap(t)
-			d.ActuatorOK = d.HeapVia == "actuator"
+			if probeJVM {
+				d.HeapUsed, d.HeapMax, d.HeapVia = jvmHeap(t)
+				d.ActuatorOK = d.HeapVia == "actuator"
+			} else {
+				d.HeapSkipped = true // carried heap shown; not re-probed while quiet
+			}
 		}
 		parseHPA(ctx, t.Namespace, &d)
 		return panelMsg(d)
@@ -602,7 +610,7 @@ func (m model) panelView(w, h int, trends bool) string {
 		age = fmt.Sprintf("%ds ago", int(time.Since(d.When).Seconds()))
 	}
 	rows = append(rows, "")
-	rows = append(rows, " "+cFaint.Render("refreshes every 20s · "+age))
+	rows = append(rows, " "+cFaint.Render(ansi.Truncate(m.bgStatus()+" · "+age, w-2, "…")))
 	for len(rows) < h {
 		rows = append(rows, "")
 	}
