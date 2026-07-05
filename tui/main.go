@@ -37,6 +37,7 @@ const (
 	scLevel
 	scPostRun
 	scOutput
+	scDetail
 )
 
 type model struct {
@@ -73,19 +74,21 @@ type model struct {
 	logger   string
 
 	// live panes (dashboard v3)
-	panel     panelData
-	logs      logState
-	events    []eventLine
-	eventsErr string
-	hist      []sample // sparkline history, one point per panel fetch
-	caps      []capEntry
-	capsCwd   string // CAPTURES browser: explicit browse dir ("" = pod default)
-	capsOff   int
-	pods      []string // PODS pane: what the selector/namespace matches
-	podsScope string
-	podsErr   string
-	podsOff   int
-	out       outState // in-app command output (scOutput)
+	panel        panelData
+	logs         logState
+	events       []eventLine
+	eventsErr    string
+	hist         []sample // sparkline history, one point per panel fetch
+	caps         []capEntry
+	capsCwd      string // CAPTURES browser: explicit browse dir ("" = pod default)
+	capsOff      int
+	pods         []string // PODS pane: what the selector/namespace matches
+	podsScope    string
+	podsErr      string
+	podsOff      int
+	detailAnchor string // transparency cards: key shown first ("" = all)
+	detailOff    int
+	out          outState // in-app command output (scOutput)
 
 	// in-flight fetch guards: a slow cluster must not stack goroutines
 	panelBusy bool
@@ -272,6 +275,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
 	outVisible := m.out.show || m.scr == scOutput
 	switch {
+	case v.Action == tea.MouseActionPress && v.Button == tea.MouseButtonRight:
+		// right-click a row → its transparency card (what runs, risk, deps)
+		if key, ok := m.menuRowClick(v.X, v.Y); ok {
+			return m.openDetail(key)
+		}
 	case v.Action == tea.MouseActionPress && v.Button == tea.MouseButtonLeft:
 		if pod := m.podsClickTarget(v.X, v.Y); pod != "" {
 			return m.switchPod(pod)
@@ -341,6 +349,8 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.wizardKey(key)
 	case scOutput:
 		return m.outputKey(key)
+	case scDetail:
+		return m.detailKey(key)
 	}
 	return m, nil
 }
@@ -371,6 +381,8 @@ func (m model) View() string {
 		return m.wizardView()
 	case scOutput:
 		return m.outputView()
+	case scDetail:
+		return m.detailView()
 	}
 	return ""
 }

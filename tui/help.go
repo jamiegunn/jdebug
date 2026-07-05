@@ -22,6 +22,7 @@ func (m model) helpView() string {
 		li("h health    ", "a DOWN dependency? chase that system first") +
 		li("d / a       ", "see what you captured / analyze it all in one pass") +
 		h("KEYS NOT SHOWN ON THE MENU") +
+		li(".           ", "what does each command do? source, risk, deps (or right-click a row)") +
 		li("i           ", "stage jattach in the pod") +
 		li("p           ", "push the in-pod tool (jdebug-local)") +
 		li("g / M       ", "target editor / switch mode") +

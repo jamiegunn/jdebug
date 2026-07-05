@@ -586,6 +586,10 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         assert_has "tui: strip verdict + way back" "esc back to logs"
         run_case ./tui/jdebug-tui -render wizard
         assert_has "tui: crash-loop flow offered" "CrashLoopBackOff"
+        run_case ./tui/jdebug-tui -render detail
+        assert_has "tui: transparency cards render" "what each command does"
+        assert_has "tui: cards name the data source" "kubectl pod status"
+        assert_has "tui: cards flag disruptive risk" "PAUSES the JVM"
         run_case ./tui/jdebug-tui -render dashboard
         assert_has "tui: limits are labeled" "of 512Mi limit"
         assert_has "tui: heap names its route" "via actuator"

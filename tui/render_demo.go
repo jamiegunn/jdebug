@@ -92,6 +92,10 @@ func renderDemo(what string) string {
 		m.width, m.height = 200, 50
 		m.logs.focus = true
 		return m.menuView()
+	case "detail":
+		m.scr = scDetail
+		m.width, m.height = 120, 0 // height 0 → render all cards (no scroll window)
+		return m.detailView()
 	case "output":
 		m.scr = scOutput
 		m.width, m.height = 120, 40

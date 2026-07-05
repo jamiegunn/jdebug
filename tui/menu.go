@@ -493,6 +493,8 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 	case "?":
 		m.scr = scHelp
 		return m, nil
+	case ".":
+		return m.openDetail("") // transparency cards for every command
 	case "c", "C":
 		return m.quickCLI(false, "doctor")
 	case "a", "A":
@@ -543,6 +545,8 @@ func (m model) localKey(key string) (tea.Model, tea.Cmd) {
 	case "?":
 		m.scr = scHelp
 		return m, nil
+	case ".":
+		return m.openDetail("")
 	case "a", "A":
 		return m.openQuick("analyze /tmp", nil, m.kit+"/observe/analyze.sh", "/tmp")
 	case "d", "D":

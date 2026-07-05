@@ -21,21 +21,18 @@ than mapping geometry). The footer says "press a key or click a row" on wide
 terminals. Remaining refinement: extend the same affordance to picker-like
 lists (jcmd picks, log-level).
 
-## Command & data transparency cards
+## Command & data transparency cards — SHIPPED
 
-**Goal:** before running (or when drilling into a value), show what command
-runs, its data source/API, why it's useful, what it can't prove, its risk,
-alternatives, and dependencies (RBAC / metrics-server / actuator / jattach /
-python3).
+`.` (or right-click a row) opens the transparency cards (`scDetail`): every
+runnable command has a card giving what runs (`$ …`), the data source/API, why
+it's useful, its risk (safe / PAUSES the JVM / state-changing / sensitive),
+what it needs (kubectl / metrics-server / actuator / jattach / python3), and
+the alternatives when a route is blocked. Right-click anchors the clicked
+command's card first. A test asserts every menu action has a card.
 
-**Entry point:** a `commandInfo` registry keyed by action, and a detail screen
-(`scDetail`) opened by a dedicated key (e.g. `.`) or by clicking a per-row
-indicator. The content already exists in scattered form — the `why`/`security`
-verbs, the capture-tier docs, `explain_kubectl_error` — so the card is a
-presentation layer over known facts. Panel signals reuse the same card:
-`last exit` → termination reason + exit-code meaning + next command;
-`autoscale` → HPA conditions in plain language. (Today clicking the panel runs
-`why`, which already narrates most of this.)
+Remaining refinement: per-panel-signal cards (`last exit` → termination reason
++ exit-code meaning; `autoscale` → HPA conditions). Today left-clicking the
+panel runs `why`, which narrates most of this in one pass.
 
 ## Actuator credentials
 

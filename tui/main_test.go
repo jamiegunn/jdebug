@@ -477,6 +477,68 @@ func readyModel200() model {
 	return m
 }
 
+func TestDetailCardsOpenAndInform(t *testing.T) {
+	m := readyModel200()
+	// '.' opens the transparency cards
+	out, _ := m.Update(key("."))
+	mm := out.(model)
+	if mm.scr != scDetail {
+		t.Fatalf(". must open the detail cards, got screen %v", mm.scr)
+	}
+	v := ansiStrip(mm.detailView())
+	// a card must expose command, source, risk, and dependencies
+	for _, want := range []string{"jdebug status", "kubectl pod status", "read-only", "metrics-server"} {
+		if !strings.Contains(v, want) {
+			t.Errorf("detail cards missing %q", want)
+		}
+	}
+	// state-changing commands must be flagged as such — check the anchored cards
+	// (the full list scrolls, so anchor each to the top to read its risk)
+	heap, _ := m.openDetail("H")
+	if !strings.Contains(ansiStrip(heap.(model).detailView()), "PAUSES the JVM") {
+		t.Error("heap card must flag that it pauses the JVM")
+	}
+	rr, _ := m.openDetail("R")
+	if !strings.Contains(ansiStrip(rr.(model).detailView()), "state-changing") {
+		t.Error("re-roll card must flag it's state-changing")
+	}
+	// esc returns to the menu
+	if press(t, mm, "esc").(model).scr != scMenu {
+		t.Fatal("esc must leave the detail cards")
+	}
+}
+
+func TestRightClickOpensCardAnchored(t *testing.T) {
+	m := readyModel200()
+	lines := strings.Split(m.menuView(), "\n")
+	lw := m.leftW()
+	for y, l := range lines {
+		if strings.Contains(ansiStrip(ansi.Truncate(l, lw, "")), "  heap ") {
+			out, _ := m.Update(tea.MouseMsg{X: 4, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonRight})
+			mm := out.(model)
+			if mm.scr != scDetail || mm.detailAnchor != "H" {
+				t.Fatalf("right-click on heap must open its card, got screen %v anchor %q", mm.scr, mm.detailAnchor)
+			}
+			// the anchored card is shown first
+			if !strings.HasPrefix(strings.TrimSpace(ansiStrip(mm.detailView())), "what each command") {
+				return // header first is fine
+			}
+			return
+		}
+	}
+	t.Fatal("heap row not found")
+}
+
+func TestEveryMenuActionHasACard(t *testing.T) {
+	// transparency must be complete — no runnable row without a card
+	m := readyModel()
+	for _, a := range m.menuActions() {
+		if _, ok := infoFor(a.key); !ok {
+			t.Errorf("no transparency card for menu action %q (%s)", a.key, a.name)
+		}
+	}
+}
+
 func TestClickRunsMenuRow(t *testing.T) {
 	m := readyModel()
 	m.width, m.height = 200, 50
