@@ -307,8 +307,11 @@ assert_has "target editor: current context marked" "mock-ctx  (current)"
 run_input 'tn2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "target editor: namespace dropdown applied" "namespace   payments"
 
-run_input 'ts1bqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "target editor: selector built from pod labels" "app=payments"
+run_input 'ts2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "target editor: selector applied from pod labels" "selector    app=payments"
+
+run_input 'ts2bts1bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "target editor: any-pod option clears selector" "selector    <any pod>"
 
 run_input 'to2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "target editor: container from pod spec" "container   sidecar"

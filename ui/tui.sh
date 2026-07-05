@@ -266,10 +266,11 @@ retarget() {
                     "$(kubectl get namespaces -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)"
                 [[ -n "$CHOICE" ]] && { NAMESPACE="$CHOICE"; POD_PIN=""; CLUSTER_TS=-999; } ;;
             s|S)
-                # dropdown built from the `app` labels actually on pods here
-                choose_from "Selector — apps found in $NAMESPACE ('t' to type any label, '-' for any pod)" "${SELECTOR:-<any pod>}" 1 \
-                    "$(kubectl -n "$NAMESPACE" get pods -o jsonpath='{range .items[*]}{.metadata.labels.app}{"\n"}{end}' 2>/dev/null | grep . | sort -u | sed 's/^/app=/')"
-                if [[ "$CHOICE" == "-" ]]; then SELECTOR=""; POD_PIN=""
+                # dropdown built from the `app` labels actually on pods here,
+                # plus an explicit any-pod option ('t' still types any label)
+                choose_from "Selector — apps found in $NAMESPACE" "${SELECTOR:-<any pod>}" 1 \
+                    "$(printf '<any pod>\n'; kubectl -n "$NAMESPACE" get pods -o jsonpath='{range .items[*]}{.metadata.labels.app}{"\n"}{end}' 2>/dev/null | grep . | sort -u | sed 's/^/app=/')"
+                if [[ "$CHOICE" == "<any pod>" ]]; then SELECTOR=""; POD_PIN=""
                 elif [[ -n "$CHOICE" ]]; then SELECTOR="$CHOICE"; POD_PIN=""; fi ;;
             o|O)
                 local firstpod conts=""

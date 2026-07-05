@@ -54,7 +54,7 @@ number, single keypress:
   confirmed first because it changes your default everywhere)
 - `n` — namespaces, listed from the cluster
 - `s` — selectors **built from the `app` labels actually on pods** in the
-  namespace; `t` types any label expression, `-` means any pod
+  namespace, plus an explicit *any pod* option; `t` types any label expression
 - `o` — containers read from the pod's spec
 - `p` — matching pods with phase and restart counts, so you can pin the
   sick replica instead of silently getting the first
