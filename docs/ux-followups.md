@@ -179,25 +179,27 @@ Original clue list:
 Wrong announce settings are especially useful to flag because they create the
 classic “works inside the pod, clients fail from elsewhere” incident shape.
 
-## Captures browser redesign
+## Captures browser redesign — PARTIALLY SHIPPED
 
-**Goal:** make captured evidence easy to trust and navigate, especially after
-retargeting to another pod.
+The reliability + clarity concerns are done; the fuller filter/keyboard redesign
+is the remaining refinement.
 
-Design points:
+Shipped:
+- **Scope indicator** — the pane title names what you're looking at: `this pod`,
+  `all pods`, or the drilled-in session path (`capsScope()`).
+- **Pod-change reset** — switching pod (click) or committing a target change
+  (editor) un-pins `capsCwd`, so the browser never sticks to the previous pod;
+  the pod-click path also refetches immediately.
+- **"Last refreshed" state** — the title shows `refreshed Ns ago`; `r` forces a
+  refresh (via `refreshNow`), and each entry already shows type·size·age·next
+  action, with invalid `.hprof` marked `⚠`.
 
-- Show the current scope: selected pod, all pods, current session, or a
-  drilled-in timestamp folder.
-- Reset or explicitly prompt when the selected pod changes but the browser is
-  pinned to a previous pod/session.
-- Add explicit refresh and “last refreshed” state.
-- Add filters/tabs: current pod, all pods, snapshots, threads, heaps, logs,
-  recent.
-- Show capture type, route/source, pod, timestamp, size, and recommended next
-  action.
-- Make `a analyzes current view` precise.
-- Support keyboard selection in addition to click-to-open.
-- Preserve sensitive-evidence warnings for heaps and logs.
+Remaining refinement:
+- Filter tabs (current pod / all / snapshots / threads / heaps / logs / recent).
+- Keyboard selection (↑/↓/↵) alongside click — needs a focus mode like the log
+  pane's `f`, or a dedicated full-screen captures screen.
+- Per-entry route/source (which tier produced it) and a fully explicit
+  "`a` analyzes: <the open file | the whole tree>" label.
 
 ## Invalid heap capture recovery — SHIPPED
 

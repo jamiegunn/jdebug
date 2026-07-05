@@ -154,12 +154,36 @@ func TestCapturesMarkInvalidHprof(t *testing.T) {
 	}
 }
 
+func TestCapturesResetOnPodSwitch(t *testing.T) {
+	t.Setenv("JDEBUG_CONFIG_DIR", t.TempDir())
+	m := readyModel()
+	m.capsCwd = "dumps/pods/some-old-pod/20260101T000000Z" // pinned to a previous pod
+	m.capsOff = 3
+	out, _ := m.switchPod("app-debug-demo-app-6c6c4b5769-x7k2p")
+	mm := out.(model)
+	if mm.capsCwd != "" || mm.capsOff != 0 {
+		t.Fatalf("switching pod must un-pin the captures browser, got cwd=%q off=%d", mm.capsCwd, mm.capsOff)
+	}
+}
+
+func TestCapsScope(t *testing.T) {
+	m := readyModel()
+	m.capsCwd, m.t.Pod = "", "pod-a"
+	if s := m.capsScope(); s != "this pod" {
+		t.Fatalf("default scope with a pinned pod must be 'this pod', got %q", s)
+	}
+	m.t.Pod = ""
+	if s := m.capsScope(); s != "all pods" {
+		t.Fatalf("no pod pinned must scope to 'all pods', got %q", s)
+	}
+}
+
 func TestClassifyHead(t *testing.T) {
 	cases := map[string]string{
-		"<!DOCTYPE html><html>login form password":  "login page",
-		`{"status":500,"error":"Internal Server"}`:  "JSON error",
-		"HTTP/1.1 401 Unauthorized":                 "HTTP error",
-		"":                                          "empty",
+		"<!DOCTYPE html><html>login form password": "login page",
+		`{"status":500,"error":"Internal Server"}`: "JSON error",
+		"HTTP/1.1 401 Unauthorized":                "HTTP error",
+		"":                                         "empty",
 	}
 	for in, want := range cases {
 		if got := classifyHead([]byte(in)); !strings.Contains(got, want) {

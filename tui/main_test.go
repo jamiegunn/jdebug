@@ -960,7 +960,8 @@ func TestNarrowHeaderSplitsTargetLine(t *testing.T) {
 func TestCapturesBrowserRenders(t *testing.T) {
 	m := readyModel() // demo is browsing a pod's sessions
 	rows := strings.Join(m.capsRows(72, 10), "\n")
-	for _, want := range []string{"CAPTURES", "click opens · a analyzes", "..", "drill in", "▸"} {
+	// the pane shows scope + a "last refreshed" stamp (the demo just refreshed)
+	for _, want := range []string{"CAPTURES", "refreshed", "a analyzes", "..", "drill in", "▸"} {
 		if !strings.Contains(rows, want) {
 			t.Errorf("captures browser missing %q", want)
 		}

@@ -163,9 +163,11 @@ func (m model) switchPod(pod string) (tea.Model, tea.Cmd) {
 	m.staleP = ""
 	m.logs = logState{}
 	m.hist = nil
+	m.capsCwd = "" // un-pin the captures browser from the previous pod
+	m.capsOff = 0
 	saveTarget(m.t)
 	m.remote = remoteProbe(m.t)
-	cmds := []tea.Cmd{m.panelFetch(m.bgMode == bgLive), fetchEvents(m.t), fetchPodList(m.t)}
+	cmds := []tea.Cmd{m.panelFetch(m.bgMode == bgLive), fetchEvents(m.t), fetchPodList(m.t), fetchCaps(m.kit, m.capsDir())}
 	if !m.logBusy {
 		cmds = append(cmds, m.logsFetch())
 	}

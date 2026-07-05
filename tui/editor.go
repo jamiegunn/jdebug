@@ -161,6 +161,8 @@ func (m model) editorKey(key string) (tea.Model, tea.Cmd) {
 	case "b", "B", "enter", "esc":
 		saveTarget(m.t)
 		m.remote.When = zeroTime() // force re-probe
+		m.capsCwd = ""             // the target may have changed pod → un-pin the
+		m.capsOff = 0              // browser (the panel + caps refresh on the next tick)
 		m.scr = scMenu
 		return m, nil
 	}

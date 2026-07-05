@@ -51,6 +51,7 @@ func demoModel() model {
 		{Name: "20260705T091500Z", Size: 34 << 20, Mod: time.Now().Add(-2 * time.Hour), Dir: true, Snap: true},
 	}
 	m.capsCwd = "dumps/pods/app-debug-demo-app-6c6c4b5769-s9jdg"
+	m.capsWhen = time.Now()
 	m.logs.lines = classifyLogs([]string{
 		"10:29:51 INFO  [http-nio-8080-exec-3] c.e.d.DemoController : request served in 12ms",
 		"10:29:53 INFO  [scheduler-1] c.e.d.CacheWarmer : warmed 1200 entries",

@@ -83,7 +83,8 @@ type model struct {
 	caps         []capEntry
 	capsCwd      string // CAPTURES browser: explicit browse dir ("" = pod default)
 	capsOff      int
-	pods         []string // PODS pane: what the selector/namespace matches
+	capsWhen     time.Time // when the captures list was last refreshed
+	pods         []string  // PODS pane: what the selector/namespace matches
 	podsScope    string
 	podsErr      string
 	podsOff      int
@@ -276,6 +277,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		// ignore a stale fetch that resolved after the user navigated away
 		if v.dir == m.capsDir() {
 			m.caps = v.entries
+			m.capsWhen = time.Now()
 			if m.capsOff > len(m.caps) {
 				m.capsOff = 0
 			}

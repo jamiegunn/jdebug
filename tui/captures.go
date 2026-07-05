@@ -334,10 +334,28 @@ func (m model) analyzeContext() (tea.Model, tea.Cmd) {
 	return m.quickCLI(false, "analyze")
 }
 
+// capsScope names what the browser is currently showing, so a junior always
+// knows whether they're looking at this pod, all pods, or a drilled-in session.
+func (m model) capsScope() string {
+	if m.capsCwd == "" {
+		if m.t.Pod != "" {
+			return "this pod"
+		}
+		return "all pods"
+	}
+	if filepath.Clean(m.capsDir()) == filepath.Clean(capsRoot(m.kit)) {
+		return "all pods"
+	}
+	return strings.TrimPrefix(m.capsDir(), capsRoot(m.kit)+string(filepath.Separator))
+}
+
 // capsRows renders exactly h rows at width w.
 func (m model) capsRows(w, h int) []string {
-	crumb := strings.TrimPrefix(m.capsDir(), dumpsDir(m.kit)+string(filepath.Separator))
-	rows := []string{paneTitle(w, "CAPTURES", crumb, "click opens · a analyzes")}
+	right := "click opens · a analyzes"
+	if !m.capsWhen.IsZero() {
+		right = "refreshed " + fmtAge(m.capsWhen) + " ago · a analyzes"
+	}
+	rows := []string{paneTitle(w, "CAPTURES", m.capsScope(), right)}
 	visible := h - 1
 
 	var lines []string
