@@ -19,8 +19,17 @@ dumps/
 ```
 
 `jdebug dumps` (or `d` in the menu) lists it all, newest first, with the
-right analyzer for each file type. Override per run with `$OUT_DIR`, move the
-root with `$JDEBUG_DUMPS`. The directory is git-ignored.
+right analyzer for each file type — the dashboard's CAPTURES pane shows the
+same per-artifact next step inline. Override per run with `$OUT_DIR`, move
+the root with `$JDEBUG_DUMPS`. The directory is git-ignored.
+
+| artifact | what to do with it |
+|---|---|
+| `threads/*.txt` | press `a` (analyze) — flags deadlocks, blocked pools, hot loops; deeper: open in VisualVM |
+| `heap/*.hprof` | Eclipse MAT → "Leak Suspects" |
+| `*.jfr` | JDK Mission Control |
+| `snapshot-*/` | press `a` for a first pass; start reading at `memory-report.txt` and `threads.txt` |
+| `session-*.log` | the timeline of what happened — everything you ran and what it printed |
 
 In-pod captures (`jdebug-local`) go to the container's `/tmp`; `dumps` there
 prints a **ready-to-paste `kubectl cp`** with the pod name and namespace

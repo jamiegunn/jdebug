@@ -160,8 +160,11 @@ fi
 echo
 if [[ "$ANALYZED" -eq 0 ]]; then
     echo "nothing to analyze in $TARGET — capture something first (threads, snapshot), then re-run."
+    echo "Next: jdebug threads is safe and instant; the menu's w picks the right capture for a symptom."
 elif [[ "$FLAGS" -gt 0 ]]; then
     echo "⚠ $ANALYZED capture(s) read, $FLAGS finding(s) flagged above."
+    echo "Next: chase the ⚠ findings — thread questions open in VisualVM, heap questions in Eclipse MAT."
 else
     echo "✓ $ANALYZED capture(s) read — nothing alarming flagged. (The deeper tools may still find more.)"
+    echo "Next: if the problem persists, capture more targeted evidence — the menu's w picks the right kind."
 fi

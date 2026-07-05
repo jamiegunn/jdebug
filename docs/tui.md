@@ -28,8 +28,9 @@ config, and session-log behavior:
   No raw bash taking over your terminal (only the guided wizard still steps
   out, for its narrated pauses). Every run appends the same transcript
   block to the session log. On smaller terminals it degrades gracefully to
-  the classic menu+panel layout with a full-screen output view. Every
-  action shells out to the same tested bash CLI.
+  an **incident checklist**: target status and NEXT recommendations first,
+  then guided diagnosis, quick checks, captures — with a full-screen output
+  view for commands. Every action shells out to the same tested bash CLI.
 - **bash (classic)** — the zero-dependency fallback; always available.
   Force it with `JDEBUG_CLASSIC=1`.
 

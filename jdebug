@@ -130,7 +130,8 @@ case "$cmd" in
     status)
         triage_parse
         show_cmd kubectl -n "$NAMESPACE" get pods ${SELECTOR:+-l "$SELECTOR"} -o wide
-        kubectl -n "$NAMESPACE" get pods ${SELECTOR:+-l "$SELECTOR"} -o wide
+        PODS_OUT="$(kubectl -n "$NAMESPACE" get pods ${SELECTOR:+-l "$SELECTOR"} -o wide 2>&1)" || true
+        printf '%s\n' "$PODS_OUT"
         echo
         show_cmd kubectl -n "$NAMESPACE" get events --sort-by=.lastTimestamp "| tail -15"
         kubectl -n "$NAMESPACE" get events --sort-by=.lastTimestamp 2>/dev/null | tail -15
@@ -140,6 +141,27 @@ case "$cmd" in
         echo "  STATUS CrashLoopBackOff   → dying right at startup, k8s is waiting to retry — check logs"
         echo "  'OOMKilled' in events     → ran out of memory — run the wizard's OOM flow (w → 1)"
         echo "  STATUS Pending            → can't be scheduled — usually resources or image pull"
+        # decision-oriented tail, computed from the table above
+        BOTTOM=""; NEXT=""
+        MAXR="$(awk 'NR>1 {gsub(/[^0-9].*/,"",$4); if ($4+0>m) m=$4+0} END {print m+0}' <<<"$PODS_OUT")"
+        if grep -q 'CrashLoopBackOff' <<<"$PODS_OUT"; then
+            BOTTOM="the app is crash-looping — it dies at (or right after) startup."
+            NEXT="jdebug logs --previous    (the dead container's last words — or w → 7 in the menu)"
+        elif grep -qE '[[:space:]]Pending[[:space:]]' <<<"$PODS_OUT"; then
+            BOTTOM="pod(s) can't be scheduled — the cluster hasn't found them a home yet."
+            NEXT="read the events above — not-enough-resources and image pulls are the usual causes"
+        elif [[ "${MAXR:-0}" -gt 3 ]]; then
+            BOTTOM="pods are up right now, but restarts are climbing ($MAXR so far) — something keeps killing them."
+            NEXT="w in the menu (guided diagnosis) — or jdebug logs --previous for the last crash"
+        elif grep -q 'Running' <<<"$PODS_OUT"; then
+            BOTTOM="pods look healthy right now."
+            NEXT="jdebug health    (a DOWN dependency explains a sick-but-running app)"
+        fi
+        if [[ -n "$BOTTOM" ]]; then
+            echo
+            echo "Bottom line: $BOTTOM"
+            echo "Next:        $NEXT"
+        fi
         ;;
 
     health)
@@ -177,6 +199,14 @@ case "$cmd" in
         echo 'how to read this: overall "UP" = the app thinks it is healthy. A DOWN component'
         echo '(db, redis, jms, …) names the dependency that is failing — chase that system first,'
         echo 'the JVM is usually just the victim.'
+        echo
+        if [[ "$BODY" == *'DOWN'* ]]; then
+            echo "Bottom line: the app is reachable but a dependency it needs is DOWN (named above)."
+            echo "Next:        chase that system first — the JVM is usually just the victim."
+        else
+            echo "Bottom line: the app says it is healthy — dependencies included."
+            echo "Next:        users still seeing problems? then it's load or latency, not health: w → 2"
+        fi
         ;;
 
     top)
@@ -187,8 +217,10 @@ case "$cmd" in
         show_cmd kubectl -n "$NAMESPACE" get hpa
         kubectl -n "$NAMESPACE" get hpa 2>/dev/null || echo "  (no HPA in $NAMESPACE)"
         echo
-        echo "how to read this: MEMORY near the pod's limit → OOM risk (run: jdebug memory);"
-        echo "CPU pinned at the limit → throttling makes everything slow (wizard: w → 3)."
+        echo "how to read this: MEMORY near the pod's limit → OOM risk; CPU pinned at the"
+        echo "limit → throttling makes everything slow."
+        echo
+        echo "Next: memory near the limit → jdebug memory · CPU pinned → w → 3 (hot-loop hunt)"
         ;;
 
     metrics)

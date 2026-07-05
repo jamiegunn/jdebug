@@ -56,9 +56,18 @@ func (m model) headerRemote(reachable bool) string {
 		actSeg = cFaint.Render(act) + cWarn.Render(" ✗")
 	}
 	sep := cFaint.Render("  ·  ")
-	b.WriteString(" " + dot + " " + cMuted.Render(currentContext()) + extra +
-		sep + cMuted.Render(tgt) + sep + actSeg +
-		sep + cFaint.Render("[g] retarget  [M] mode") + "\n")
+	hints := cFaint.Render("[g] retarget  [M] mode")
+	statusLine := " " + dot + " " + cMuted.Render(currentContext()) + extra +
+		sep + cMuted.Render(tgt) + sep + actSeg + sep + hints
+	if lipgloss.Width(statusLine) <= w {
+		b.WriteString(statusLine + "\n")
+	} else {
+		// narrow terminal: the untruncated target gets its own line instead
+		// of wrapping mid-name
+		b.WriteString(" " + dot + " " + cMuted.Render(currentContext()) + extra +
+			sep + actSeg + sep + hints + "\n")
+		b.WriteString("   " + cMuted.Render(tgt) + "\n")
+	}
 	if m.staleP != "" {
 		b.WriteString("   " + cWarn.Render("your previous pin "+m.staleP+" no longer exists — back to auto ([g] to re-pick)") + "\n")
 	}
@@ -233,6 +242,13 @@ func (m model) menuView() string {
 			b.WriteString("\n " + cFaint.Render("more") + "  " + cDim.Render("[g] target  [c] check setup  [?] help  [M] mode  [q] quit"))
 			b.WriteString(prompt())
 			return b.String()
+		}
+		if m.tier() == 0 {
+			// no room for the side panel: incident-checklist order — status
+			// and NEXT first, then the menu
+			if cs := m.compactStatus(); cs != "" {
+				b.WriteString("\n" + cs)
+			}
 		}
 		b.WriteString("\n" + m.withPanel(m.remoteBody()))
 		suffix := "\n" + m.footer("[a] analyze  [c] check setup  [?] help  [q] quit") + prompt()

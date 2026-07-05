@@ -96,6 +96,22 @@ func fmtAge(t time.Time) string {
 	return fmt.Sprintf("%ds", int(d.Seconds()))
 }
 
+// capHint names the next step for an artifact — juniors shouldn't have to
+// know which desktop tool opens which file.
+func capHint(ce capEntry) string {
+	switch {
+	case ce.Dir:
+		return "a analyzes"
+	case strings.HasSuffix(ce.Name, ".hprof"):
+		return "Eclipse MAT"
+	case strings.HasSuffix(ce.Name, ".jfr"):
+		return "JDK Mission Control"
+	case strings.HasSuffix(ce.Name, ".txt"), strings.HasSuffix(ce.Name, ".json"):
+		return "a / VisualVM"
+	}
+	return ""
+}
+
 // capsRows renders exactly h rows at width w.
 func (m model) capsRows(w, h int) []string {
 	rows := []string{paneTitle(w, "CAPTURES", "dumps/", "[d] browse · [a] analyze")}
@@ -111,12 +127,15 @@ func (m model) capsRows(w, h int) []string {
 			name += "/"
 		}
 		right := fmt.Sprintf("%6s %4s", fmtSize(ce.Size), fmtAge(ce.Mod))
-		nameW := w - len(right) - 3
+		if hint := capHint(ce); hint != "" && w >= 58 {
+			right += " · " + hint
+		}
+		nameW := w - lipgloss.Width(right) - 3
 		if nameW < 8 {
 			nameW = 8
 		}
 		name = ansi.Truncate(name, nameW, "…")
-		pad := w - 1 - lipgloss.Width(name) - len(right) - 1
+		pad := w - 1 - lipgloss.Width(name) - lipgloss.Width(right) - 1
 		if pad < 1 {
 			pad = 1
 		}

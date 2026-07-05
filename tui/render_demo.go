@@ -75,6 +75,11 @@ func renderDemo(what string) string {
 		m.scr = scMenu
 		m.width, m.height = 200, 50
 		return m.menuView()
+	case "compact":
+		// narrow terminal: incident-checklist order, TARGET + NEXT on top
+		m.scr = scMenu
+		m.width = 90
+		return m.menuView()
 	case "focus":
 		m.scr = scMenu
 		m.width, m.height = 200, 50
@@ -116,5 +121,5 @@ func renderDemo(what string) string {
 		m.scr = scWizard
 		return m.wizardView()
 	}
-	return "unknown screen: " + what + " (menu|dashboard|focus|output|runpane|gate|local|help|chooser|editor|wizard)"
+	return "unknown screen: " + what + " (menu|dashboard|compact|focus|output|runpane|gate|local|help|chooser|editor|wizard)"
 }

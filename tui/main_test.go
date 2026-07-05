@@ -511,6 +511,45 @@ func TestWizardHasCrashFlow(t *testing.T) {
 	}
 }
 
+func TestCompactChecklistOrder(t *testing.T) {
+	m := readyModel()
+	m.width = 90 // tier 0: no side panel
+	out := m.menuView()
+	target := strings.Index(out, "TARGET")
+	next := strings.Index(out, "NEXT")
+	start := strings.Index(out, "START HERE")
+	if target < 0 || next < 0 {
+		t.Fatal("compact layout must show TARGET and NEXT above the menu")
+	}
+	if !(target < next && next < start) {
+		t.Fatalf("compact order must be TARGET → NEXT → menu, got %d/%d/%d", target, next, start)
+	}
+}
+
+func TestNarrowHeaderSplitsTargetLine(t *testing.T) {
+	m := readyModel()
+	m.width = 90
+	h := m.headerRemote(true)
+	if !strings.Contains(h, "\n   "+"debug-demo / ") && !strings.Contains(h, "\n"+"   debug-demo / ") {
+		t.Fatal("narrow header must give the untruncated target its own line")
+	}
+	for _, l := range strings.Split(h, "\n") {
+		if lipgloss.Width(l) > 90 {
+			t.Fatalf("header line overflows 90 cols: %q", l)
+		}
+	}
+}
+
+func TestCapturesNameNextStep(t *testing.T) {
+	m := readyModel()
+	rows := strings.Join(m.capsRows(72, 8), "\n")
+	for _, want := range []string{"Eclipse MAT", "a / VisualVM", "a analyzes"} {
+		if !strings.Contains(rows, want) {
+			t.Errorf("captures pane missing next-step %q", want)
+		}
+	}
+}
+
 func TestVerbosityFlow(t *testing.T) {
 	out := press(t, readyModel(), "v")
 	mm := out.(model)

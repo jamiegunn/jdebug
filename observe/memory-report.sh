@@ -177,3 +177,28 @@ echo "    jdebug jcmd 'VM.native_memory summary' -n $NAMESPACE"
 echo "  - If 'Metaspace' is large AND growing → classloader leak (Spring devtools, hot reloads)"
 echo "  - If 'direct buffers' is large → check Lettuce / Tomcat NIO config"
 echo "  - If RSS / limit > 90% under steady load → bump limits or reduce -Xmx"
+
+# decision-oriented tail: answer the question this report exists to ask —
+# is the memory in the heap, or somewhere else?
+echo
+echo "Bottom line:"
+if [[ "$LIM_B" != "max" && -n "$LIM_B" && "${RSS_B:-0}" -gt 0 && "$LIM_B" -gt 0 ]]; then
+    PCT=$(( RSS_B * 100 / LIM_B ))
+    if (( PCT >= 90 )); then
+        echo "  Container memory is at ${PCT}% of the limit — OOM-kill risk."
+    else
+        echo "  Container memory is at ${PCT}% of the limit."
+    fi
+fi
+if [[ "${HEAP_MAX:-0}" -gt 0 && "${HEAP_USED:-0}" -gt 0 ]]; then
+    HPCT=$(( HEAP_USED * 100 / HEAP_MAX ))
+    if (( HPCT >= 80 )); then
+        echo "  JVM heap is at ${HPCT}% of its max → the memory IS going into the heap."
+        echo "Next:"
+        echo "  a heap dump names the objects: wizard flow 1, or jdebug heap --confirm (pauses the app)"
+    else
+        echo "  JVM heap is only at ${HPCT}% of its max → look OFF-heap (native, buffers, stacks)."
+        echo "Next:"
+        echo "  jdebug jcmd 'VM.native_memory summary'   (needs NMT enabled — see Hints above)"
+    fi
+fi

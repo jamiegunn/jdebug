@@ -100,12 +100,16 @@ assert_rc  "status exits 0" 0
 assert_has "status shows pods" "pod-a"
 assert_has "status explains CrashLoopBackOff" "CrashLoopBackOff"
 assert_has "status routes OOM to the wizard" "OOMKilled"
+assert_has "status ends with a verdict" "Bottom line:"
+assert_has "status names the next move" "Next:"
 
 MOCK_EXEC_OUT='{"status":"UP"}' run_case ./jdebug health
 assert_has "health explains UP/DOWN reading" "chase that system first"
+assert_has "health UP: bottom line" "the app says it is healthy"
 
 run_case ./jdebug top
 assert_has "top explains what near-limit means" "OOM risk"
+assert_has "top names the next move" "Next:"
 
 # --- multi-pod transparency ----------------------------------------------------
 section "pod resolution"
@@ -172,6 +176,7 @@ assert_has "health: DOWN component named" "failing component(s): db"
 assert_has "hprof: valid one sanity-checked" "valid hprof"
 assert_has "hprof: invalid one flagged" "NOT a valid hprof"
 assert_has "summary counts findings" "finding(s) flagged above"
+assert_has "analyze names the next move" "Next: chase the ⚠ findings"
 
 run_case ./jdebug analyze "$AD/threads/pod-a-thread.txt"
 assert_has "single-file analysis works" "DEADLOCK detected"

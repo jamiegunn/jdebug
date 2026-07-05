@@ -267,6 +267,48 @@ func (m model) suggestions() []string {
 
 const panelW = 38
 
+// compactStatus is the narrow-terminal stand-in for the side panel: an
+// incident-checklist header — what's happening, then what to press — shown
+// between the header and the menu when there's no room for TARGET LIVE.
+func (m model) compactStatus() string {
+	d := m.panel
+	if m.mode != 1 || d.When.IsZero() {
+		return ""
+	}
+	phase := d.Phase
+	if d.Waiting != "" {
+		phase = d.Waiting
+	}
+	if phase == "" {
+		phase = "–"
+	}
+	ps := cMuted
+	if d.Waiting != "" || (d.Phase != "" && d.Phase != "Running") {
+		ps = cWarn
+	}
+	segs := []string{ps.Render(phase), cMuted.Render(fmt.Sprintf("restarts %d", d.Restarts))}
+	if d.MemUse != "" && d.MemLimit != "" {
+		v := fmt.Sprintf("mem %s of %s", d.MemUse, d.MemLimit)
+		if d.MemPct >= 0 {
+			v += fmt.Sprintf(" (%d%%)", d.MemPct)
+		}
+		ms := cMuted
+		if d.MemPct >= 90 {
+			ms = cDisr
+		}
+		segs = append(segs, ms.Render(v))
+	}
+	out := " " + cDim.Render("TARGET") + "  " + strings.Join(segs, cFaint.Render(" · ")) + "\n"
+	for i, sug := range m.suggestions() {
+		label := "NEXT"
+		if i > 0 {
+			label = ""
+		}
+		out += " " + cDim.Render(fmt.Sprintf("%-6s", label)) + "  " + sug + "\n"
+	}
+	return out
+}
+
 // panelView renders the TARGET LIVE column at width w, padded to h rows.
 // trends adds the sparkline section (tier-2 only; tier 1 keeps the classic
 // 38-col layout byte-identical for frontend-parity tests).
