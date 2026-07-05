@@ -521,6 +521,10 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
     if [[ -x tui/jdebug-tui ]]; then
         run_case ./tui/jdebug-tui -version
         assert_has "tui: --version" "jdebug-tui"
+        # heap histogram reader: rejects non-hprof input, doesn't crash
+        run_case ./tui/jdebug-tui -analyze-heap /dev/null
+        assert_rc  "heap analyzer rejects a non-hprof (exit 1)" 1
+        assert_has "heap analyzer explains the rejection" "not an hprof"
         run_case ./tui/jdebug-tui -render menu
         assert_has "tui: menu sections" "QUICK CHECKS"
         assert_has "tui: start-here section" "START HERE"

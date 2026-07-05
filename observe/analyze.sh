@@ -56,12 +56,20 @@ analyze_threads() {
 analyze_hprof() {
     local f="$1"
     hd "heap dump: $f"
-    if head -c 12 "$f" 2>/dev/null | grep -q 'JAVA PROFILE'; then
-        say "valid hprof, $(du -h "$f" | cut -f1 | tr -d ' ') — binary format, so the real analysis happens in Eclipse MAT"
-        say "open: MAT → File → Open Heap Dump → run 'Leak Suspects'"
-        say "leak hunting: take a second dump after more load, then MAT → 'compare to another heap dump'"
-    else
+    if ! head -c 12 "$f" 2>/dev/null | grep -q 'JAVA PROFILE'; then
         flag "NOT a valid hprof (bad magic) — likely an error page was captured instead; retry with --via jattach"
+        return
+    fi
+    say "valid hprof, $(du -h "$f" | cut -f1 | tr -d ' ')"
+    # the Go TUI binary carries a fast class-histogram reader — the first-pass
+    # "what's eating the heap?" without opening a desktop tool
+    local tui="$SCRIPTS_ROOT/tui/jdebug-tui"
+    if [[ -x "$tui" ]]; then
+        "$tui" -analyze-heap "$f" 2>/dev/null | sed 's/^/    /' \
+            || say "(couldn't parse the histogram — open it in Eclipse MAT instead)"
+    else
+        say "open: MAT → File → Open Heap Dump → run 'Leak Suspects'  (build the TUI for an inline histogram: make tui)"
+        say "leak hunting: take a second dump after more load, then MAT → 'compare to another heap dump'"
     fi
 }
 

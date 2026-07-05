@@ -410,6 +410,7 @@ func (m model) confirmKeyPress(key string) (tea.Model, tea.Cmd) {
 
 func main() {
 	renderFlag := flag.String("render", "", "print a screen with canned demo state and exit (menu|dashboard|focus|output|gate|local|help|chooser|editor|wizard)")
+	heapFlag := flag.String("analyze-heap", "", "print a class histogram for an hprof heap dump and exit")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 
@@ -417,6 +418,15 @@ func main() {
 
 	if *showVersion {
 		fmt.Println("jdebug-tui " + version)
+		return
+	}
+	if *heapFlag != "" {
+		h, err := analyzeHprof(*heapFlag)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		fmt.Println(renderHistogram(h, 15))
 		return
 	}
 	if *renderFlag != "" {
