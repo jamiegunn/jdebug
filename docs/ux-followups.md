@@ -61,9 +61,10 @@ must never make destructive changes automatically.
   memory / CPU / deployed / not-sure) that pre-select a wizard flow and reorder
   NEXT. Entry point: a top-level pick in `openWizard`, and a `mode` field that
   weights `suggestions()`.
-- **Evidence chains** — show the short cause→effect behind a recommendation
-  (`OOMKilled → mem 94% of limit → w flow 1`). Entry point: `suggestions()`
-  returns a chain, not just a line.
+- **Evidence chains — SHIPPED.** NEXT rows now show the short cause→effect
+  behind a recommendation (`likely  OOMKilled last restart → mem 94% of limit →
+  w flow 1`). `suggestionRows()` returns structured rows (`{conf, msg, ev, key}`)
+  and `suggestions()` renders them; each render site clips to its column width.
 - **Runbook cards** — the transparency card, specialised per signal (what it
   means / why / check first / safe cmd / risky cmd / what to tell the next
   person). Good first cards: last exit, HPA, container memory, JVM heap, probe
@@ -86,8 +87,9 @@ must never make destructive changes automatically.
   no previous logs), each with the least-privilege fix or fallback route. The
   building block (`explain_kubectl_error`) exists; this aggregates it into a
   view.
-- **Confidence levels** — `likely / possible / unknown` prefixes on NEXT so a
-  junior knows which warnings are certain.
+- **Confidence levels — SHIPPED.** `likely / possible / unknown` prefixes lead
+  each NEXT row (coloured by certainty) so a junior knows which warnings are
+  certain: a named OOM/crash-loop is `likely`, a blind autoscaler is `unknown`.
 
 These stay diagnostic-first. Recovery guidance (scale up, roll back, loosen a
 probe, raise a limit) should be explanation or copy-paste unless a strongly

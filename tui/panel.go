@@ -18,6 +18,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type panelData struct {
@@ -292,52 +293,124 @@ func parseHeapInfo(out string) (used, max string) {
 
 // --- suggestions: the app tells you what to do next --------------------------
 
-// suggestions builds the NEXT list in SEVERITY order — the most operationally
-// urgent signal first — so a multi-symptom incident doesn't bury the thing
-// that matters. Order: unavailable/crash-loop → OOM/restart-storm →
-// autoscale failed/maxed → resource pressure → observability gaps.
-func (m model) suggestions() []string {
+// a suggestion is one NEXT line: a confidence level (how sure we are it's a
+// real problem), the headline signal, an optional evidence hop that shows the
+// cause→effect chain (OOMKilled → mem 94% of limit), and the key to press.
+// conf == "" marks an informational row (no problem asserted).
+type suggestion struct {
+	conf  string         // "likely" | "possible" | "unknown" | "" (info)
+	msg   string         // the headline signal
+	ev    string         // optional evidence hop that explains the headline
+	key   string         // the action hint, e.g. "w flow 1" ("" = none)
+	style lipgloss.Style // headline colour (severity)
+}
+
+// confStyle maps a confidence word to a colour: certainty → visual weight, so a
+// junior can tell "likely: memory limit hit" from "unknown: metrics missing".
+func confStyle(conf string) lipgloss.Style {
+	switch conf {
+	case "likely":
+		return cDisr
+	case "possible":
+		return cWarn
+	default: // unknown
+		return cMuted
+	}
+}
+
+// render turns a suggestion into a coloured line. Problem rows read
+// "<conf>  <signal> → <evidence> → <key>"; info rows drop the tag and arrow.
+func (s suggestion) render() string {
+	renderKey := func(k string) string {
+		if k == "" {
+			return ""
+		}
+		head, rest, found := strings.Cut(k, " ")
+		out := cKey.Render(head)
+		if found {
+			out += cMuted.Render(" " + rest)
+		}
+		return out
+	}
+	if s.conf == "" { // informational — no confidence, no arrow
+		out := s.style.Render(s.msg)
+		if s.key != "" {
+			out += " " + renderKey(s.key)
+		}
+		return out
+	}
+	out := confStyle(s.conf).Render(s.conf) + "  " + s.style.Render(s.msg)
+	if s.ev != "" {
+		out += cFaint.Render(" → ") + cMuted.Render(s.ev)
+	}
+	if s.key != "" {
+		out += cFaint.Render(" → ") + renderKey(s.key)
+	}
+	return out
+}
+
+// suggestionRows builds the NEXT list in SEVERITY order — the most operationally
+// urgent signal first — so a multi-symptom incident doesn't bury the thing that
+// matters. Order: unavailable/crash-loop → OOM/restart-storm → autoscale
+// failed/maxed → resource pressure → observability gaps. Each row also carries a
+// confidence level and, where the signals connect, a cause→effect chain.
+func (m model) suggestionRows() []suggestion {
 	d := m.panel
-	var s []string
+	var s []suggestion
 	// 1. app unavailable / crash-looping
 	if d.Waiting == "CrashLoopBackOff" {
-		s = append(s, cDisr.Render("⚠ CrashLoopBackOff")+cMuted.Render(" → ")+cKey.Render("w")+cMuted.Render(" flow 7"))
+		s = append(s, suggestion{"likely", "CrashLoopBackOff — won't stay up", "", "w flow 7", cDisr})
 	} else if d.Phase != "" && d.Phase != "Running" {
-		s = append(s, cWarn.Render("! pod is "+d.Phase)+cMuted.Render(" → ")+cKey.Render("s")+cMuted.Render(" events"))
+		s = append(s, suggestion{"possible", "pod is " + d.Phase, "", "s events", cWarn})
 	}
-	// 2. OOM / restart storm
+	// 2. OOM / restart storm — chain OOM to the memory reading when we have it
 	if d.LastReason == "OOMKilled" {
-		s = append(s, cDisr.Render("⚠ OOMKilled last restart")+cMuted.Render(" → ")+cKey.Render("w")+cMuted.Render(" flow 1"))
+		ev := ""
+		if d.MemPct >= 75 {
+			ev = fmt.Sprintf("mem %d%% of limit", d.MemPct)
+		}
+		s = append(s, suggestion{"likely", "OOMKilled last restart", ev, "w flow 1", cDisr})
 	} else if d.Restarts > 3 {
-		s = append(s, cWarn.Render(fmt.Sprintf("! %d restarts", d.Restarts))+cMuted.Render(" → ")+cKey.Render("w")+cMuted.Render(" diagnose"))
+		s = append(s, suggestion{"possible", fmt.Sprintf("%d restarts", d.Restarts), "", "w diagnose", cWarn})
 	}
-	// 3. autoscale failed / maxed
+	// 3. autoscale failed / maxed — "blind" means we genuinely can't tell
 	if d.HPAFailing {
-		s = append(s, cWarn.Render("! autoscale blind — "+d.HPAReason)+cMuted.Render(" → ")+cKey.Render("W"))
+		s = append(s, suggestion{"unknown", "autoscale blind — " + d.HPAReason, "", "W", cWarn})
 	} else if d.HPAMax > 0 && d.HPACur >= d.HPAMax {
-		s = append(s, cWarn.Render("! at max replicas")+cMuted.Render(" → ")+cKey.Render("W")+cMuted.Render(" workload"))
+		s = append(s, suggestion{"possible", "at max replicas", "", "W workload", cWarn})
 	}
 	// 4. resource pressure
 	if d.MemPct >= 90 {
-		s = append(s, cDisr.Render(fmt.Sprintf("⚠ memory %d%% of limit", d.MemPct))+cMuted.Render(" → ")+cKey.Render("m"))
+		s = append(s, suggestion{"likely", fmt.Sprintf("memory %d%% of limit", d.MemPct), "", "m", cDisr})
 	} else if d.MemPct >= 75 {
-		s = append(s, cWarn.Render(fmt.Sprintf("! memory %d%% of limit", d.MemPct))+cMuted.Render(" → ")+cKey.Render("m"))
+		s = append(s, suggestion{"possible", fmt.Sprintf("memory %d%% of limit", d.MemPct), "", "m", cWarn})
 	}
 	// 5. observability gaps — only when nothing more urgent is showing
 	if len(s) == 0 {
 		if len(m.caps) == 0 {
-			s = append(s, cMuted.Render("new here? ")+cKey.Render("w")+cMuted.Render(" — describe the symptom"))
+			s = append(s, suggestion{"", "new here?", "", "w — describe the symptom", cMuted})
 		} else {
-			s = append(s, cMuted.Render("evidence captured → ")+cKey.Render("a")+cMuted.Render(" analyzes it"))
+			s = append(s, suggestion{"", "evidence captured →", "", "a analyzes it", cMuted})
 		}
 	}
 	if !d.When.IsZero() && !d.ActuatorOK && len(s) < 3 {
-		s = append(s, cMuted.Render("no actuator — captures still work (jattach/jcmd)"))
+		s = append(s, suggestion{"", "no actuator — captures still work (jattach/jcmd)", "", "", cMuted})
 	}
 	if len(s) > 3 {
 		s = s[:3]
 	}
 	return s
+}
+
+// suggestions renders the NEXT rows to coloured (unclipped) lines. Callers clip
+// to their column width with ansi.Truncate.
+func (m model) suggestions() []string {
+	rows := m.suggestionRows()
+	out := make([]string, len(rows))
+	for i, r := range rows {
+		out[i] = r.render()
+	}
+	return out
 }
 
 // --- render -------------------------------------------------------------------
@@ -405,7 +478,7 @@ func (m model) compactStatus() string {
 		if i > 0 {
 			label = ""
 		}
-		out += " " + cDim.Render(fmt.Sprintf("%-6s", label)) + "  " + sug + "\n"
+		out += " " + cDim.Render(fmt.Sprintf("%-6s", label)) + "  " + ansi.Truncate(sug, m.tw()-11, "…") + "\n"
 	}
 	return out
 }
@@ -522,7 +595,7 @@ func (m model) panelView(w, h int, trends bool) string {
 	}
 	rows = append(rows, " "+cDim.Render("NEXT")+"  "+cRule.Render(strings.Repeat("─", w-8)))
 	for _, s := range m.suggestions() {
-		rows = append(rows, " "+s)
+		rows = append(rows, " "+ansi.Truncate(s, w-2, "…"))
 	}
 	age := "…"
 	if !d.When.IsZero() {

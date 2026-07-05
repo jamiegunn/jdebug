@@ -632,6 +632,32 @@ func TestNextSuggestionsSeverityOrdered(t *testing.T) {
 	}
 }
 
+func TestNextConfidenceLevels(t *testing.T) {
+	// a confirmed OOM at high memory reads as "likely" and shows the cause→effect
+	// chain OOMKilled → mem 95% of limit, so the junior sees why, not just what.
+	m := readyModel()
+	m.panel = panelData{When: time.Now(), Phase: "Running", LastReason: "OOMKilled", MemPct: 95}
+	got := ansiStrip(strings.Join(m.suggestions(), "\n"))
+	if !strings.Contains(got, "likely") {
+		t.Fatalf("a confirmed OOM must read as 'likely':\n%s", got)
+	}
+	if !strings.Contains(got, "OOMKilled") || !strings.Contains(got, "mem 95% of limit") {
+		t.Fatalf("NEXT must chain OOMKilled → mem 95%% of limit:\n%s", got)
+	}
+	// a blind autoscaler is genuinely uncertain → "unknown"
+	m2 := readyModel()
+	m2.panel = panelData{When: time.Now(), Phase: "Running", HPAName: "a", HPAFailing: true, HPAReason: "no metrics"}
+	if got2 := ansiStrip(strings.Join(m2.suggestions(), "\n")); !strings.Contains(got2, "unknown") {
+		t.Fatalf("a blind HPA must read as 'unknown':\n%s", got2)
+	}
+	// a restart storm without a named reason is only "possible"
+	m3 := readyModel()
+	m3.panel = panelData{When: time.Now(), Phase: "Running", Restarts: 7}
+	if got3 := ansiStrip(strings.Join(m3.suggestions(), "\n")); !strings.Contains(got3, "possible") {
+		t.Fatalf("an unexplained restart storm must read as 'possible':\n%s", got3)
+	}
+}
+
 func TestAutoscaleLine(t *testing.T) {
 	cases := []struct {
 		d        panelData
