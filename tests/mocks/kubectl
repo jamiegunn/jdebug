@@ -29,6 +29,9 @@ case "$*" in
             none) exit 0 ;;
             *)    printf 'payments\npayments\nweb\n' ;;
         esac ;;
+    *" get pod "*"-o name"*)
+        [ "${MOCK_POD_GONE:-}" = 1 ] && exit 1
+        echo "pod/pod-x" ;;
     *" get pod "*jsonpath*)
         printf 'app\nsidecar\n' ;;
     *"get pods"*jsonpath*)

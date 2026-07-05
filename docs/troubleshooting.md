@@ -60,6 +60,14 @@ The jattach tier needs its binary in the pod (`/tmp/jattach`) or on the box.
 If jattach runs but attach fails, check **uid parity**: the attach protocol
 only works when the caller runs as the same user as the JVM.
 
+## "no JVM found / nothing maps libjvm"
+
+JVM discovery looks for a process named `java`, then for any process that
+maps `libjvm` — which catches custom launchers (`jwebserver`, `jshell`,
+jlink-built images). If neither matches, there is no HotSpot JVM in that
+container/box; if you know better (exotic setups), point at it explicitly
+with `JVM_PID=<pid>` (jdebug-local).
+
 ## "heap dump PAUSES the JVM … --confirm"
 
 Not an error — the safety gate. Add `--confirm` when you accept that the app

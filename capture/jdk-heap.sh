@@ -70,7 +70,12 @@ JPID=""
 for p in /proc/[0-9]*/comm; do
     [ "$(cat "$p" 2>/dev/null)" = "java" ] && { JPID="${p#/proc/}"; JPID="${JPID%/comm}"; break; }
 done
-[ -n "$JPID" ] || { echo "ERROR: no java process visible in the shared PID namespace" >&2; exit 1; }
+if [ -z "$JPID" ]; then
+    for m in /proc/[0-9]*/maps; do
+        grep -q libjvm "$m" 2>/dev/null && { JPID="${m#/proc/}"; JPID="${JPID%/maps}"; break; }
+    done
+fi
+[ -n "$JPID" ] || { echo "ERROR: no JVM visible in the shared PID namespace (no java comm, nothing maps libjvm)" >&2; exit 1; }
 SOCK="/proc/$JPID/root/tmp/.java_pid$JPID"
 if [ ! -S "$SOCK" ]; then
     touch "/proc/$JPID/root/tmp/.attach_pid$JPID" \

@@ -5,9 +5,14 @@ nav_order: 11
 
 # Configuration
 
-Everything is a flag or an environment variable; precedence is
-**flags → environment → defaults**. There is no config file (yet — see the
-[roadmap](roadmap)).
+Everything is a flag or an environment variable, with one remembered layer:
+the menu's target editor saves its selections to
+`~/.config/jdebug/target` (respects `$XDG_CONFIG_HOME`; override the dir with
+`$JDEBUG_CONFIG_DIR`), so namespace, selector, container, actuator URL, and
+the pinned pod survive between sessions. Precedence is
+**flags → environment → saved target → built-in defaults**. Change values in
+the menu — or delete the file — to forget. A remembered pod pin that no
+longer exists is detected at startup and falls back to auto with a notice.
 
 ## Targeting
 

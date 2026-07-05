@@ -19,8 +19,9 @@ chmod +x "$MOCKS"/*
 PASS=0; FAIL=0; FAILED=()
 OUT=""; RC=0
 
-# All tests run with mocks first on PATH, colors off, and dumps in a sandbox.
-ENV=(env "PATH=$MOCKS:$PATH" NO_COLOR=1 "JDEBUG_DUMPS=$TMP/dumps" JDEBUG_QUIET=1)
+# All tests run with mocks first on PATH, colors off, and dumps + the
+# remembered-target config in a sandbox (never the user's real ~/.config).
+ENV=(env "PATH=$MOCKS:$PATH" NO_COLOR=1 "JDEBUG_DUMPS=$TMP/dumps" "JDEBUG_CONFIG_DIR=$TMP/config" JDEBUG_QUIET=1)
 
 run_case()  { OUT="$("${ENV[@]}" "$@" 2>&1)"; RC=$?; }                       # capture out+err+rc
 run_input() { local in="$1"; shift; OUT="$(printf '%b' "$in" | "${ENV[@]}" "$@" 2>&1)"; RC=$?; }
@@ -376,6 +377,27 @@ assert_has "mode chooser: self-test entry" "self-test"
 
 run_input '1\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "quit shows transcript path" "transcript of everything from this session"
+
+# --- remembered target: selections persist between sessions -------------------------
+section "remembered target"
+MOCK_PODS=multi run_input 'tp2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+[[ -f "$TMP/config/target" ]] && ok "target file written on editor exit" \
+    || bad "target file written on editor exit" "no $TMP/config/target"
+
+run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "pod pin remembered in a fresh session" "pod        pod-b"
+
+MOCK_POD_GONE=1 run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "vanished pin falls back to auto with a notice" "no longer exists — back to auto"
+
+run_input 'tn2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+run_case ./jdebug status
+assert_has "CLI layer uses the remembered namespace" "kubectl -n payments"
+
+JDEBUG_NAMESPACE=zzz run_case ./jdebug status
+assert_has "environment still outranks the remembered value" "kubectl -n zzz"
+
+rm -f "$TMP/config/target"
 
 # --- install.sh ----------------------------------------------------------------------
 section "install.sh"

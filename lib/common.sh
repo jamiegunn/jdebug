@@ -6,9 +6,24 @@
 
 set -euo pipefail
 
-: "${NAMESPACE:=${JDEBUG_NAMESPACE:-default}}"
-: "${SELECTOR:=${JDEBUG_SELECTOR:-}}"          # empty = any pod in the namespace
-: "${APP_CONTAINER:=${JDEBUG_CONTAINER:-app}}" # common Spring Boot container name
+# Remembered target — the menu's target editor saves its selections here so
+# they survive between sessions. Precedence: flags > environment > saved >
+# built-in. Change values in the menu (or delete the file) to forget.
+JDEBUG_CONFIG_DIR="${JDEBUG_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/jdebug}"
+JDEBUG_TARGET_FILE="$JDEBUG_CONFIG_DIR/target"
+if [[ -f "$JDEBUG_TARGET_FILE" ]]; then
+    # shellcheck source=/dev/null
+    source "$JDEBUG_TARGET_FILE" 2>/dev/null || true
+fi
+
+# ${VAR+x} tests set-ness (not emptiness): an exported-but-empty SELECTOR must
+# keep meaning "any pod", not fall through to the saved value.
+[[ -n "${NAMESPACE+x}"     ]] || NAMESPACE="${JDEBUG_NAMESPACE:-${SAVED_NAMESPACE:-default}}"
+[[ -n "${SELECTOR+x}"      ]] || SELECTOR="${JDEBUG_SELECTOR:-${SAVED_SELECTOR:-}}"      # empty = any pod
+[[ -n "${APP_CONTAINER+x}" ]] || APP_CONTAINER="${JDEBUG_CONTAINER:-${SAVED_CONTAINER:-app}}"
+if [[ -z "${ACTUATOR_BASE+x}" && -n "${SAVED_ACTUATOR:-}" ]]; then
+    ACTUATOR_BASE="$SAVED_ACTUATOR"; export ACTUATOR_BASE
+fi
 : "${JDK_DEBUG_IMAGE:=${JDEBUG_JDK_IMAGE:-eclipse-temurin:21-jdk-alpine}}"
 
 # Cache for the downloaded jattach binary — a standard per-user location so the
@@ -82,17 +97,18 @@ show_cmd() { printf '  $ %s\n' "$*" >&2; }
 # JRE-alpine ships wget, not curl). Run via `kubectl exec -- sh -c "$(pod_fetch ...)"`.
 pod_fetch() {
     local url="$1" accept="${2:-}"
+    local nohttp="echo 'error: neither curl nor wget exists in this container — the actuator tier cannot run here (jattach needs no HTTP: --via jattach)' >&2; exit 127"
     if [[ -n "$accept" ]]; then
-        echo "if command -v curl >/dev/null 2>&1; then curl -fsS -H 'Accept: $accept' '$url'; else wget -qO- --header='Accept: $accept' '$url' 2>/dev/null || wget -qO- '$url'; fi"
+        echo "if command -v curl >/dev/null 2>&1; then curl -fsS -H 'Accept: $accept' '$url'; elif command -v wget >/dev/null 2>&1; then wget -qO- --header='Accept: $accept' '$url' 2>/dev/null || wget -qO- '$url'; else $nohttp; fi"
     else
-        echo "if command -v curl >/dev/null 2>&1; then curl -fsS '$url'; else wget -qO- '$url'; fi"
+        echo "if command -v curl >/dev/null 2>&1; then curl -fsS '$url'; elif command -v wget >/dev/null 2>&1; then wget -qO- '$url'; else $nohttp; fi"
     fi
 }
 
 # pod_post_json <url> <json> — same idea for a JSON POST (busybox wget speaks
 # --post-data). The JSON must not contain single quotes.
 pod_post_json() {
-    echo "if command -v curl >/dev/null 2>&1; then curl -fsS -X POST -H 'Content-Type: application/json' -d '$2' '$1'; else wget -qO- --header='Content-Type: application/json' --post-data='$2' '$1'; fi"
+    echo "if command -v curl >/dev/null 2>&1; then curl -fsS -X POST -H 'Content-Type: application/json' -d '$2' '$1'; elif command -v wget >/dev/null 2>&1; then wget -qO- --header='Content-Type: application/json' --post-data='$2' '$1'; else echo 'error: neither curl nor wget exists in this container' >&2; exit 127; fi"
 }
 
 # resolve_pods — pod names matching selector in namespace (empty selector = all).

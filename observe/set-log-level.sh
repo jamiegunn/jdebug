@@ -50,17 +50,23 @@ if [[ -z "$PODS" ]]; then
     exit 2
 fi
 
+OK=0
 while IFS= read -r pod; do
     [[ -z "$pod" ]] && continue
     info "setting $LOGGER=$LEVEL on $pod"
     # POST via in-pod curl-or-wget so we don't need port-forward.
     kubectl -n "$NAMESPACE" exec "$pod" -c "$APP_CONTAINER" -- \
         sh -c "$(pod_post_json "$ACTUATOR_BASE/loggers/$LOGGER" "{\"configuredLevel\":\"$LEVEL\"}")" \
-        || { err "POST failed on $pod"; continue; }
+        || { err "POST failed on $pod — actuator reachable there? (--actuator-base to fix the URL)"; continue; }
+    OK=$((OK+1))
     EFFECTIVE="$(kubectl -n "$NAMESPACE" exec "$pod" -c "$APP_CONTAINER" -- \
         sh -c "$(pod_fetch "$ACTUATOR_BASE/loggers/$LOGGER")")"
     info "  -> $EFFECTIVE"
 done <<< "$PODS"
 
-info "done — the change is live now (no restart) but is NOT persistent: a pod"
-info "restart resets it. Revert anytime:  jdebug log-level $LOGGER INFO"
+if [[ $OK -eq 0 ]]; then
+    err "log level UNCHANGED — the POST failed on every matching pod."
+    exit 1
+fi
+info "done on $OK pod(s) — the change is live now (no restart) but is NOT persistent:"
+info "a pod restart resets it. Revert anytime:  jdebug log-level $LOGGER INFO"

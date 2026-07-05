@@ -16,7 +16,22 @@ set +e   # interactive loop — never die on a failed action
 DBG="$SCRIPTS_ROOT/jdebug"              # mode 1 backend (kubectl)
 LOCAL="$SCRIPTS_ROOT/jdebug-local"      # mode 2/3 backend (localhost, no kubectl)
 export NAMESPACE SELECTOR APP_CONTAINER # mode 1: 't' retargets; children inherit
-POD_PIN=""                              # mode 1: '' = auto (first match); 't' can pin one pod
+POD_PIN="${SAVED_POD:-}"                # mode 1: '' = auto; 't' can pin one pod (remembered)
+SAVED_POD_GONE=""                       # set when a remembered pin no longer exists
+
+# save_target — remember the current target between sessions (loaded by
+# lib/common.sh as the layer under flags and env).
+save_target() {
+    mkdir -p "$JDEBUG_CONFIG_DIR" 2>/dev/null || return 0
+    {
+        echo "# written by jdebug's target editor — delete this file to forget"
+        printf 'SAVED_NAMESPACE=%q\n' "$NAMESPACE"
+        printf 'SAVED_SELECTOR=%q\n'  "$SELECTOR"
+        printf 'SAVED_CONTAINER=%q\n' "$APP_CONTAINER"
+        printf 'SAVED_ACTUATOR=%q\n'  "$ACTUATOR_BASE"
+        printf 'SAVED_POD=%q\n'       "$POD_PIN"
+    } > "$JDEBUG_TARGET_FILE" 2>/dev/null || true
+}
 : "${ACTUATOR_BASE:=http://localhost:8080/actuator}"; export ACTUATOR_BASE
 : "${JATTACH_BIN:=/tmp/jattach}";                     export JATTACH_BIN
 MODE="${JDEBUG_MODE:-}"
@@ -128,7 +143,8 @@ header_remote() {
     printf '  %starget%s    namespace  %s%s%s\n' "$B" "$OFF" "$GN" "$NAMESPACE" "$OFF"
     printf '            selector   %s%s%s\n' "$GN" "${SELECTOR:-<any pod — press t to narrow to your app>}" "$OFF"
     printf '            container  %s%s%s\n' "$GN" "$APP_CONTAINER" "$OFF"
-    printf '            pod        %s%s%s\n' "$GN" "${POD_PIN:-<auto: first match — pick one under t>}" "$OFF"
+    printf '            pod        %s%s%s%s\n' "$GN" "${POD_PIN:-<auto: first match — pick one under t>}" "$OFF" \
+        "${SAVED_POD_GONE:+  ${YL}(your previous pin $SAVED_POD_GONE no longer exists — back to auto)${OFF}}"
     printf '  %sactuator%s  %s%s%s\n' "$B" "$OFF" "$GN" "$ACTUATOR_BASE" "$OFF"
     printf '            %s↳ press %st%s%s to change target/actuator · %sm%s%s to switch mode%s\n' "$DIM" "$OFF$GN" "$OFF" "$DIM" "$GN" "$OFF" "$DIM" "$OFF"
     printf '  %skubeconfig%s %s\n' "$B" "$OFF" "${KUBECONFIG:-"(default context)"}"
@@ -267,6 +283,7 @@ retarget() {
         printf '   %ss%s  selector    %s%s%s\n' "$GN" "$OFF" "$GN" "${SELECTOR:-<any pod>}" "$OFF"
         printf '   %sp%s  pod         %s%s%s\n' "$GN" "$OFF" "$GN" "${POD_PIN:-<auto: first match>}" "$OFF"
         printf '   %so%s  container   %s%s%s\n' "$GN" "$OFF" "$GN" "$APP_CONTAINER" "$OFF"
+        # (selections are saved on exit and remembered next session)
         printf '   %sa%s  actuator    %s%s%s\n' "$GN" "$OFF" "$GN" "$ACTUATOR_BASE" "$OFF"
         printf '  > '
         read -rn1 k || break; printf '\n'
@@ -309,6 +326,7 @@ retarget() {
     done
     export NAMESPACE SELECTOR APP_CONTAINER ACTUATOR_BASE
     CLUSTER_TS=-999   # target changed — re-probe reachability for the header
+    save_target       # remember these selections for the next session
 }
 
 # pick_pod — when several pods match, let the user pin one instead of silently
@@ -316,6 +334,7 @@ retarget() {
 # pod is usually the one worth debugging.
 pick_pod() {
     POD_PIN=""
+    SAVED_POD_GONE=""
     local pods
     pods="$(kubectl -n "$NAMESPACE" get pods ${SELECTOR:+-l "$SELECTOR"} \
         -o jsonpath='{range .items[*]}{.metadata.name}{"  "}{.status.phase}{"  restarts="}{.status.containerStatuses[0].restartCount}{"\n"}{end}' 2>/dev/null)"
@@ -350,6 +369,7 @@ local_settings() {
     printf '  jattach binary    [%s]: ' "$JATTACH_BIN";   read -r v; [[ -n "$v" ]] && JATTACH_BIN="$v"
     printf '  JVM pid           [%s]: ' "${JVM_PID:-auto}"; read -r v; [[ -n "$v" ]] && export JVM_PID="$v"
     export ACTUATOR_BASE JATTACH_BIN
+    save_target
 }
 
 # --- jattach staging (local modes) -------------------------------------------
@@ -611,6 +631,13 @@ dispatch_local() {
 # `tui.sh wizard` (via `jdebug wizard`) jumps straight into the guided flow.
 if [[ "${1:-}" == wizard ]]; then MODE=1; wizard; bye; fi
 [[ -n "$MODE" ]] || choose_mode
+# A remembered pod pin may have died since last session — check once, fall
+# back to auto with a visible notice rather than failing every capture.
+if [[ "$MODE" == 1 && -n "$POD_PIN" ]]; then
+    if ! kubectl -n "$NAMESPACE" get pod "$POD_PIN" -o name >/dev/null 2>&1; then
+        SAVED_POD_GONE="$POD_PIN"; POD_PIN=""
+    fi
+fi
 while true; do
     if [[ "$MODE" == 1 ]]; then menu_remote; read -rn1 choice || bye; printf '\n'; dispatch_remote "$choice" || continue
     else menu_local; read -rn1 choice || bye; printf '\n'; dispatch_local "$choice" || continue; fi

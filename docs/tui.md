@@ -64,6 +64,10 @@ Free text remains available everywhere — and when permissions don't allow
 enumerating (e.g. you can't list namespaces), the dropdown says so and drops
 straight to a typed prompt.
 
+Selections are **remembered between sessions** (`~/.config/jdebug/target` —
+delete to forget). A pinned pod that has since died is detected at startup
+and falls back to auto with a visible notice.
+
 ## Output is never lost
 
 - The screen clears **once**, at startup. After that everything scrolls —

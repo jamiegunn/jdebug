@@ -160,7 +160,9 @@ install_jattach() {
 
 # Find the actual JVM PID inside the pod. With shareProcessNamespace=true,
 # pod PID 1 is the pause sandbox container — the JVM is somewhere else.
-# We look for the first process whose comm is "java".
+# First pass: comm == "java". Second pass: any process that maps libjvm —
+# catches custom launchers (jwebserver, jshell, jlink images) whose comm
+# is not "java".
 find_jvm_pid() {
     local pid
     pid="$(kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- sh -c '
@@ -169,10 +171,15 @@ find_jvm_pid() {
                 echo "$p"; exit 0
             fi
         done
+        for p in $(ls /proc 2>/dev/null | grep -E "^[0-9]+$"); do
+            if grep -q libjvm "/proc/$p/maps" 2>/dev/null; then
+                echo "$p"; exit 0
+            fi
+        done
         exit 1
     ' 2>/dev/null || true)"
     if [[ -z "$pid" ]]; then
-        err "no 'java' process found inside pod $POD container $APP_CONTAINER"
+        err "no JVM found inside pod $POD container $APP_CONTAINER (no 'java' process, nothing maps libjvm)"
         exit 1
     fi
     echo "$pid"

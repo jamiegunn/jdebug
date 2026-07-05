@@ -143,10 +143,24 @@ case "$cmd" in
         # DOWN status returns, so no curl -f here.
         hfetch() { kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- sh -c "if command -v curl >/dev/null 2>&1; then curl -sS '$1'; else wget -qO- '$1'; fi"; }
         show_cmd "kubectl -n $NAMESPACE exec $POD -c $APP_CONTAINER -- sh -c '<curl-or-wget> $ACTUATOR_BASE/health'"
+        BODY="$(hfetch "$ACTUATOR_BASE/health" || true)"
+        if [[ -z "$BODY" ]]; then
+            err "no response from $ACTUATOR_BASE/health in pod $POD"
+            err "  → wrong port/path? pass --actuator-base <url>"
+            err "  → actuator absent or secured? captures still work without it: --via jattach"
+            exit 3
+        fi
+        if [[ "$BODY" != *'"status"'* ]]; then
+            err "the response from $ACTUATOR_BASE/health doesn't look like actuator health output:"
+            printf '%s\n' "$BODY" | head -3 | sed 's/^/    /' >&2
+            err "  → something else answers on that port — wrong port/path? pass --actuator-base <url>"
+            err "  → not a Spring Boot app? captures still work without actuator: --via jattach"
+            exit 3
+        fi
         if command -v python3 >/dev/null 2>&1; then
-            hfetch "$ACTUATOR_BASE/health" | python3 -m json.tool
+            printf '%s' "$BODY" | python3 -m json.tool 2>/dev/null || printf '%s\n' "$BODY"
         else
-            hfetch "$ACTUATOR_BASE/health"; echo
+            printf '%s\n' "$BODY"
         fi
         for probe in liveness readiness; do
             printf '%-10s: ' "$probe"
@@ -179,7 +193,7 @@ case "$cmd" in
         if [[ -n "$METRIC" ]]; then
             show_cmd "kubectl -n $NAMESPACE exec $POD -c $APP_CONTAINER -- sh -c '<curl-or-wget> $ACTUATOR_BASE/metrics/$METRIC'"
             if command -v python3 >/dev/null 2>&1; then
-                mfetch "$ACTUATOR_BASE/metrics/$METRIC" | python3 -m json.tool || mfail
+                mfetch "$ACTUATOR_BASE/metrics/$METRIC" | python3 -m json.tool 2>/dev/null || mfail
             else
                 mfetch "$ACTUATOR_BASE/metrics/$METRIC" || mfail; echo
             fi
