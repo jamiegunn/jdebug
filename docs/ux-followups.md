@@ -93,3 +93,125 @@ These stay diagnostic-first. Recovery guidance (scale up, roll back, loosen a
 probe, raise a limit) should be explanation or copy-paste unless a strongly
 confirmed remediation flow is designed — the pattern set by `re-roll` and
 `kill pod` (hard confirm + full risk brief).
+
+## Runtime context / app wiring
+
+**Goal:** answer “what is this app, what exposes it, what config is it running
+with, and what dependencies might be miswired?” without making the user jump
+between pod specs, Services, ConfigMaps, Secrets, and JVM commands.
+
+**Entry point:** expand `jdebug topology` or add a sibling read-only verb such
+as `jdebug context`. Organize the output into scan-friendly sections:
+
+- Owner and rollout: Deployment/ReplicaSet revision, ready/updated/available
+  replicas, strategy, image tag/digest, command/args, rollout status.
+- Autoscale: HPA current/min/max, ScalingActive state, metric failures, and
+  Deployment `replicas:` vs HPA ownership conflicts.
+- Services and ports: Services selecting the pod, Service type, ClusterIP,
+  external IP/hostname, ports, targetPorts, named ports, endpoint readiness,
+  and whether the selected pod is in endpoints.
+- Probes: readiness/liveness/startup probe path/port/type, timeouts, failure
+  thresholds, and recent probe failures.
+- Environment: container env, `envFrom`, ConfigMap/Secret references, JVM env
+  (`JAVA_TOOL_OPTIONS`, `JAVA_OPTS`, `JDK_JAVA_OPTIONS`), active Spring
+  profiles, timezone, and proxy variables.
+- JVM runtime: Java version, `jcmd VM.flags`, heap/GC flags, system properties
+  where safe, NMT/JFR availability.
+- Volumes and storage: mounts, PVCs, emptyDir/tmpfs, ConfigMap/Secret volumes,
+  read-only flags, and memory-backed mounts that can contribute to OOMs.
+- Routes and policy: Ingress/Gateway/mesh routes and NetworkPolicy where
+  discoverable.
+
+Every section should print or link to the command/API used to gather it. Secret
+values must be redacted; show names/keys/references only.
+
+## Dependency-aware checks: Valkey / Redis-compatible
+
+**Goal:** when env/config suggests Valkey or Redis-compatible clients, surface
+the configuration that commonly explains connectivity and cluster routing
+failures.
+
+Useful safe clues/checks:
+
+- Client host/port/db/SSL settings from env/config, with secrets redacted.
+- `cluster-enabled`.
+- `cluster-announce-hostname`, `cluster-announce-ip`,
+  `cluster-announce-port`, `cluster-announce-tls-port`,
+  `cluster-announce-bus-port`.
+- `bind`, `protected-mode`, `port`, `tls-port`.
+- ACL / `requirepass` / `masterauth` presence, redacted.
+- `replica-announce-ip`, `replica-announce-port`.
+- `appendonly`, `maxmemory`, `maxmemory-policy`, `timeout`, `tcp-keepalive`,
+  `client-output-buffer-limit`.
+- `cluster-node-timeout`, `cluster-require-full-coverage`,
+  `cluster-migration-barrier`.
+
+Wrong announce settings are especially useful to flag because they create the
+classic “works inside the pod, clients fail from elsewhere” incident shape.
+
+## Captures browser redesign
+
+**Goal:** make captured evidence easy to trust and navigate, especially after
+retargeting to another pod.
+
+Design points:
+
+- Show the current scope: selected pod, all pods, current session, or a
+  drilled-in timestamp folder.
+- Reset or explicitly prompt when the selected pod changes but the browser is
+  pinned to a previous pod/session.
+- Add explicit refresh and “last refreshed” state.
+- Add filters/tabs: current pod, all pods, snapshots, threads, heaps, logs,
+  recent.
+- Show capture type, route/source, pod, timestamp, size, and recommended next
+  action.
+- Make `a analyzes current view` precise.
+- Support keyboard selection in addition to click-to-open.
+- Preserve sensitive-evidence warnings for heaps and logs.
+
+## Trends transparency
+
+**Goal:** make the trends pane understandable without reading source code.
+
+The UI should explain:
+
+- One sample is added per panel refresh, currently about every 20 seconds.
+- Values are point-in-time samples from Kubernetes/JVM reads, not averages
+  computed by jdebug.
+- `mem` means container memory percentage of limit.
+- `cpu` means Kubernetes CPU usage scaled against the limit when available.
+- `rst` means restart count markers; `▲` means the restart count increased at
+  that sample.
+- History is capped at `histCap` samples, roughly 30 minutes at 20 seconds per
+  sample.
+- Gaps mean missing metrics or unknown values.
+
+Prefer `restarts` over `rst` where width allows, and provide a trends detail
+card or inline legend.
+
+## Idle/background activity transparency
+
+**Goal:** answer “what is the TUI doing in the background while I am just
+looking at it?” and let the operator control that activity.
+
+Current shape to expose:
+
+- Live logs refresh about every 5 seconds.
+- Target/panel/dashboard reads refresh around every 20 seconds and may burst
+  several Kubernetes reads.
+- Actuator heap metric reads touch the app/JVM when actuator works.
+- `jcmd GC.heap_info` fallback is read-only but heavier and should not be
+  repeated in quiet mode.
+
+Controls to add:
+
+- Visible status such as `idle refresh: logs 5s · target 20s · actuator heap 20s`.
+- Background probes summary: `kubectl logs, pod/top/hpa, actuator metrics`.
+- Pause/resume background refresh.
+- Manual refresh once.
+- Slow down / speed up intervals.
+- Quiet mode: disable logs and JVM probes, keep manual refresh.
+
+Classify cost/risk in the transparency card: low-cost Kubernetes reads,
+medium-cost logs/top, app/JVM-touching actuator metrics, heavier JVM-touching
+`jcmd` fallback.
