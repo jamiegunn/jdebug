@@ -26,7 +26,10 @@ func initSessionLog(kit string) {
 	sessionLog = filepath.Join(dumpsDir(kit), "session-"+time.Now().Format("20060102-150405")+".log")
 }
 
-// runShell echoes the command, runs it with the terminal, tees to the log.
+// runShell echoes the command, runs it on the NORMAL screen (the dashboard is
+// an altscreen app; ExecProcess drops out of it), tees to the session log,
+// prints ✓/✗, and pauses for a key so the output can be read before the
+// dashboard resumes. Output therefore lands in scrollback AND the log.
 func runShell(env []string, words ...string) tea.Cmd {
 	var qs []string
 	for _, w := range words {
@@ -34,9 +37,16 @@ func runShell(env []string, words ...string) tea.Cmd {
 	}
 	joined := strings.Join(qs, " ")
 	_ = os.MkdirAll(filepath.Dir(sessionLog), 0o755)
-	script := fmt.Sprintf(
-		"set -o pipefail; printf '\\n$ %%s\\n\\n' %s | tee -a %s; { %s; } 2>&1 | tee -a %s",
-		shq(strings.Join(words, " ")), shq(sessionLog), joined, shq(sessionLog))
+	script := fmt.Sprintf(`set -o pipefail
+printf '\n$ %%s\n\n' %s | tee -a %s
+{ %s; } 2>&1 | tee -a %s; rc=$?
+if [ $rc -eq 0 ]; then printf '\n\033[1;32m✓ done\033[0m'
+else printf '\n\033[1;31m✗ that didn'\''t work (exit %%s) — the messages above say why\033[0m' "$rc"; fi
+printf '\n\033[2many key for the menu — output saved to %%s\033[0m ' %s
+IFS= read -rsn1 _ </dev/tty || true
+printf '\n'
+exit $rc`,
+		shq(strings.Join(words, " ")), shq(sessionLog), joined, shq(sessionLog), shq(sessionLog))
 	c := exec.Command("bash", "-c", script)
 	c.Env = append(os.Environ(), env...)
 	return tea.ExecProcess(c, func(err error) tea.Msg { return execDoneMsg{err} })

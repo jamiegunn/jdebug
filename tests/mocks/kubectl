@@ -34,6 +34,13 @@ case "$*" in
         echo "pod/pod-x" ;;
     *" get pod "*jsonpath*)
         printf 'app\nsidecar\n' ;;
+    *" get pod "*"-o json"*)
+        [ "${MOCK_POD_GONE:-}" = 1 ] && exit 1
+        printf '{"status":{"phase":"Running","containerStatuses":[{"name":"app","restartCount":3,"lastState":{"terminated":{"reason":"OOMKilled"}}}]},"spec":{"containers":[{"name":"app","resources":{"limits":{"memory":"512Mi","cpu":"500m"}}}]}}' ;;
+    *" top pod "*)
+        printf 'pod-a   250m   480Mi\n' ;;
+    *"get hpa"*"--no-headers"*)
+        printf 'app-hpa   Deployment/app   cpu: 50%%/80%%   2   4   3   10h\n' ;;
     *"get pods"*jsonpath*)
         case "${MOCK_PODS:-one}" in
             none)  exit 0 ;;

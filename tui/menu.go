@@ -17,10 +17,21 @@ func (m model) tw() int {
 	if w < 78 {
 		w = 78
 	}
-	if w > 120 {
-		w = 120
+	if w > 132 {
+		w = 132
 	}
 	return w
+}
+
+// showPanel: the live target panel needs room; drop it on narrow terminals.
+func (m model) showPanel() bool { return m.tw() >= 104 }
+
+// leftW is the width the menu body uses (full width minus the panel column).
+func (m model) leftW() int {
+	if m.showPanel() {
+		return m.tw() - panelW - 2
+	}
+	return m.tw()
 }
 
 func rule(w int) string { return " " + cRule.Render(strings.Repeat("─", w-2)) }
@@ -91,14 +102,18 @@ func (m model) headerLocal(jattachOK bool) string {
 		sep + cFaint.Render("[s] settings  [M] mode") + "\n" + rule(w)
 }
 
-func banner() string {
+func (m model) banner() string {
+	desc := "— describe the symptom, it runs the right captures"
+	if m.leftW() < 96 {
+		desc = "— describe the symptom"
+	}
 	return "\n " + cAcc.Render("▎") + cKey.Render("▸ w") + "  " +
-		cTitle.Render("guided diagnosis") + " " +
-		cMuted.Render("— describe the symptom, it runs the right captures") + "\n"
+		cTitle.Render("guided diagnosis") + " " + cMuted.Render(desc) +
+		"  " + cOK.Render("← start here") + "\n"
 }
 
 func (m model) section(label, sub string) string {
-	w := m.tw()
+	w := m.leftW()
 	used := 1 + len(label) + 1
 	if sub != "" {
 		used += 2 + lipgloss.Width(sub)
@@ -119,7 +134,7 @@ type action struct {
 }
 
 func (m model) row(a action) string {
-	w := m.tw()
+	w := m.leftW()
 	dot := cSafe
 	switch a.risk {
 	case "caution":
@@ -207,19 +222,21 @@ func (m model) menuView() string {
 			b.WriteString(prompt())
 			return b.String()
 		}
-		b.WriteString(banner() + "\n")
-		b.WriteString(m.section("INSPECT", "read-only") + "\n")
+		var body strings.Builder
+		body.WriteString(m.banner() + "\n")
+		body.WriteString(m.section("INSPECT", "read-only") + "\n")
 		for _, a := range remoteActions.inspect {
-			b.WriteString(m.row(a) + "\n")
+			body.WriteString(m.row(a) + "\n")
 		}
-		b.WriteString("\n" + m.section("CAPTURE", "saves to dumps/ · [d] browse") + "\n")
+		body.WriteString("\n" + m.section("CAPTURE", "saves to dumps/ · [d] browse") + "\n")
 		for _, a := range remoteActions.capture {
-			b.WriteString(m.row(a) + "\n")
+			body.WriteString(m.row(a) + "\n")
 		}
-		b.WriteString("\n" + m.section("LOGS", "") + "\n")
+		body.WriteString("\n" + m.section("LOGS", "") + "\n")
 		for _, a := range remoteActions.logs {
-			b.WriteString(m.row(a) + "\n")
+			body.WriteString(m.row(a) + "\n")
 		}
+		b.WriteString("\n" + m.withPanel(body.String()))
 		b.WriteString("\n" + m.footer("[a] analyze  [c] check setup  [?] help  [q] quit"))
 		b.WriteString(prompt())
 		return b.String()
@@ -235,18 +252,30 @@ func (m model) menuView() string {
 		b.WriteString(prompt())
 		return b.String()
 	}
-	b.WriteString(banner() + "\n")
-	b.WriteString(m.section("INSPECT", "read-only") + "\n")
+	var body strings.Builder
+	body.WriteString(m.banner() + "\n")
+	body.WriteString(m.section("INSPECT", "read-only") + "\n")
 	for _, a := range localActions.inspect {
-		b.WriteString(m.row(a) + "\n")
+		body.WriteString(m.row(a) + "\n")
 	}
-	b.WriteString("\n" + m.section("CAPTURE", "saves to /tmp · [d] browse") + "\n")
+	body.WriteString("\n" + m.section("CAPTURE", "saves to /tmp · [d] browse") + "\n")
 	for _, a := range localActions.capture {
-		b.WriteString(m.row(a) + "\n")
+		body.WriteString(m.row(a) + "\n")
 	}
+	b.WriteString("\n" + m.withPanel(body.String()))
 	b.WriteString("\n" + m.footer("[a] analyze  [i] stage jattach  [s] settings  [?] help  [q] quit"))
 	b.WriteString(prompt())
 	return b.String()
+}
+
+// withPanel joins the menu body with the live target panel when there's room.
+func (m model) withPanel(body string) string {
+	if !m.showPanel() {
+		return body
+	}
+	h := strings.Count(body, "\n") + 1
+	left := lipgloss.NewStyle().Width(m.leftW()).Render(body)
+	return lipgloss.JoinHorizontal(lipgloss.Top, left, m.panelView(h))
 }
 
 // --- key handling ---------------------------------------------------------------

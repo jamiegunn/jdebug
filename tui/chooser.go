@@ -36,5 +36,11 @@ func (m model) chooserKey(key string) (tea.Model, tea.Cmd) {
 		m.mode = 1
 	}
 	m.scr = scMenu
+	// probe the chosen mode now so the menu's first frame is truthful
+	if m.mode == 1 {
+		m.remote = remoteProbe(m.t)
+		return m, fetchPanel(m.kit, m.t)
+	}
+	m.local = localProbe(m.kit, m.t)
 	return m, nil
 }

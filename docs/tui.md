@@ -16,10 +16,14 @@ config, and session-log behavior:
 
 - **Go (Bubble Tea)** — the preferred frontend. Build once with `make tui`
   (needs a Go toolchain); `jdebug` automatically prefers the built binary at
-  `tui/jdebug-tui`. Richer rendering, real text input, arrow-key pickers.
-  Runs inline (no alternate screen), and commands execute with your real
-  terminal — output stays in scrollback and the session log, exactly like
-  the classic menu. Every action shells out to the same tested bash CLI.
+  `tui/jdebug-tui`. A **full-screen dashboard**: no menu-scroll clutter, a
+  **live TARGET panel** on the right (pod phase, restarts, last exit reason,
+  memory/CPU vs limits, HPA, JVM heap vs max — refreshed every 20 s), and a
+  **NEXT box** that turns that data into concrete key presses ("OOMKilled
+  last restart → w flow 1", "memory 94% of limit → m"). Commands still run
+  on your normal screen — output stays in scrollback and the session log,
+  with a ✓/✗ verdict and an any-key pause before the dashboard resumes.
+  Every action shells out to the same tested bash CLI.
 - **bash (classic)** — the zero-dependency fallback; always available.
   Force it with `JDEBUG_CLASSIC=1`.
 

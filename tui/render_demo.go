@@ -12,12 +12,15 @@ func demoModel() model {
 	m := model{
 		kit:   ".",
 		mode:  1,
-		width: 100,
+		width: 120,
 		t: target{Namespace: "debug-demo", Selector: "", Container: "app",
 			Actuator: "http://localhost:8080/actuator", Pod: "app-debug-demo-app-6c6c4b5769-s9jdg"},
 	}
 	ctxOverride = "ddk3s"
 	m.remote = probe{OK: true, Cluster: true, When: time.Now().Add(time.Hour)}
+	m.panel = panelData{When: time.Now(), Phase: "Running", Restarts: 34, LastReason: "OOMKilled",
+		MemUse: "480Mi", MemLimit: "512Mi", MemPct: 94, CPUUse: "250m", CPULimit: "500m",
+		HPA: "app-debug-demo-app 4 replicas", HeapUsed: "121Mi", HeapMax: "1732Mi", HasDumps: true}
 	m.local = probe{OK: true, Jattach: true, When: time.Now().Add(time.Hour),
 		Lines: []string{cSafe.Render("   ✓") + cMuted.Render(" actuator answering"), cSafe.Render("   ✓") + cMuted.Render(" jattach staged")}}
 	return m

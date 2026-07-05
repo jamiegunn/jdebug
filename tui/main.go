@@ -67,11 +67,16 @@ type model struct {
 	pendHeap bool // snapshot: include heap?
 	logger   string
 
-	lastOK  bool
+	panel   panelData
 	quitMsg string
 }
 
-func (m model) Init() tea.Cmd { return nil }
+func (m model) Init() tea.Cmd {
+	if m.mode == 1 {
+		return tea.Batch(fetchPanel(m.kit, m.t), tickCmd())
+	}
+	return tickCmd()
+}
 
 func (m *model) probeRemote(force bool) probe {
 	if force || time.Since(m.remote.When) > 20*time.Second {
@@ -92,12 +97,21 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.width = v.Width
 		return m, nil
 	case execDoneMsg:
-		m.lastOK = v.err == nil
 		if m.scr == scWizard && m.wiz.active {
 			return m.wizardAdvance()
 		}
-		m.scr = scPostRun
+		if m.scr != scChooser {
+			m.scr = scMenu
+		}
+		return m, fetchPanel(m.kit, m.t)
+	case panelMsg:
+		m.panel = panelData(v)
 		return m, nil
+	case tickMsg:
+		if m.scr == scMenu && m.mode == 1 && m.remote.OK {
+			return m, tea.Batch(fetchPanel(m.kit, m.t), tickCmd())
+		}
+		return m, tickCmd()
 	case tea.KeyMsg:
 		return m.handleKey(v)
 	}
@@ -113,13 +127,6 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.menuKey(key)
 	case scHelp:
 		m.scr = scMenu
-		return m, nil
-	case scPostRun:
-		if m.prev == scChooser {
-			m.scr = scChooser
-		} else {
-			m.scr = scMenu
-		}
 		return m, nil
 	case scConfirm:
 		return m.confirmKeyPress(key)
@@ -149,8 +156,6 @@ func (m model) View() string {
 		return m.menuView()
 	case scHelp:
 		return m.helpView()
-	case scPostRun:
-		return m.postRunView()
 	case scConfirm:
 		return m.menuView() + "\n  " + cWarn.Render(m.confirmMsg) + " "
 	case scVia:
@@ -169,15 +174,6 @@ func (m model) View() string {
 		return m.wizardView()
 	}
 	return ""
-}
-
-func (m model) postRunView() string {
-	mark := cOK.Render("✓ done")
-	if !m.lastOK {
-		mark = cDisr.Render("✗ that didn't work — the messages above say why and what to try next")
-	}
-	return "\n " + mark + "\n " +
-		cFaint.Render("any key for the menu — output saved to "+sessionLog) + "\n"
 }
 
 // --- confirm helper -----------------------------------------------------------
@@ -263,11 +259,18 @@ func main() {
 			m.t.Pod = ""
 		}
 	}
+	// probe before the first frame so the opening screen is truthful
+	switch m.mode {
+	case 1:
+		m.remote = remoteProbe(m.t)
+	case 2, 3:
+		m.local = localProbe(kit, m.t)
+	}
 
 	// inline (no altscreen): output + menus share the normal scrollback.
 	// When stdin is a pipe (tests, headless drives), read keys from it rather
 	// than demanding /dev/tty.
-	var opts []tea.ProgramOption
+	opts := []tea.ProgramOption{tea.WithAltScreen()}
 	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
 		opts = append(opts, tea.WithInput(os.Stdin))
 	}
