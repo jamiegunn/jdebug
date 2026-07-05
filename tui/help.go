@@ -20,7 +20,7 @@ func (m model) helpView() string {
 		li("w wizard    ", cOK.Render("NOT SURE? START HERE.")+" tell it the symptom; it runs the right captures") +
 		li("s status    ", "anything restarting or stuck? read the hints under the output") +
 		li("h health    ", "a DOWN dependency? chase that system first") +
-		li("d / a       ", "see what you captured / analyze it all in one pass") +
+		li("d / a       ", "browse your captures (↑↓ select · ↵ open · Tab filters) / analyze it all") +
 		h("KEYS NOT SHOWN ON THE MENU") +
 		li(".           ", "what does each command do? source, risk, deps (or right-click a row)") +
 		li("b           ", "what's blocked right now + how to unblock it (RBAC, metrics, actuator…)") +

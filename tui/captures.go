@@ -23,6 +23,7 @@ import (
 
 type capEntry struct {
 	Name    string
+	Path    string // absolute path (set for flat focus-browser entries)
 	Size    int64
 	Mod     time.Time
 	Dir     bool

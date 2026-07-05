@@ -85,8 +85,12 @@ type model struct {
 	caps         []capEntry
 	capsCwd      string // CAPTURES browser: explicit browse dir ("" = pod default)
 	capsOff      int
-	capsWhen     time.Time // when the captures list was last refreshed
-	pods         []string  // PODS pane: what the selector/namespace matches
+	capsWhen     time.Time  // when the captures list was last refreshed
+	capsFocus    bool       // the full-screen keyboard captures browser (d) is open
+	capsSel      int        // selected row in the focus browser
+	capsFilter   string     // focus-browser filter: all|heaps|threads|logs|snapshots
+	capsFlat     []capEntry // flat recursive capture list for the focus browser
+	pods         []string   // PODS pane: what the selector/namespace matches
 	podsScope    string
 	podsErr      string
 	podsOff      int
@@ -283,6 +287,13 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			if m.capsOff > len(m.caps) {
 				m.capsOff = 0
 			}
+		}
+		return m, nil
+	case capsFlatMsg:
+		m.capsFlat = v.entries
+		m.capsWhen = time.Now()
+		if m.capsSel >= len(m.capsFocusList()) {
+			m.capsSel = 0
 		}
 		return m, nil
 	case podsMsg:

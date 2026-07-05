@@ -184,27 +184,24 @@ Original clue list:
 Wrong announce settings are especially useful to flag because they create the
 classic “works inside the pod, clients fail from elsewhere” incident shape.
 
-## Captures browser redesign — PARTIALLY SHIPPED
+## Captures browser redesign — SHIPPED
 
-The reliability + clarity concerns are done; the fuller filter/keyboard redesign
-is the remaining refinement.
-
-Shipped:
-- **Scope indicator** — the pane title names what you're looking at: `this pod`,
-  `all pods`, or the drilled-in session path (`capsScope()`).
+- **Scope indicator** — the dashboard pane title names what you're looking at:
+  `this pod`, `all pods`, or the drilled-in session path (`capsScope()`).
 - **Pod-change reset** — switching pod (click) or committing a target change
   (editor) un-pins `capsCwd`, so the browser never sticks to the previous pod;
-  the pod-click path also refetches immediately.
+  the pod-click path refetches immediately.
 - **"Last refreshed" state** — the title shows `refreshed Ns ago`; `r` forces a
-  refresh (via `refreshNow`), and each entry already shows type·size·age·next
-  action, with invalid `.hprof` marked `⚠`.
+  refresh; each entry shows type·size·age·next-action, invalid `.hprof` marked `⚠`.
+- **Full keyboard browser + filter tabs** — `d` opens a full-screen captures
+  browser (`captures_focus.go`): a FLAT, newest-first list of every capture for
+  the pod across sessions, with filter tabs (`all / heaps / threads / logs /
+  snapshots`), `↑↓` select · `↵` open · `a` analyze · `Tab` filter · `r` refresh
+  · `esc` back, invalid heaps marked. Go-only richer interaction (bash `d` keeps
+  the `jdebug dumps` text listing; the `jdebug dumps` CLI is unchanged).
 
-Remaining refinement:
-- Filter tabs (current pod / all / snapshots / threads / heaps / logs / recent).
-- Keyboard selection (↑/↓/↵) alongside click — needs a focus mode like the log
-  pane's `f`, or a dedicated full-screen captures screen.
-- Per-entry route/source (which tier produced it) and a fully explicit
-  "`a` analyzes: <the open file | the whole tree>" label.
+Remaining refinement: a per-entry route/source tag (which capture tier produced
+each file) and a `recent`-across-all-pods filter.
 
 ## Invalid heap capture recovery — SHIPPED
 

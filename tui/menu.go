@@ -301,6 +301,9 @@ func (m model) menuView() string {
 	var b strings.Builder
 	if m.mode == 1 {
 		p := m.remote
+		if p.OK && m.capsFocus {
+			return m.capsFocusView()
+		}
 		if p.OK && m.logs.focus {
 			return m.logFocusView()
 		}
@@ -382,6 +385,9 @@ func (m model) withPanel(body string) string {
 func (m model) menuKey(key string) (tea.Model, tea.Cmd) {
 	if key == "ctrl+c" {
 		return m, tea.Quit
+	}
+	if m.capsFocus {
+		return m.capsFocusKey(key)
 	}
 	if m.logs.focus {
 		return m.logFocusKey(key)
@@ -534,7 +540,7 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 	case "a", "A":
 		return m.analyzeContext() // the open file, else the whole tree
 	case "d", "D":
-		return m.quickCLI(false, "dumps")
+		return m.openCapsFocus() // full-screen keyboard captures browser
 	case "i", "I":
 		return m.quickCLI(true, "install-jattach")
 	case "p", "P":

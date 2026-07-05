@@ -123,6 +123,19 @@ func renderDemo(what string) string {
 			cFaint.Render("   · container — checked once a pod is selected"),
 		}}
 		return m.menuView()
+	case "capsfocus":
+		m.scr = scMenu
+		m.width, m.height = 120, 30
+		m.capsFocus = true
+		m.capsFilter = "all"
+		m.capsWhen = time.Now()
+		m.capsFlat = []capEntry{
+			{Name: "20260705T103000Z/heap-actuator.hprof", Path: "/x", Size: 34 << 20, Mod: time.Now().Add(-3 * time.Minute)},
+			{Name: "20260705T103000Z/threads-actuator.txt", Path: "/x", Size: 12 << 10, Mod: time.Now().Add(-4 * time.Minute)},
+			{Name: "20260705T091500Z/heap-actuator.hprof", Path: "/x", Size: 8 << 10, Mod: time.Now().Add(-2 * time.Hour), Invalid: true},
+			{Name: "20260705T091500Z/tail-logs.txt", Path: "/x", Size: 40 << 10, Mod: time.Now().Add(-2 * time.Hour)},
+		}
+		return m.capsFocusView()
 	case "runbook":
 		// the demo panel is crash-looping + OOM + at-max + mem-pressure → several cards
 		m.scr = scRunbook
@@ -150,5 +163,5 @@ func renderDemo(what string) string {
 		m.scr = scWizard
 		return m.wizardView()
 	}
-	return "unknown screen: " + what + " (menu|dashboard|compact|focus|output|runpane|gate|local|help|chooser|editor|wizard|blocked|runbook)"
+	return "unknown screen: " + what + " (menu|dashboard|compact|focus|output|runpane|gate|local|help|chooser|editor|wizard|blocked|runbook|capsfocus)"
 }
