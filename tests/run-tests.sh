@@ -107,6 +107,20 @@ MOCK_EXEC_OUT='{"status":"UP"}' run_case ./jdebug health
 assert_has "health explains UP/DOWN reading" "chase that system first"
 assert_has "health UP: bottom line" "the app says it is healthy"
 
+# secured actuator: pod_fetch applies auth from $ACTUATOR_AUTH, referencing
+# pod env vars (the emitted snippet expands them IN THE POD, secret never local)
+section "secured actuator (auth is a pod-env reference)"
+run_case bash -c 'source lib/common.sh; ACTUATOR_AUTH=bearer:MGMT_TOKEN pod_fetch http://x/actuator/health'
+assert_has "bearer: adds the Authorization header" "Authorization: Bearer"
+assert_has "bearer: references the pod env var, unexpanded" 'Bearer $MGMT_TOKEN'
+run_case bash -c 'source lib/common.sh; ACTUATOR_AUTH=basic:U:P pod_fetch http://x/actuator/health'
+assert_has "basic: uses curl -u from pod env vars" 'curl -fsS -u "$U:$P"'
+run_case bash -c 'source lib/common.sh; pod_fetch http://x/actuator/health'
+assert_not "no auth: no Authorization header when unset" "Authorization"
+# the secured-actuator failure guidance is present in the capture script
+run_case grep -c "set auth in the target editor" capture/actuator.sh
+assert_has "actuator failure points at auth setup" "2"
+
 run_case ./jdebug top
 assert_has "top explains what near-limit means" "OOM risk"
 assert_has "top names the next move" "Next:"

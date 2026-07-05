@@ -83,7 +83,9 @@ case "$ACTION" in
         if ! kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
                 sh -c "$(pod_fetch "$ACTUATOR_BASE/threaddump" "$ACCEPT")" > "$LOCAL_PATH"; then
             err "actuator threaddump failed — actuator absent/disabled, app not serving HTTP, or secured."
-            err "  jattach needs NO actuator (it speaks the JVM attach protocol). Capture via tier 2:"
+            err "  → secured (401/403)? set auth in the target editor (k): bearer:ENV_VAR or basic:USER:PASS,"
+            err "    naming the pod's own credential env vars (the secret stays in the pod)."
+            err "  → or skip actuator entirely — jattach speaks the JVM attach protocol, no HTTP:"
             err "    jdebug threads --via jattach -n $NAMESPACE $POD"
             rm -f "$LOCAL_PATH"
             exit 1
@@ -105,7 +107,7 @@ case "$ACTION" in
         if ! kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
                 sh -c "$(pod_fetch "$ACTUATOR_BASE/heapdump")" > "$LOCAL_PATH"; then
             err "actuator heapdump failed — actuator absent/disabled, app not serving HTTP, or secured."
-            err "  jattach needs NO actuator (it speaks the JVM attach protocol). Capture via tier 2:"
+            err "  → secured (401/403)? set auth in the target editor (k). → or skip actuator entirely:"
             err "    jdebug heap --via jattach --confirm -n $NAMESPACE $POD"
             rm -f "$LOCAL_PATH"
             exit 1

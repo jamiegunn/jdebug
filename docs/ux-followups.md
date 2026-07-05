@@ -34,26 +34,22 @@ Remaining refinement: per-panel-signal cards (`last exit` → termination reason
 + exit-code meaning; `autoscale` → HPA conditions). Today left-clicking the
 panel runs `why`, which narrates most of this in one pass.
 
-## Actuator credentials
+## Actuator credentials — SHIPPED
 
-**Goal:** stop assuming unauthenticated localhost actuator. Secured endpoints
-are common in production.
+The target editor gains an **auth** field (`k`). It stores only a REFERENCE to
+the pod's own credential env vars — `bearer:ENV_VAR` or
+`basic:USER_VAR:PASS_VAR` — never a secret value. Because the actuator is
+called from *inside* the pod (`kubectl exec … curl localhost:…`), `pod_fetch`
+emits the auth header with a literal `$ENV_VAR` that the pod's shell expands:
+the secret is read in the pod and never touches jdebug's config or the
+operator's machine. The prompt explains the usual source (a Kubernetes Secret
+mounted as env — verify with `T`, then `env | grep -i actuator`) and does NOT
+guess a default password. When actuator fetches fail, the capture scripts point
+users at this setup or at the no-HTTP jattach route.
 
-**Design (no guessed defaults, no careless secret storage):**
-
-- Retarget/settings gains an *actuator auth* field alongside the URL: none /
-  bearer token / basic. Store only a reference (env var name or a path), never
-  the secret value, in the shared target config.
-- At call time, read the secret from the referenced env var / file so it never
-  lands on disk via jdebug.
-- Explain where the credential usually comes from — a Kubernetes Secret
-  mounted into the pod, an env var, or (in some local/dev setups only) the
-  generated password printed to the app log at startup. **Do not assume a
-  default password**; tell the user how to verify the source.
-- When actuator auth is missing or wrong, the health/metrics failures already
-  route through `explain_kubectl_error`-style messaging — extend it to say
-  "secured actuator (401/403) — provide credentials in settings, or capture
-  via jattach (needs no HTTP)".
+Remaining refinement: detect a 401/403 specifically (curl `-w`/`--fail-with-body`)
+to distinguish "secured" from "absent", and pre-fill the likely env-var name by
+reading the pod spec's `env`.
 
 ## Operator incident workflows
 

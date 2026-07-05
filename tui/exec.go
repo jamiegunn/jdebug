@@ -96,6 +96,7 @@ func targetEnv(t target) []string {
 		"SELECTOR=" + t.Selector,
 		"APP_CONTAINER=" + t.Container,
 		"ACTUATOR_BASE=" + t.Actuator,
+		"ACTUATOR_AUTH=" + t.ActuatorAuth, // a reference, not a secret
 	}
 }
 

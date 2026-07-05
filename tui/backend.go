@@ -24,7 +24,10 @@ type target struct {
 	Selector  string
 	Container string
 	Actuator  string
-	Pod       string
+	// ActuatorAuth is a REFERENCE to pod env vars for a secured actuator
+	// ("bearer:VAR" / "basic:USERVAR:PASSVAR"), never a secret value.
+	ActuatorAuth string
+	Pod          string
 }
 
 func defaultTarget() target {
@@ -99,6 +102,8 @@ func loadTarget() target {
 			if v != "" {
 				t.Actuator = v
 			}
+		case "SAVED_ACTUATOR_AUTH":
+			t.ActuatorAuth = v
 		case "SAVED_POD":
 			t.Pod = v
 		}
@@ -124,8 +129,8 @@ func saveTarget(t target) {
 	_ = os.MkdirAll(dir, 0o755)
 	q := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 	body := fmt.Sprintf(
-		"# written by jdebug's target editor — delete this file to forget\nSAVED_NAMESPACE=%s\nSAVED_SELECTOR=%s\nSAVED_CONTAINER=%s\nSAVED_ACTUATOR=%s\nSAVED_POD=%s\n",
-		q(t.Namespace), q(t.Selector), q(t.Container), q(t.Actuator), q(t.Pod))
+		"# written by jdebug's target editor — delete this file to forget\nSAVED_NAMESPACE=%s\nSAVED_SELECTOR=%s\nSAVED_CONTAINER=%s\nSAVED_ACTUATOR=%s\nSAVED_ACTUATOR_AUTH=%s\nSAVED_POD=%s\n",
+		q(t.Namespace), q(t.Selector), q(t.Container), q(t.Actuator), q(t.ActuatorAuth), q(t.Pod))
 	_ = os.WriteFile(filepath.Join(dir, "target"), []byte(body), 0o644)
 }
 

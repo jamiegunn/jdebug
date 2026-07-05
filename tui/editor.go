@@ -60,7 +60,8 @@ func (m model) editorView() string {
 		row("s", "selector", sel, "label that finds your app's pods") + "\n" +
 		row("p", "pod", pod, "one running copy of the app") + "\n" +
 		row("o", "container", m.t.Container, "the app's box inside the pod") + "\n" +
-		row("a", "actuator", m.t.Actuator, "Spring Boot admin endpoint in the app") + "\n"
+		row("a", "actuator", m.t.Actuator, "Spring Boot admin endpoint in the app") + "\n" +
+		row("k", "auth", authDisplay(m.t.ActuatorAuth), "secured actuator? name the pod's credential env vars") + "\n"
 	if next := m.editorNext(); next != "" {
 		out += "\n  " + cOK.Render("▸ ") + cBody.Render(next) + "\n"
 	}
@@ -146,6 +147,14 @@ func (m model) editorKey(key string) (tea.Model, tea.Cmd) {
 		return m.openPicker("Container"+ternary(base != "", " (in "+base+")", ""), conts, m.t.Container, true, pickContainer)
 	case "a", "A":
 		m.input = inputBox{title: "actuator base [" + m.t.Actuator + "]:", then: inputActuator}
+		m.prev = scEditor
+		m.scr = scInput
+		return m, nil
+	case "k", "K":
+		m.editor.note = "auth is a REFERENCE to the pod's own env vars — the secret stays in the pod. " +
+			"Usual source: a Kubernetes Secret mounted as env (verify with the k8s exec: T, then `env | grep -i actuator`). " +
+			"none · empty to clear"
+		m.input = inputBox{title: "actuator auth ref — bearer:ENV_VAR  or  basic:USER_VAR:PASS_VAR  [" + authDisplay(m.t.ActuatorAuth) + "]:", then: inputActuatorAuth}
 		m.prev = scEditor
 		m.scr = scInput
 		return m, nil
@@ -336,7 +345,17 @@ const (
 	inputSelector
 	inputContainer
 	inputPod
+	inputActuatorAuth
 )
+
+// authDisplay shows the auth REFERENCE (never a secret) — the value is a pod
+// env-var name, not the credential itself.
+func authDisplay(s string) string {
+	if s == "" {
+		return "none"
+	}
+	return s
+}
 
 func inputForPick(k pickKind) inputTarget {
 	switch k {
@@ -377,6 +396,13 @@ func (m model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			if m.input.then == inputActuatorLocal {
 				m.local.When = zeroTime()
 			}
+		case inputActuatorAuth:
+			if v == "none" {
+				v = "" // explicit clear
+			}
+			m.t.ActuatorAuth = v // a reference, never the secret
+			saveTarget(m.t)
+			m.remote.When, m.local.When = zeroTime(), zeroTime()
 		case inputLogger:
 			m.logger = v
 			m.scr = scLevel

@@ -29,6 +29,7 @@ save_target() {
         printf 'SAVED_SELECTOR=%q\n'  "$SELECTOR"
         printf 'SAVED_CONTAINER=%q\n' "$APP_CONTAINER"
         printf 'SAVED_ACTUATOR=%q\n'  "$ACTUATOR_BASE"
+        printf 'SAVED_ACTUATOR_AUTH=%q\n' "${ACTUATOR_AUTH:-}"
         printf 'SAVED_POD=%q\n'       "$POD_PIN"
     } > "$JDEBUG_TARGET_FILE" 2>/dev/null || true
 }
@@ -499,6 +500,8 @@ retarget() {
         printf '   %so%s  container   %s%s%s\n' "$GN" "$OFF" "$GN" "$APP_CONTAINER" "$OFF"
         # (selections are saved on exit and remembered next session)
         printf '   %sa%s  actuator    %s%s%s\n' "$GN" "$OFF" "$GN" "$ACTUATOR_BASE" "$OFF"
+        printf '   %sk%s  auth        %s%s%s  %ssecured actuator? name the pod'\''s credential env vars%s\n' \
+            "$GN" "$OFF" "$GN" "${ACTUATOR_AUTH:-none}" "$OFF" "$DIM" "$OFF"
         printf '  > '
         read -rn1 k || break; printf '\n'
         case "$k" in
@@ -563,10 +566,18 @@ retarget() {
                 [[ -n "$CHOICE" ]] && APP_CONTAINER="$CHOICE" ;;
             p|P) pick_pod ;;
             a|A) printf '  actuator base [%s]: ' "$ACTUATOR_BASE"; IFS= read -r v; [[ -n "$v" ]] && ACTUATOR_BASE="$v" ;;
+            k|K)
+                printf '  %sauth is a REFERENCE to the pod'\''s own env vars — the secret stays in the pod.%s\n' "$DIM" "$OFF"
+                printf '  %susual source: a Kubernetes Secret mounted as env (verify: T, then env | grep -i actuator).%s\n' "$DIM" "$OFF"
+                printf '  bearer:ENV_VAR  or  basic:USER_VAR:PASS_VAR  ("none" to clear) [%s]: ' "${ACTUATOR_AUTH:-none}"
+                IFS= read -r v
+                if [[ "$v" == none ]]; then ACTUATOR_AUTH=""
+                elif [[ -n "$v" ]]; then ACTUATOR_AUTH="$v"; fi
+                export ACTUATOR_AUTH ;;
             b|B|""|$'\e') break ;;
             *) : ;;
         esac
-        export NAMESPACE SELECTOR APP_CONTAINER ACTUATOR_BASE
+        export NAMESPACE SELECTOR APP_CONTAINER ACTUATOR_BASE ACTUATOR_AUTH
     done
     export NAMESPACE SELECTOR APP_CONTAINER ACTUATOR_BASE
     CLUSTER_TS=-999; TARGET_TS=-999   # target changed — re-probe everything

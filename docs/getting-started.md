@@ -36,6 +36,10 @@ and container. The panel tells you exactly which key fixes each ✗; Enter (or
 `g`) opens the target editor — each field is one keypress, and everything the
 cluster can enumerate is a live dropdown:
 
+- **k auth** — for a *secured* actuator, name the pod's own credential env
+  vars (`bearer:ENV_VAR` or `basic:USER_VAR:PASS_VAR`). jdebug stores only the
+  reference, never the secret — it's read inside the pod at call time. No
+  actuator auth? jattach captures need no HTTP at all
 - **c context** — which cluster kubectl talks to (switching is confirmed first)
 - **n namespace** — the app's "folder" in the cluster, listed live
 - **s selector** — the label (like `app=payments`) that finds your app's pods.

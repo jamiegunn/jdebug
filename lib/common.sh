@@ -24,6 +24,10 @@ fi
 if [[ -z "${ACTUATOR_BASE+x}" && -n "${SAVED_ACTUATOR:-}" ]]; then
     ACTUATOR_BASE="$SAVED_ACTUATOR"; export ACTUATOR_BASE
 fi
+# actuator auth is a REFERENCE to pod env vars ("bearer:VAR"/"basic:U:P"),
+# never a secret value. env > saved.
+[[ -n "${ACTUATOR_AUTH+x}" ]] || ACTUATOR_AUTH="${JDEBUG_ACTUATOR_AUTH:-${SAVED_ACTUATOR_AUTH:-}}"
+export ACTUATOR_AUTH
 : "${JDK_DEBUG_IMAGE:=${JDEBUG_JDK_IMAGE:-eclipse-temurin:21-jdk-alpine}}"
 
 # Cache for the downloaded jattach binary — a standard per-user location so the
@@ -92,16 +96,37 @@ parse_common_args() {
 # capture doubles as a copy-pasteable cookbook.
 show_cmd() { printf '  $ %s\n' "$*" >&2; }
 
+# _pod_auth <client:curl|wget> — emit auth flags for a secured actuator, from
+# $ACTUATOR_AUTH. The spec references env var NAMES that live INSIDE the pod
+# ("bearer:VAR" or "basic:USERVAR:PASSVAR"), so the secret is expanded by the
+# pod's shell and never leaves the pod or touches jdebug's config. The emitted
+# flags contain a literal $VAR (escaped here) for the pod to expand.
+_pod_auth() {
+    local client="$1" spec="${ACTUATOR_AUTH:-}"
+    case "$spec" in
+        bearer:?*)
+            local v="${spec#bearer:}"
+            if [ "$client" = curl ]; then printf -- '-H "Authorization: Bearer $%s" ' "$v"
+            else printf -- '--header="Authorization: Bearer $%s" ' "$v"; fi ;;
+        basic:?*:?*)
+            local rest="${spec#basic:}" u p; u="${rest%%:*}"; p="${rest#*:}"
+            if [ "$client" = curl ]; then printf -- '-u "$%s:$%s" ' "$u" "$p"
+            else printf -- '--user="$%s" --password="$%s" ' "$u" "$p"; fi ;;
+    esac
+}
+
 # pod_fetch <url> [accept] — emit an sh snippet that GETs <url> from INSIDE the
 # pod with whatever HTTP client it has: curl, else busybox wget (stock
-# JRE-alpine ships wget, not curl). Run via `kubectl exec -- sh -c "$(pod_fetch ...)"`.
+# JRE-alpine ships wget, not curl). Applies $ACTUATOR_AUTH when set (secured
+# actuator). Run via `kubectl exec -- sh -c "$(pod_fetch ...)"`.
 pod_fetch() {
     local url="$1" accept="${2:-}"
+    local ac aw; ac="$(_pod_auth curl)"; aw="$(_pod_auth wget)"
     local nohttp="echo 'error: neither curl nor wget exists in this container — the actuator tier cannot run here (jattach needs no HTTP: --via jattach)' >&2; exit 127"
     if [[ -n "$accept" ]]; then
-        echo "if command -v curl >/dev/null 2>&1; then curl -fsS -H 'Accept: $accept' '$url'; elif command -v wget >/dev/null 2>&1; then wget -qO- --header='Accept: $accept' '$url' 2>/dev/null || wget -qO- '$url'; else $nohttp; fi"
+        echo "if command -v curl >/dev/null 2>&1; then curl -fsS ${ac}-H 'Accept: $accept' '$url'; elif command -v wget >/dev/null 2>&1; then wget -qO- ${aw}--header='Accept: $accept' '$url' 2>/dev/null || wget -qO- '$url'; else $nohttp; fi"
     else
-        echo "if command -v curl >/dev/null 2>&1; then curl -fsS '$url'; elif command -v wget >/dev/null 2>&1; then wget -qO- '$url'; else $nohttp; fi"
+        echo "if command -v curl >/dev/null 2>&1; then curl -fsS ${ac}'$url'; elif command -v wget >/dev/null 2>&1; then wget -qO- ${aw}'$url'; else $nohttp; fi"
     fi
 }
 

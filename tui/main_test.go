@@ -134,7 +134,7 @@ func TestConfigRoundTrip(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("JDEBUG_CONFIG_DIR", dir)
 	want := target{Namespace: "debug-demo", Selector: "app=x", Container: "app",
-		Actuator: "http://localhost:9001/manage", Pod: "pod-b"}
+		Actuator: "http://localhost:9001/manage", ActuatorAuth: "bearer:MGMT_TOKEN", Pod: "pod-b"}
 	saveTarget(want)
 	got := loadTarget()
 	if got != want {
@@ -475,6 +475,39 @@ func readyModel200() model {
 	m := readyModel()
 	m.width, m.height = 200, 50
 	return m
+}
+
+func TestActuatorAuthIsAReferenceNotASecret(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("JDEBUG_CONFIG_DIR", dir)
+	// the editor stores the REFERENCE (a pod env-var name), never a secret
+	saveTarget(target{Namespace: "n", Container: "app", ActuatorAuth: "bearer:MGMT_TOKEN"})
+	data, _ := os.ReadFile(dir + "/target")
+	if !strings.Contains(string(data), "SAVED_ACTUATOR_AUTH='bearer:MGMT_TOKEN'") {
+		t.Fatalf("config must persist the auth reference:\n%s", data)
+	}
+	// targetEnv exports it for the CLI to apply inside the pod
+	env := targetEnv(target{ActuatorAuth: "bearer:MGMT_TOKEN"})
+	found := false
+	for _, e := range env {
+		if e == "ACTUATOR_AUTH=bearer:MGMT_TOKEN" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatal("targetEnv must export ACTUATOR_AUTH for the pod-side fetch")
+	}
+	// 'k' in the editor opens the auth reference input, explaining the source
+	m := readyModel()
+	m.scr = scEditor
+	out := press(t, m, "k")
+	mm := out.(model)
+	if mm.scr != scInput || !strings.Contains(mm.input.title, "bearer:") {
+		t.Fatalf("k must open the auth-reference input, got screen %v", mm.scr)
+	}
+	if !strings.Contains(mm.editor.note, "stays in the pod") {
+		t.Fatal("the auth prompt must explain the secret stays in the pod")
+	}
 }
 
 func TestDetailCardsOpenAndInform(t *testing.T) {
