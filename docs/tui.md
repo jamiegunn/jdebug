@@ -47,8 +47,17 @@ rules, a footer with navigation keys and a risk legend, and a live `❯` prompt:
 Every key is a **letter mnemonic from the action's own name** — no numbered
 items. Risk is a colored dot down the right edge (green safe, yellow caution,
 red disruptive); **heap is the only row with inline text** (`pauses app`, red),
-so the one dangerous action is the loudest thing on screen. The palette is
-GitHub-dark truecolor with a 16-color fallback; `NO_COLOR` strips everything.
+so the one dangerous action is the loudest thing on screen.
+
+The palette is GitHub-dark truecolor with a 16-color fallback (`NO_COLOR`
+strips everything), **readability-tuned**: the spec's literal grey ramp reads
+as mud on real terminals, so every text tier is lifted about two steps
+(descriptions `#b6c2cf`, dim `#9ea7b1`, faint `#8b949e`) and the keys, command
+names, and section labels are bold. The hierarchy survives; the squinting
+doesn't. The panel fills the terminal up to 120 columns (min 78) — the
+description column flexes, risk dots stay pinned to the right edge. Font
+*size* is your terminal's setting (⌘+ / Ctrl+ in most emulators); the app
+compensates with weight and contrast.
 
 **Key collisions, resolved:** the spec's `t` (threads vs retarget) and `m`
 (memory vs mode) clashes are settled as **`g` = target editor** and
