@@ -661,6 +661,55 @@ func TestSelectorPickApplierStripsAnnotation(t *testing.T) {
 	}
 }
 
+// esc is a universal "back/cancel": it never runs anything, never picks a
+// default, and always lands on the screen underneath.
+func TestEscAlwaysGoesBack(t *testing.T) {
+	t.Setenv("JDEBUG_CONFIG_DIR", t.TempDir()) // editor esc saves the target
+	cases := []struct {
+		name  string
+		setup func(m model) model
+		want  screen
+	}{
+		{"via prompt cancels to menu", func(m model) model { m.scr = scVia; m.pendHeap = true; return m }, scMenu},
+		{"wizard list backs to menu", func(m model) model { m.scr = scWizard; return m }, scMenu},
+		{"jcmd pick cancels to menu", func(m model) model { m.scr = scJcmd; return m }, scMenu},
+		{"level pick cancels to menu", func(m model) model { m.scr = scLevel; m.logger = "ROOT"; return m }, scMenu},
+		{"editor backs to menu", func(m model) model { m.scr = scEditor; return m }, scMenu},
+		{"picker backs to editor", func(m model) model {
+			m.pick = picker{items: []string{"default"}, kind: pickNamespace}
+			m.scr = scPicker
+			return m
+		}, scEditor},
+		{"help backs to menu", func(m model) model { m.scr = scHelp; return m }, scMenu},
+	}
+	for _, c := range cases {
+		m := c.setup(readyModel())
+		res, cmd := m.Update(key("esc"))
+		mm := res.(model)
+		if mm.scr != c.want {
+			t.Errorf("%s: esc landed on screen %v, want %v", c.name, mm.scr, c.want)
+		}
+		if cmd != nil {
+			t.Errorf("%s: esc must never run a command", c.name)
+		}
+		if mm.pendHeap {
+			t.Errorf("%s: esc must clear pending heap state", c.name)
+		}
+	}
+}
+
+func TestChooserStrayKeysDontPickAMode(t *testing.T) {
+	m := demoModel()
+	m.mode = 0
+	m.scr = scChooser
+	for _, k := range []string{"esc", "z", "9"} {
+		res, _ := m.Update(key(k))
+		if mm := res.(model); mm.scr != scChooser || mm.mode != 0 {
+			t.Errorf("stray %q must stay on the chooser without picking a mode, got screen %v mode %d", k, mm.scr, mm.mode)
+		}
+	}
+}
+
 func TestVerbosityFlow(t *testing.T) {
 	out := press(t, readyModel(), "v")
 	mm := out.(model)

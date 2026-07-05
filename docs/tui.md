@@ -73,6 +73,12 @@ rules, a footer with navigation keys and a risk legend, and a live `❯` prompt:
  ❯ █
 ```
 
+**Esc always goes back.** On every screen — wizard, target editor, pickers,
+capture-route prompt, output pane, expanded logs — Esc backs out to the
+screen underneath without running anything, and stray keys never pick a
+default (the mode chooser only acts on its listed keys; Enter takes the
+recommended one). Mid-incident key-mashing is safe by design.
+
 Every key is a **letter mnemonic from the action's own name** — no numbered
 items. Risk is a colored dot down the right edge (green safe, yellow caution,
 red disruptive); **heap is the only row with inline text** (`pauses app`, red),

@@ -349,6 +349,16 @@ assert_has "remote menu: help key present" "[?] help"
 assert_has "remote menu: doctor key present" "[c] check setup"
 assert_has "remote menu: bundle on key x" "x   bundle"
 assert_has "remote menu: sections render" "QUICK CHECKS"
+
+# esc is a universal "back": never runs anything, never picks a default
+run_input $'\e2qy' ./ui/tui.sh
+assert_has "esc on chooser never picks a mode" "stage jattach"
+run_input $'t\eqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "esc on the capture-route prompt cancels" "cancelled"
+run_input $'w\eqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "esc leaves the wizard for the menu" "quit jdebug?"
+run_input $'g\eqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "esc leaves the target editor for the menu" "quit jdebug?"
 assert_has "remote menu: risk legend" "safe / caution / disruptive"
 assert_has "remote menu: live prompt caret" "❯"
 assert_has "remote header: one-line status shows context" "mock-ctx"

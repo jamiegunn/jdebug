@@ -474,7 +474,7 @@ func (m model) localKey(key string) (tea.Model, tea.Cmd) {
 func (m model) viaView() string {
 	return m.menuView() + "\n" +
 		cFaint.Render("  auto tries the safest route first and announces each fallback") + "\n" +
-		"  " + cMuted.Render("[Enter] auto (recommended) · [o] actuator · [j] jattach · [d] jdk") + " "
+		"  " + cMuted.Render("[Enter] auto (recommended) · [o] actuator · [j] jattach · [d] jdk · Esc cancels") + " "
 }
 
 func (m model) viaKey(key string) (tea.Model, tea.Cmd) {
@@ -485,8 +485,14 @@ func (m model) viaKey(key string) (tea.Model, tea.Cmd) {
 		m.viaFlag = "jattach"
 	case "d", "D":
 		m.viaFlag = "jdk"
+	case "enter":
+		m.viaFlag = "" // auto
 	default:
+		// esc (or any stray key) cancels — it must never fire a capture
 		m.viaFlag = ""
+		m.pendHeap = false
+		m.scr = scMenu
+		return m, nil
 	}
 	m.scr = scMenu
 	m.prev = scMenu

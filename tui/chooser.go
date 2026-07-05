@@ -32,8 +32,10 @@ func (m model) chooserKey(key string) (tea.Model, tea.Cmd) {
 		return m, runShell(nil, "bash", filepath.Join(m.kit, "tests", "run-tests.sh"))
 	case "q", "Q", "ctrl+c":
 		return m, tea.Quit
+	case "enter":
+		m.mode = 1 // Enter takes the recommended default
 	default:
-		m.mode = 1
+		return m, nil // stray keys (esc included) never pick a mode
 	}
 	m.scr = scMenu
 	// probe the chosen mode now so the menu's first frame is truthful

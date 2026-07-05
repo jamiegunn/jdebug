@@ -130,7 +130,7 @@ func (m model) wizardKey(key string) (tea.Model, tea.Cmd) {
 			return m.wizardAdvance()
 		}
 	}
-	if key == "b" || key == "B" || key == "enter" || key == "q" {
+	if key == "b" || key == "B" || key == "enter" || key == "q" || key == "esc" {
 		m.scr = scMenu
 		return m, nil
 	}

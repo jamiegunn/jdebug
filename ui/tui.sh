@@ -256,7 +256,8 @@ choose_mode() {
                 fi
                 pause ;;
             q|Q) bye ;;
-            *) MODE=1; return ;;
+            "") MODE=1; return ;;   # Enter takes the recommended default
+            *) continue ;;          # stray keys (Esc included) never pick a mode
         esac
     done
 }
@@ -307,8 +308,16 @@ ask_via() {
     printf '  %s    actuator  ask the app itself over HTTP (safest, needs Spring Boot actuator)%s\n' "$DIM" "$OFF"
     printf '  %s    jattach   tiny helper binary placed in the pod (works without actuator)%s\n' "$DIM" "$OFF"
     printf '  %s    jdk       temporary JDK debug container (last resort, needs cluster permission)%s\n' "$DIM" "$OFF"
-    printf '  [Enter] auto (recommended) / [o] actuator / [j] jattach / [d] jdk: '
-    local v; read -rn1 v; printf '\n'; case "$v" in j|J) VIA_FLAG="--via jattach" ;; d|D) VIA_FLAG="--via jdk" ;; o|O) VIA_FLAG="--via actuator" ;; *) VIA_FLAG="" ;; esac; }
+    printf '  [Enter] auto (recommended) / [o] actuator / [j] jattach / [d] jdk / [Esc] cancel: '
+    local v; read -rn1 v; printf '\n'
+    # esc (or any stray key) cancels — it must never fire a capture
+    case "$v" in
+        j|J) VIA_FLAG="--via jattach" ;;
+        d|D) VIA_FLAG="--via jdk" ;;
+        o|O) VIA_FLAG="--via actuator" ;;
+        "")  VIA_FLAG="" ;;
+        *)   printf '  %scancelled%s\n' "$DIM" "$OFF"; return 1 ;;
+    esac; }
 
 # kenum <kubectl args...> — enumerate, preserving WHY a list is empty. Sets
 # KENUM_OUT (the rows), KENUM_ERR (first stderr line, '' on success) and
@@ -551,7 +560,7 @@ retarget() {
                 [[ -n "$CHOICE" ]] && APP_CONTAINER="$CHOICE" ;;
             p|P) pick_pod ;;
             a|A) printf '  actuator base [%s]: ' "$ACTUATOR_BASE"; IFS= read -r v; [[ -n "$v" ]] && ACTUATOR_BASE="$v" ;;
-            b|B|"") break ;;
+            b|B|""|$'\e') break ;;
             *) : ;;
         esac
         export NAMESPACE SELECTOR APP_CONTAINER ACTUATOR_BASE
@@ -771,7 +780,7 @@ wizard() {
         printf '\n  %s> %s' "$B" "$OFF"; local s; read -rn1 s || return; printf '\n'
         case "$s" in
             1) wiz_oom ;; 2) wiz_slow ;; 3) wiz_cpu ;; 4) wiz_leak ;; 5) wiz_gc ;; 6) wiz_all ;; 7) wiz_crash ;;
-            b|B|"") return ;;
+            b|B|""|$'\e') return ;;
             *) continue ;;
         esac
         pause
@@ -885,10 +894,10 @@ dispatch_remote() {
         h)   run "$DBG" health ${POD_PIN:+"$POD_PIN"} ;;
         o|O) run "$DBG" top ;;
         m)   run "$DBG" memory ${POD_PIN:+"$POD_PIN"} ;;
-        t|T) ask_via; run "$DBG" threads $VIA_FLAG ${POD_PIN:+"$POD_PIN"} ;;
+        t|T) if ask_via; then run "$DBG" threads $VIA_FLAG ${POD_PIN:+"$POD_PIN"}; fi ;;
         j|J) ask_jcmd; [[ -n "$JCMD_PICK" ]] && run "$DBG" jcmd "$JCMD_PICK" ${POD_PIN:+"$POD_PIN"} ;;
         H)   confirm_disruptive H "heap dump pauses the app while it runs" || return 1
-             ask_via; run "$DBG" heap $VIA_FLAG --confirm ${POD_PIN:+"$POD_PIN"} ;;
+             if ask_via; then run "$DBG" heap $VIA_FLAG --confirm ${POD_PIN:+"$POD_PIN"}; fi ;;
         x|X) if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run "$DBG" snapshot --heap --confirm ${POD_PIN:+"$POD_PIN"}; else run "$DBG" snapshot ${POD_PIN:+"$POD_PIN"}; fi ;;
         l|L) printf '  %sstreaming — Ctrl-C to stop%s\n' "$DIM" "$OFF"; run "$DBG" logs ;;
         v|V) printf '  logger (e.g. com.example.debugdemo, ROOT): '; IFS= read -r lg
