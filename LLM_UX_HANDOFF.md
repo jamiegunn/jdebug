@@ -55,8 +55,11 @@ Start here:
 - `tui/editor.go` - target editor and field explanations.
 - `tui/help.go` - glossary, workflow, safety rules.
 - `tui/panel.go` - live target panel and NEXT suggestions.
+- `tui/captures.go` - captures browser and artifact viewing.
+- `tui/spark.go` - trends sampling and sparkline rendering.
 - `tui/render_demo.go` - canned render states for visual review.
 - `tui/main_test.go` - interaction and layout tests.
+- `observe/topology.sh` - workload topology command behind `W workload`.
 - `ui/tui.sh` - bash fallback menu; keep behavior and copy aligned where practical.
 - `docs/ux-followups.md` - current follow-up backlog for larger UX/product directions.
 
@@ -151,7 +154,100 @@ Do not remove this power-user layout, but consider whether first-time users shou
 3. What evidence was captured?
 4. What details are available if needed?
 
-### 6. Completed items should stay covered by regression tests
+### 6. Workload topology needs app wiring and clearer organization
+
+`W workload` is valuable, but the output should be reorganized so the pieces are not jumbled together. A junior SRE should be able to scan it as a structured inventory of how the app is owned, exposed, configured, and connected.
+
+Recommended sections:
+
+- **Owner and rollout:** Deployment/ReplicaSet revision, ready/updated/available replicas, strategy, image tag/digest, command/args, rollout status.
+- **Autoscale:** HPA current/min/max, whether it is active, metric failures, and whether Deployment `replicas:` fights HPA.
+- **Services and ports:** Services selecting the pod, Service type, ClusterIP/external IP/hostname, ports, targetPorts, named ports, endpoint readiness, and whether the selected pod is included in endpoints.
+- **Probes:** readiness/liveness/startup probe type, path/port, delays, timeouts, failure thresholds, and recent probe failures.
+- **Environment:** container env vars, envFrom ConfigMaps/Secrets by reference, JVM env such as `JAVA_TOOL_OPTIONS`, `JAVA_OPTS`, `JDK_JAVA_OPTIONS`, `SPRING_PROFILES_ACTIVE`, timezone, and proxy vars.
+- **JVM runtime:** Java version, JVM flags from `jcmd VM.flags`, heap/GC flags, system properties where safe, and whether NMT/JFR are available.
+- **Volumes and storage:** volumes, mounts, read-only flags, PVC names/status, emptyDir/tmpfs memory-backed volumes, ConfigMap/Secret mounts, and which mounts may affect memory or credentials.
+- **Secrets and config references:** names and keys only, never secret values. Show where sensitive config comes from without printing it.
+- **Network policy and ingress/gateway:** NetworkPolicy exposure, Ingress/Gateway/mesh routes that point at the Service where discoverable.
+
+Every section should include the `kubectl` or JVM command/API used to gather it, or link to a transparency card. Redact sensitive values by default.
+
+### 7. Runtime context should detect common dependencies such as Valkey
+
+Add a read-only runtime context/app wiring workflow that answers: “What is this app connected to, and what configuration assumptions might be wrong?”
+
+For Valkey/Redis-compatible dependencies, useful safe checks and config clues include:
+
+- Detected host/port/db/SSL settings from env/config, with secrets redacted.
+- `cluster-enabled`.
+- `cluster-announce-hostname`, `cluster-announce-ip`, `cluster-announce-port`, `cluster-announce-tls-port`, and `cluster-announce-bus-port`.
+- `bind`, `protected-mode`, `port`, and `tls-port`.
+- ACL/`requirepass` presence without printing credentials.
+- `masterauth`, redacted.
+- `replica-announce-ip` and `replica-announce-port`.
+- `appendonly`, `maxmemory`, `maxmemory-policy`, `timeout`, `tcp-keepalive`, and `client-output-buffer-limit`.
+- `cluster-node-timeout`, `cluster-require-full-coverage`, and `cluster-migration-barrier`.
+
+The operator value is high because wrong cluster announce settings often produce “works inside the pod but clients fail” incidents. Keep this dependency-aware layer extensible so future checks can cover databases, Kafka, HTTP dependencies, service mesh, and cloud metadata.
+
+### 8. Captures browser needs a navigation redesign
+
+The captures pane is powerful but hard to navigate. It also may not feel reliable when changing pods because it keeps browse state (`capsCwd`) unless explicitly reset.
+
+Redesign goals:
+
+- Make the current scope obvious: selected pod, all pods, current session, or a drilled-in timestamp folder.
+- Reset or clearly prompt when changing pods if the browser is still pinned to the previous pod/session.
+- Add an explicit refresh action and visible “last refreshed” time.
+- Provide filter tabs or segments: current pod, all pods, snapshots, threads, heaps, logs, recent.
+- Show capture type, source route, pod, timestamp, size, and recommended next action.
+- Make `a analyzes current view` explicit, including what “current view” means.
+- Keep click-to-open, but also support keyboard selection for accessibility.
+- Preserve evidence safety warnings, especially for heap dumps and logs.
+
+### 9. Trends need labels that explain sampling and meaning
+
+The current trends section is not self-explanatory. It should answer:
+
+- Sampling cadence: one sample per panel refresh, currently about every 20 seconds.
+- Whether values are instantaneous samples or averages. Current memory/CPU values are point-in-time samples from Kubernetes metrics, not time-window averages computed by jdebug.
+- What each label means: `mem` is container memory percentage of limit, `cpu` is Kubernetes CPU usage scaled against limit when available, and `rst` means restart count markers.
+- What `▲` means: restart count increased at that sample.
+- How much history is shown: up to `histCap` samples, roughly 30 minutes at 20 seconds per sample.
+- What gaps mean: missing metrics or unknown values.
+
+Consider renaming `rst` to `restarts` where width allows, and add a trends detail card or legend.
+
+### 10. Idle background activity should be visible and controllable
+
+The TUI is not zero-touch while open. The fastest idle loop is the live log refresh, about every 5 seconds. Other panel/dashboard refreshes happen around every 20 seconds and can issue several read-only calls in a burst.
+
+Current background activity to make transparent:
+
+- `kubectl logs --tail=...` about every 5 seconds in the live log pane.
+- `kubectl get pod`, `kubectl top pod`, `kubectl get hpa`, events, pods, and captures refreshes around the panel/dashboard tick.
+- Actuator heap metric reads every panel refresh when actuator is available.
+- `jcmd GC.heap_info` fallback if actuator heap metrics fail and a JVM route exists.
+
+Add visible controls and status:
+
+- `idle refresh: logs 5s · target 20s · actuator heap 20s`.
+- `background probes: kubectl logs, pod/top/hpa, actuator metrics`.
+- Pause/resume background refresh.
+- Manual refresh once.
+- Slow down / speed up refresh intervals.
+- Quiet mode: disable logs and JVM probes, keep manual refresh.
+
+Classify background work by cost/risk:
+
+- Low cost: Kubernetes reads such as pod, HPA, services, events.
+- Medium cost: `kubectl top` and logs polling.
+- App/JVM touching: actuator metrics.
+- Heavier JVM touching: repeated `jcmd` fallback.
+
+For junior-SRE transparency, the UI should answer: “while I’m just looking at this screen, what is it doing in the background?”
+
+### 11. Completed items should stay covered by regression tests
 
 Do not re-open these as current work unless a regression appears:
 
@@ -310,9 +406,14 @@ Prioritize these remaining items in small commits or patches:
 2. Build the command/data transparency-card layer described in `docs/ux-followups.md`.
 3. Add actuator credential setup in retarget/settings without unsafe secret storage or guessed defaults.
 4. Make autoscale drill-down connect panel state to workload topology, HPA conditions, and Deployment/HPA replica conflicts.
-5. Productize operator workflows from `docs/ux-followups.md`: incident modes, evidence chains, runbook cards, timeline, What changed, escalation summary, blocked-by view, and confidence levels.
-6. Reassess first-time wide-dashboard hierarchy after the above interactions exist.
-7. Run render checks and tests after changes.
+5. Reorganize `W workload` into clear sections and add service/ports, image, probes, env/config references, volumes/PVCs, secrets references, and the commands used to gather each section.
+6. Add a runtime context/app wiring workflow with dependency-aware checks, starting with Valkey/Redis-compatible configuration clues.
+7. Redesign the captures browser around clear scope, refresh state, filters, keyboard selection, and pod-change behavior.
+8. Explain trends sampling cadence, meaning, history window, gaps, and restart markers in the UI.
+9. Add idle/background activity transparency and controls: refresh status, pause/resume, manual refresh, interval controls, and quiet mode.
+10. Productize operator workflows from `docs/ux-followups.md`: incident modes, evidence chains, runbook cards, timeline, What changed, escalation summary, blocked-by view, and confidence levels.
+11. Reassess first-time wide-dashboard hierarchy after the above interactions exist.
+12. Run render checks and tests after changes.
 
 Already shipped and regression-covered; do not duplicate this work unless tests reveal a regression:
 
@@ -371,6 +472,11 @@ Suggested TUI test coverage:
 - Disruptive selected-label actions still require the same confirmation behavior as shortcut actions.
 - Command and data transparency indicators/cards expose command provenance, data source, why it matters, risks, alternatives, and dependencies before execution or drill-down.
 - Autoscale transparency covers HPA conditions, maxed HPA, missing metrics/rules, and Deployment/HPA replica conflict states.
+- Workload topology tests cover section order, Services/ports, image, probes, env/config references, volumes/PVCs, Secret references with values redacted, and displayed source commands.
+- Runtime context tests detect Valkey/Redis-style configuration safely and redact credentials.
+- Captures browser tests cover selected-pod scope, pod-change reset/prompt behavior, refresh state, filters, keyboard navigation, and `a analyzes current view` semantics.
+- Trends tests cover the legend/copy for 20-second samples, point-in-time values, `rst`/restart markers, history window, and missing metrics gaps.
+- Idle activity tests cover visible refresh cadence, pause/resume, manual refresh, quiet mode, and no repeated `jcmd` fallback when quieted.
 - Actuator auth settings render without exposing secrets, and secured-actuator failures point to credential setup or jattach fallback.
 - Blocked-by states render actionable explanations for RBAC, metrics-server, secured actuator, missing jattach, no selector, and no previous logs.
 - Escalation summary includes target, symptom/workflow, findings, commands run, captures, blocked checks, and sensitive-evidence warnings.
@@ -400,6 +506,11 @@ A good new follow-up change should satisfy the relevant checks below:
 - Every visible command can be run by shortcut key or by selecting its command label.
 - Live-panel summary fields that imply deeper context have a discoverable detail path; TARGET panel click-to-`why` exists now, and transparency cards should add finer-grained detail.
 - Autoscale drill-down connects current/max/failing panel state to HPA conditions, workload topology, and Deployment/HPA conflicts.
+- Workload topology is organized into readable sections and includes Services/ports, image, probes, env/config references, volumes/PVCs, Secret references, and source commands with sensitive values redacted.
+- Runtime context/app wiring identifies relevant dependency configuration, including Valkey/Redis-compatible config where detectable, without printing secrets.
+- Captures navigation makes current scope, refresh state, selected pod, filters, and analysis target obvious.
+- Trends explain sample cadence, point-in-time semantics, labels, restart markers, history window, and missing-data gaps.
+- Idle background activity is visible and controllable, including pause/resume, manual refresh, interval controls, and quiet mode.
 - Actuator authentication has an explicit guided setup path and does not rely on guessed default credentials.
 - Operator workflow ideas are either implemented or captured as explicit follow-up tasks with clear UX entry points.
 - NEXT suggestions, where touched, explain their evidence chain and confidence.
