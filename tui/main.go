@@ -279,6 +279,9 @@ func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if in, row := m.capsHit(v.X, v.Y); in {
 			return m.capsClick(row)
 		}
+		if m.panelHit(v.X, v.Y) {
+			return m.quickCLI(true, "why") // drill into what the panel summarizes
+		}
 	case v.Button == tea.MouseButtonWheelUp:
 		if in, _ := m.podsHit(v.X, v.Y); in {
 			if m.podsOff > 0 {

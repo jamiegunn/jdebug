@@ -454,6 +454,33 @@ func TestPanelSeparatesResourceFromJVM(t *testing.T) {
 	}
 }
 
+func TestPanelClickDrillsIntoWhy(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 200, 50
+	menuW, _, _ := m.cols()
+	x := menuW + 2 + 2 // inside the mid TARGET panel
+	y := 5             // a panel row
+	res, cmd := m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	mm := res.(model)
+	if cmd == nil || !mm.out.running || !strings.Contains(mm.out.title, "why") {
+		t.Fatalf("clicking the TARGET panel must run the deep-dive, got title %q", mm.out.title)
+	}
+}
+
+func TestNextSuggestionsSeverityOrdered(t *testing.T) {
+	m := readyModel()
+	// a multi-symptom pod: crash-looping AND OOM AND memory-pressured AND maxed
+	m.panel = panelData{When: time.Now(), Waiting: "CrashLoopBackOff",
+		LastReason: "OOMKilled", Restarts: 40, MemPct: 95,
+		HPAName: "a", HPACur: 6, HPAMax: 6}
+	got := ansiStrip(strings.Join(m.suggestions(), "\n"))
+	crash := strings.Index(got, "CrashLoopBackOff")
+	oom := strings.Index(got, "OOMKilled")
+	if crash < 0 || oom < 0 || crash > oom {
+		t.Fatalf("crash-loop must rank above OOM in NEXT:\n%s", got)
+	}
+}
+
 func TestAutoscaleLine(t *testing.T) {
 	cases := []struct {
 		d        panelData

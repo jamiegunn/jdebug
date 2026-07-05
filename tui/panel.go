@@ -292,29 +292,38 @@ func parseHeapInfo(out string) (used, max string) {
 
 // --- suggestions: the app tells you what to do next --------------------------
 
+// suggestions builds the NEXT list in SEVERITY order — the most operationally
+// urgent signal first — so a multi-symptom incident doesn't bury the thing
+// that matters. Order: unavailable/crash-loop → OOM/restart-storm →
+// autoscale failed/maxed → resource pressure → observability gaps.
 func (m model) suggestions() []string {
 	d := m.panel
 	var s []string
-	if d.LastReason == "OOMKilled" {
-		s = append(s, cDisr.Render("⚠ OOMKilled last restart")+cMuted.Render(" → ")+cKey.Render("w")+cMuted.Render(" flow 1"))
-	}
-	if d.MemPct >= 90 {
-		s = append(s, cDisr.Render(fmt.Sprintf("⚠ memory %d%% of limit", d.MemPct))+cMuted.Render(" → ")+cKey.Render("m"))
-	} else if d.MemPct >= 75 {
-		s = append(s, cWarn.Render(fmt.Sprintf("! memory %d%% of limit", d.MemPct))+cMuted.Render(" → ")+cKey.Render("m"))
-	}
+	// 1. app unavailable / crash-looping
 	if d.Waiting == "CrashLoopBackOff" {
 		s = append(s, cDisr.Render("⚠ CrashLoopBackOff")+cMuted.Render(" → ")+cKey.Render("w")+cMuted.Render(" flow 7"))
 	} else if d.Phase != "" && d.Phase != "Running" {
 		s = append(s, cWarn.Render("! pod is "+d.Phase)+cMuted.Render(" → ")+cKey.Render("s")+cMuted.Render(" events"))
-	} else if d.Restarts > 3 && d.LastReason != "OOMKilled" {
+	}
+	// 2. OOM / restart storm
+	if d.LastReason == "OOMKilled" {
+		s = append(s, cDisr.Render("⚠ OOMKilled last restart")+cMuted.Render(" → ")+cKey.Render("w")+cMuted.Render(" flow 1"))
+	} else if d.Restarts > 3 {
 		s = append(s, cWarn.Render(fmt.Sprintf("! %d restarts", d.Restarts))+cMuted.Render(" → ")+cKey.Render("w")+cMuted.Render(" diagnose"))
 	}
+	// 3. autoscale failed / maxed
 	if d.HPAFailing {
 		s = append(s, cWarn.Render("! autoscale blind — "+d.HPAReason)+cMuted.Render(" → ")+cKey.Render("W"))
 	} else if d.HPAMax > 0 && d.HPACur >= d.HPAMax {
 		s = append(s, cWarn.Render("! at max replicas")+cMuted.Render(" → ")+cKey.Render("W")+cMuted.Render(" workload"))
 	}
+	// 4. resource pressure
+	if d.MemPct >= 90 {
+		s = append(s, cDisr.Render(fmt.Sprintf("⚠ memory %d%% of limit", d.MemPct))+cMuted.Render(" → ")+cKey.Render("m"))
+	} else if d.MemPct >= 75 {
+		s = append(s, cWarn.Render(fmt.Sprintf("! memory %d%% of limit", d.MemPct))+cMuted.Render(" → ")+cKey.Render("m"))
+	}
+	// 5. observability gaps — only when nothing more urgent is showing
 	if len(s) == 0 {
 		if len(m.caps) == 0 {
 			s = append(s, cMuted.Render("new here? ")+cKey.Render("w")+cMuted.Render(" — describe the symptom"))
@@ -420,7 +429,16 @@ func (m model) panelView(w, h int, trends bool) string {
 		return s
 	}
 	var rows []string
-	rows = append(rows, " "+cDim.Render("TARGET LIVE")+"  "+cRule.Render(strings.Repeat("─", w-15)))
+	title := " " + cDim.Render("TARGET LIVE")
+	hint := ""
+	if trends && m.mode == 1 { // tier-2 panel is clickable → the deep-dive
+		hint = " " + cFaint.Render("click → why")
+	}
+	fill := w - lipgloss.Width(title) - lipgloss.Width(hint) - 2
+	if fill < 3 {
+		fill = 3
+	}
+	rows = append(rows, title+" "+cRule.Render(strings.Repeat("─", fill))+hint)
 	if m.mode == 1 {
 		pod := m.t.Pod
 		if len(pod) > 24 {

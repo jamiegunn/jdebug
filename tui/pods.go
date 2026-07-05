@@ -138,6 +138,22 @@ func (m model) podsPaneH() int {
 	return podH
 }
 
+// panelHit: is (x,y) inside the mid TARGET-LIVE panel? Clicking it drills
+// into the pod deep-dive (`why`), which decodes the exact fields shown —
+// last-exit code, limits, probes, and autoscale — in plain language.
+func (m model) panelHit(x, y int) bool {
+	if m.tier() != 2 || m.scr != scMenu || !m.remote.OK {
+		return false
+	}
+	menuW, midW, _ := m.cols()
+	x0 := menuW + 2
+	if x < x0 || x >= x0+midW {
+		return false
+	}
+	topH := strings.Count(m.remoteBody(), "\n") + 1
+	return y >= 3 && y < 3+topH // the mid column (TARGET LIVE + TRENDS + NEXT)
+}
+
 // switchPod retargets everything at the clicked pod.
 func (m model) switchPod(pod string) (tea.Model, tea.Cmd) {
 	if pod == "" || pod == m.t.Pod {
