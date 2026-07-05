@@ -7,6 +7,15 @@
 #   MOCK_LOG       file to append every invocation to (for asserting calls)
 [ -n "${MOCK_LOG:-}" ] && printf '%s\n' "$*" >> "$MOCK_LOG"
 
+#   MOCK_RBAC      forbidden — namespace/pod enumeration fails like real RBAC
+if [ "${MOCK_RBAC:-}" = forbidden ]; then
+    case "$*" in
+        *"get namespaces"*|*"get pods"*|*" get pod "*)
+            echo 'Error from server (Forbidden): pods is forbidden: User "dev" cannot list resource "pods" in API group "" in the namespace "default"' >&2
+            exit 1 ;;
+    esac
+fi
+
 case "$*" in
     *"get --raw=/version"*)
         case "${MOCK_KUBECTL:-ok}" in
@@ -41,6 +50,12 @@ case "$*" in
         printf 'pod-a   250m   480Mi\n' ;;
     *"get hpa"*"--no-headers"*)
         printf 'app-hpa   Deployment/app   cpu: 50%%/80%%   2   4   3   10h\n' ;;
+    *"get pods -o json")
+        # end-anchored: "-o jsonpath" also contains "-o json" and must NOT
+        # match here (that swallowing bug has bitten before).
+        # labels for selector discovery: two payments pods + one web pod,
+        # with rollout hashes that must never be suggested
+        printf '{"items":[{"metadata":{"name":"pod-a","labels":{"app":"payments","app.kubernetes.io/name":"payments","component":"api","pod-template-hash":"abc123"}}},{"metadata":{"name":"pod-b","labels":{"app":"payments","app.kubernetes.io/name":"payments","component":"api","pod-template-hash":"abc123"}}},{"metadata":{"name":"pod-c","labels":{"app":"web","pod-template-hash":"zzz999"}}}]}' ;;
     *"get pods"*jsonpath*)
         case "${MOCK_PODS:-one}" in
             none)  exit 0 ;;

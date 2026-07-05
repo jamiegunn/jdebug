@@ -6,10 +6,14 @@ package main
 // for all captures; this file only reads state.
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"sort"
 	"strings"
 	"time"
 )
@@ -127,26 +131,47 @@ func saveTarget(t target) {
 
 // --- kubectl enumeration (identical invocations to the bash TUI) -------------
 
+// enum preserves WHY a list came back empty: "no rows" and "kubectl failed"
+// are different answers, and an RBAC denial must never masquerade as
+// "nothing exists".
+type enum struct {
+	items     []string
+	raw       string // untouched stdout, for JSON consumers
+	err       string // first stderr line when kubectl failed
+	forbidden bool   // the failure is an RBAC denial
+}
+
+var forbiddenRe = regexp.MustCompile(`(?i)forbidden|cannot (list|get) resource`)
+
+func kenum(args ...string) enum {
+	c := exec.Command("kubectl", args...)
+	var errb bytes.Buffer
+	c.Stderr = &errb
+	out, err := c.Output()
+	if err != nil {
+		msg := firstLine(strings.TrimSpace(errb.String()))
+		if msg == "" {
+			msg = err.Error()
+		}
+		return enum{err: msg, forbidden: forbiddenRe.MatchString(msg)}
+	}
+	e := enum{raw: string(out)}
+	for _, l := range strings.Split(strings.TrimSpace(string(out)), "\n") {
+		if l = strings.TrimSpace(l); l != "" {
+			e.items = append(e.items, l)
+		}
+	}
+	return e
+}
+
 func kout(args ...string) (string, error) {
 	out, err := exec.Command("kubectl", args...).Output()
 	return strings.TrimSpace(string(out)), err
 }
 
-func klines(args ...string) []string {
-	out, _ := kout(args...)
-	if out == "" {
-		return nil
-	}
-	var r []string
-	for _, l := range strings.Split(out, "\n") {
-		if l = strings.TrimSpace(l); l != "" {
-			r = append(r, l)
-		}
-	}
-	return r
+func kubeContexts() []string { // local kubeconfig — no RBAC involved
+	return kenum("config", "get-contexts", "-o", "name").items
 }
-
-func kubeContexts() []string { return klines("config", "get-contexts", "-o", "name") }
 func currentContext() string {
 	if ctxOverride != "" {
 		return ctxOverride
@@ -154,34 +179,145 @@ func currentContext() string {
 	s, _ := kout("config", "current-context")
 	return s
 }
-func namespaces() []string {
-	return klines("get", "namespaces", "-o", `jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`)
+func namespacesE() enum {
+	return kenum("get", "namespaces", "-o", `jsonpath={range .items[*]}{.metadata.name}{"\n"}{end}`)
 }
-func appSelectors(ns string) []string {
-	labels := klines("-n", ns, "get", "pods", "-o", `jsonpath={range .items[*]}{.metadata.labels.app}{"\n"}{end}`)
-	seen := map[string]bool{}
-	out := []string{"<any pod>"}
-	for _, l := range labels {
-		if l != "" && !seen[l] {
-			seen[l] = true
-			out = append(out, "app="+l)
-		}
-	}
-	return out
-}
-func podsWithStatus(ns, selector string) []string {
+func podsWithStatusE(ns, selector string) enum {
 	args := []string{"-n", ns, "get", "pods"}
 	if selector != "" {
 		args = append(args, "-l", selector)
 	}
 	args = append(args, "-o", `jsonpath={range .items[*]}{.metadata.name}{"  "}{.status.phase}{"  restarts="}{.status.containerStatuses[0].restartCount}{"\n"}{end}`)
-	return klines(args...)
+	return kenum(args...)
 }
-func containersOf(ns, pod string) []string {
-	return klines("-n", ns, "get", "pod", pod, "-o", `jsonpath={range .spec.containers[*]}{.name}{"\n"}{end}`)
+func containersOfE(ns, pod string) enum {
+	return kenum("-n", ns, "get", "pod", pod, "-o", `jsonpath={range .spec.containers[*]}{.name}{"\n"}{end}`)
 }
+func containersOf(ns, pod string) []string { return containersOfE(ns, pod).items }
 func useContext(ctx string) error {
 	return exec.Command("kubectl", "config", "use-context", ctx).Run()
+}
+
+// --- selector discovery (conservative, transparent, never auto-picked) -------
+
+// Stable workload labels, most specific first. Rollout internals
+// (pod-template-hash & friends) are never suggested — they pin a single
+// ReplicaSet revision, which is exactly the wrong-workload trap.
+var preferredLabelKeys = []string{
+	"app.kubernetes.io/name", "app.kubernetes.io/instance", "app",
+	"k8s-app", "component", "service", "workload",
+}
+
+type podItem struct {
+	Metadata struct {
+		Name   string            `json:"name"`
+		Labels map[string]string `json:"labels"`
+	} `json:"metadata"`
+}
+type podsJSON struct {
+	Items []podItem `json:"items"`
+}
+
+// deriveSelectors turns pod labels into ranked "key=value   matches N pod(s)"
+// suggestions: labels on the already-selected pod first, then by key
+// preference. <any pod> is always last, with a warning when the namespace
+// clearly runs more than one app.
+func deriveSelectors(pj podsJSON, pinned string) []string {
+	var pinLabels map[string]string
+	for _, it := range pj.Items {
+		if it.Metadata.Name == pinned {
+			pinLabels = it.Metadata.Labels
+		}
+	}
+	type cand struct {
+		sel   string
+		count int
+		onPin bool
+		rank  int
+	}
+	byName := map[string]*cand{}
+	var order []*cand
+	for _, it := range pj.Items {
+		for rank, k := range preferredLabelKeys {
+			v, ok := it.Metadata.Labels[k]
+			if !ok || v == "" {
+				continue
+			}
+			sel := k + "=" + v
+			c := byName[sel]
+			if c == nil {
+				c = &cand{sel: sel, rank: rank, onPin: pinLabels[k] == v}
+				byName[sel] = c
+				order = append(order, c)
+			}
+			c.count++
+		}
+	}
+	sort.SliceStable(order, func(i, j int) bool {
+		a, b := order[i], order[j]
+		if a.onPin != b.onPin {
+			return a.onPin
+		}
+		if a.rank != b.rank {
+			return a.rank < b.rank
+		}
+		if a.count != b.count {
+			return a.count > b.count
+		}
+		return a.sel < b.sel
+	})
+	// distinct values under any one stable key ≈ distinct apps here
+	valsByKey := map[string]map[string]bool{}
+	for _, c := range order {
+		k := strings.SplitN(c.sel, "=", 2)[0]
+		if valsByKey[k] == nil {
+			valsByKey[k] = map[string]bool{}
+		}
+		valsByKey[k][c.sel] = true
+	}
+	apps := 0
+	for _, set := range valsByKey {
+		if len(set) > apps {
+			apps = len(set)
+		}
+	}
+	var out []string
+	for _, c := range order {
+		note := ""
+		if c.onPin {
+			note = " · on your selected pod"
+		}
+		out = append(out, fmt.Sprintf("%-34s matches %d pod(s)%s", c.sel, c.count, note))
+	}
+	anyNote := ""
+	if apps > 1 {
+		anyNote = fmt.Sprintf("   first match wins — risky, this namespace runs %d different apps", apps)
+	}
+	out = append(out, "<any pod>"+anyNote)
+	return out
+}
+
+// selectorCandidates enumerates pod labels (one kubectl call). When listing
+// is forbidden but a pod is already selected, its own labels may still be
+// readable — suggest from those instead of failing outright.
+func selectorCandidates(ns, pod string) ([]string, enum) {
+	res := kenum("-n", ns, "get", "pods", "-o", "json")
+	if res.err == "" {
+		var pj podsJSON
+		if json.Unmarshal([]byte(res.raw), &pj) == nil && len(pj.Items) > 0 {
+			return deriveSelectors(pj, pod), enum{}
+		}
+		return []string{"<any pod>"}, enum{}
+	}
+	if pod != "" {
+		if single := kenum("-n", ns, "get", "pod", pod, "-o", "json"); single.err == "" {
+			var it podItem
+			if json.Unmarshal([]byte(single.raw), &it) == nil && len(it.Metadata.Labels) > 0 {
+				return deriveSelectors(podsJSON{Items: []podItem{it}}, pod), enum{}
+			}
+		}
+	}
+	return nil, res
 }
 
 // --- readiness probes (mirror the bash gate; cached by the caller) -----------

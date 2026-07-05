@@ -112,7 +112,7 @@ func fetchPanel(t target) tea.Cmd {
 			d.HeapUsed, d.HeapMax, d.HeapVia = jvmHeap(t)
 			d.ActuatorOK = d.HeapVia == "actuator"
 		}
-		if hpa := klines("-n", t.Namespace, "get", "hpa", "--no-headers"); len(hpa) > 0 {
+		if hpa := kenum("-n", t.Namespace, "get", "hpa", "--no-headers").items; len(hpa) > 0 {
 			f := strings.Fields(hpa[0])
 			if len(f) >= 6 {
 				d.HPA = f[0] + " " + f[len(f)-1] + " replicas"

@@ -310,6 +310,66 @@ ask_via() {
     printf '  [Enter] auto (recommended) / [o] actuator / [j] jattach / [d] jdk: '
     local v; read -rn1 v; printf '\n'; case "$v" in j|J) VIA_FLAG="--via jattach" ;; d|D) VIA_FLAG="--via jdk" ;; o|O) VIA_FLAG="--via actuator" ;; *) VIA_FLAG="" ;; esac; }
 
+# kenum <kubectl args...> — enumerate, preserving WHY a list is empty. Sets
+# KENUM_OUT (the rows), KENUM_ERR (first stderr line, '' on success) and
+# KENUM_FORBIDDEN=1 on an RBAC denial. Results ride in globals, NOT stdout:
+# a $(…) capture would strand the flags in a subshell. "no rows" and
+# "kubectl failed" are different answers — a denial must never look like
+# "nothing exists". Always call with `|| true` (set -e).
+KENUM_OUT=""; KENUM_ERR=""; KENUM_FORBIDDEN=""; SEL_CANDS=""
+kenum() {
+    KENUM_OUT=""; KENUM_ERR=""; KENUM_FORBIDDEN=""
+    local errf
+    errf="$(mktemp)"
+    if KENUM_OUT="$(kubectl "$@" 2>"$errf")"; then
+        rm -f "$errf"
+        return 0
+    fi
+    KENUM_ERR="$(head -n1 "$errf" 2>/dev/null || true)"
+    rm -f "$errf"
+    case "$KENUM_ERR" in
+        *[Ff]orbidden*|*"cannot list resource"*|*"cannot get resource"*) KENUM_FORBIDDEN=1 ;;
+    esac
+    return 1
+}
+
+# rbac_type <message> <varname> — explain the RBAC limit plainly and take a
+# typed value instead.
+rbac_type() {
+    printf '  %s%s%s\n' "$YL" "$1" "$OFF"
+    printf '  value (empty keeps current): '
+    local v; IFS= read -r v
+    [[ -n "$v" ]] && printf -v "$2" '%s' "$v"
+}
+
+# selector_candidates — conservative suggestions from pod labels: stable
+# workload keys only (never pod-template-hash & friends), match counts, the
+# selected pod's own labels first. One kubectl call; needs python3. Result
+# in SEL_CANDS (globals again — see kenum).
+selector_candidates() {
+    SEL_CANDS=""
+    kenum -n "$NAMESPACE" get pods -o json || return 1
+    SEL_CANDS="$(printf '%s' "$KENUM_OUT" | python3 -c '
+import json, sys
+pin = sys.argv[1]
+data = json.load(sys.stdin)
+pref = ["app.kubernetes.io/name", "app.kubernetes.io/instance", "app",
+        "k8s-app", "component", "service", "workload"]
+counts, pinlab = {}, {}
+for it in data.get("items", []):
+    md = it.get("metadata", {})
+    lab = md.get("labels") or {}
+    if md.get("name") == pin:
+        pinlab = lab
+    for k in pref:
+        if lab.get(k):
+            counts[(k, lab[k])] = counts.get((k, lab[k]), 0) + 1
+for (k, v) in sorted(counts, key=lambda kv: (0 if pinlab.get(kv[0]) == kv[1] else 1, pref.index(kv[0]))):
+    tag = " - on your selected pod" if pinlab.get(k) == v else ""
+    print(f"{k}={v}   matches {counts[(k, v)]} pod(s){tag}")
+' "$POD_PIN")"
+}
+
 # choose_from <title> <current> <free:0|1> <options> — numbered dropdown.
 # <options> is a newline-separated string (passed as an argument, NOT stdin —
 # stdin must stay free for the selection keypress). ≤9 options select on a
@@ -442,21 +502,51 @@ retarget() {
                     fi
                 fi ;;
             n|N)
-                choose_from "Namespace" "$NAMESPACE" 1 \
-                    "$(kubectl get namespaces -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' 2>/dev/null)"
-                [[ -n "$CHOICE" ]] && { NAMESPACE="$CHOICE"; POD_PIN=""; CLUSTER_TS=-999; } ;;
+                kenum get namespaces -o jsonpath='{range .items[*]}{.metadata.name}{"\n"}{end}' || true
+                local nslist="$KENUM_OUT"
+                if [[ -n "$KENUM_FORBIDDEN" ]]; then
+                    rbac_type "Can't list namespaces with your current RBAC — type the namespace name (or ask for list permission)." NAMESPACE
+                    [[ -n "$NAMESPACE" ]] && { POD_PIN=""; CLUSTER_TS=-999; }
+                elif [[ -n "$KENUM_ERR" ]]; then
+                    printf '  %scouldn'\''t list namespaces: %s%s\n' "$YL" "$KENUM_ERR" "$OFF"
+                else
+                    choose_from "Namespace" "$NAMESPACE" 1 "$nslist"
+                    [[ -n "$CHOICE" ]] && { NAMESPACE="$CHOICE"; POD_PIN=""; CLUSTER_TS=-999; }
+                fi ;;
             s|S)
-                # dropdown built from the `app` labels actually on pods here,
-                # plus an explicit any-pod option ('t' still types any label)
-                choose_from "Selector — apps found in $NAMESPACE" "${SELECTOR:-<any pod>}" 1 \
-                    "$(printf '<any pod>\n'; kubectl -n "$NAMESPACE" get pods -o jsonpath='{range .items[*]}{.metadata.labels.app}{"\n"}{end}' 2>/dev/null | grep . | sort -u | sed 's/^/app=/')"
-                if [[ "$CHOICE" == "<any pod>" ]]; then SELECTOR=""; POD_PIN=""
-                elif [[ -n "$CHOICE" ]]; then SELECTOR="$CHOICE"; POD_PIN=""; fi ;;
+                # conservative suggestions from stable pod labels (never
+                # rollout hashes), with match counts; selected pod first
+                local cands=""
+                if command -v python3 >/dev/null 2>&1; then
+                    selector_candidates || true
+                    cands="$SEL_CANDS"
+                else
+                    kenum -n "$NAMESPACE" get pods -o jsonpath='{range .items[*]}{.metadata.labels.app}{"\n"}{end}' || true
+                    cands="$(printf '%s' "$KENUM_OUT" | grep . | sort -u | sed 's/^/app=/' || true)"
+                fi
+                if [[ -n "$KENUM_FORBIDDEN" ]]; then
+                    rbac_type "Can't discover selectors — pods can't be listed with your current RBAC. Type one (e.g. app=payments), or pick a known pod by name with p." SELECTOR
+                    [[ -n "$SELECTOR" ]] && POD_PIN=""
+                elif [[ -n "$KENUM_ERR" ]]; then
+                    printf '  %scouldn'\''t list pods for selector suggestions: %s%s\n' "$YL" "$KENUM_ERR" "$OFF"
+                else
+                    choose_from "Selector — suggestions from pod labels in $NAMESPACE" "${SELECTOR:-<any pod>}" 1 \
+                        "$(printf '%s\n<any pod>\n' "$cands" | grep .)"
+                    if [[ "$CHOICE" == "<any pod>"* ]]; then SELECTOR=""; POD_PIN=""
+                    elif [[ -n "$CHOICE" ]]; then SELECTOR="${CHOICE%% *}"; POD_PIN=""; fi
+                fi ;;
             o|O)
                 # containers come from the pinned pod's spec (else the first match)
                 local basepod conts=""
                 basepod="${POD_PIN:-$(resolve_pods 2>/dev/null | head -n1 || true)}"
-                [[ -n "$basepod" ]] && conts="$(kubectl -n "$NAMESPACE" get pod "$basepod" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' 2>/dev/null)"
+                if [[ -n "$basepod" ]]; then
+                    kenum -n "$NAMESPACE" get pod "$basepod" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' || true
+                    conts="$KENUM_OUT"
+                    if [[ -n "$KENUM_FORBIDDEN" ]]; then
+                        rbac_type "Can't read pod $basepod with your current RBAC — type the container name (usually 'app')." APP_CONTAINER
+                        continue
+                    fi
+                fi
                 choose_from "Container${basepod:+ (in $basepod)}" "$APP_CONTAINER" 1 "$conts"
                 [[ -n "$CHOICE" ]] && APP_CONTAINER="$CHOICE" ;;
             p|P) pick_pod ;;
@@ -477,10 +567,19 @@ retarget() {
 pick_pod() {
     POD_PIN=""
     SAVED_POD_GONE=""
-    local pods
-    pods="$(kubectl -n "$NAMESPACE" get pods ${SELECTOR:+-l "$SELECTOR"} \
-        -o jsonpath='{range .items[*]}{.metadata.name}{"  "}{.status.phase}{"  restarts="}{.status.containerStatuses[0].restartCount}{"\n"}{end}' 2>/dev/null)"
+    kenum -n "$NAMESPACE" get pods ${SELECTOR:+-l "$SELECTOR"} \
+        -o jsonpath='{range .items[*]}{.metadata.name}{"  "}{.status.phase}{"  restarts="}{.status.containerStatuses[0].restartCount}{"\n"}{end}' || true
+    local pods="$KENUM_OUT"
+    if [[ -n "$KENUM_FORBIDDEN" ]]; then
+        rbac_type "Can't list pods in $NAMESPACE with your current RBAC — you can still type a pod name if you know it." POD_PIN
+        return
+    fi
+    if [[ -n "$KENUM_ERR" ]]; then
+        printf '  %scouldn'\''t list pods: %s%s\n' "$YL" "$KENUM_ERR" "$OFF"
+        return
+    fi
     if [[ -z "$pods" ]]; then
+        # kubectl succeeded with zero rows — this one really is empty
         printf '  %sno pods match this target right now — captures will say so too. Check namespace/selector.%s\n' "$YL" "$OFF"
         return
     fi

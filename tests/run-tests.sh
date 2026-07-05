@@ -315,6 +315,22 @@ assert_has "gate: blocked action explains what to do" "press g"
 MOCK_PODS=multi run_input 'gp2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "gate: unlocks once a pod is pinned" "guided diagnosis"
 
+# RBAC denials must be explicit, never flattened into "nothing to list"
+MOCK_RBAC=forbidden run_input $'gppod-z\nbqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "rbac: pod listing denial is explicit" "Can't list pods"
+assert_has "rbac: typed pod fallback offered" "type a pod name"
+assert_not "rbac: denial never reads as empty" "no pods match"
+MOCK_RBAC=forbidden run_input $'gn\nbqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "rbac: namespace denial is explicit" "Can't list namespaces"
+MOCK_RBAC=forbidden run_input $'gs\nbqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "rbac: selector discovery names the cause" "pods can't be listed"
+
+# selector discovery: stable labels with match counts, hashes never suggested
+run_input 'gsbbqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "selector: suggestions carry match counts" "matches 2 pod(s)"
+assert_has "selector: most specific stable key offered" "app.kubernetes.io/name=payments"
+assert_not "selector: rollout hashes never suggested" "pod-template-hash"
+
 # a ready target for the rest of the TUI tests (pod pinned, container valid)
 mkdir -p "$TMP/config"; cat > "$TMP/config/target" <<'EOF'
 SAVED_NAMESPACE=default
@@ -401,7 +417,9 @@ assert_has "target editor: namespace dropdown applied" "namespace   payments"
 run_input 'gs2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "target editor: selector applied from pod labels" "selector    app=payments"
 
-run_input 'gs2bgs1bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+# <any pod> is deliberately LAST in the new candidate ordering (option 5
+# behind 4 label suggestions) — picking it still clears the selector
+run_input 'gs2bgs5bqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "target editor: any-pod option clears selector" "selector    <any pod>"
 
 run_input 'go2bqy' env JDEBUG_MODE=1 ./ui/tui.sh

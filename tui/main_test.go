@@ -550,6 +550,117 @@ func TestCapturesNameNextStep(t *testing.T) {
 	}
 }
 
+// --- RBAC-aware enumeration + selector discovery -------------------------------
+
+func TestForbiddenDetection(t *testing.T) {
+	for _, msg := range []string{
+		`Error from server (Forbidden): pods is forbidden: User "dev" cannot list resource "pods" in API group "" in the namespace "payments"`,
+		`namespaces is forbidden: User "x" cannot list resource "namespaces"`,
+	} {
+		if !forbiddenRe.MatchString(msg) {
+			t.Errorf("must detect RBAC denial in %q", msg)
+		}
+	}
+	if forbiddenRe.MatchString("The connection to the server was refused") {
+		t.Error("a network error is not an RBAC denial")
+	}
+}
+
+func testPods() podsJSON {
+	var pj podsJSON
+	mk := func(name string, labels map[string]string) podItem {
+		var it podItem
+		it.Metadata.Name = name
+		it.Metadata.Labels = labels
+		return it
+	}
+	pj.Items = []podItem{
+		mk("pod-a", map[string]string{"app": "payments", "app.kubernetes.io/name": "payments", "component": "api", "pod-template-hash": "abc"}),
+		mk("pod-b", map[string]string{"app": "payments", "app.kubernetes.io/name": "payments", "component": "api", "pod-template-hash": "abc"}),
+		mk("pod-c", map[string]string{"app": "web", "pod-template-hash": "zzz"}),
+	}
+	return pj
+}
+
+func TestDeriveSelectors(t *testing.T) {
+	got := deriveSelectors(testPods(), "")
+	joined := strings.Join(got, "\n")
+	if strings.Contains(joined, "pod-template-hash") {
+		t.Fatal("rollout hashes must never be suggested")
+	}
+	if !strings.Contains(joined, "matches 2 pod(s)") || !strings.Contains(joined, "matches 1 pod(s)") {
+		t.Fatalf("suggestions must carry match counts:\n%s", joined)
+	}
+	if !strings.HasPrefix(got[0], "app.kubernetes.io/name=payments") {
+		t.Fatalf("most specific stable key must rank first, got %q", got[0])
+	}
+	last := got[len(got)-1]
+	if !strings.HasPrefix(last, "<any pod>") || !strings.Contains(last, "risky") {
+		t.Fatalf("<any pod> must be last and warn about multiple apps, got %q", last)
+	}
+}
+
+func TestDeriveSelectorsPodFirst(t *testing.T) {
+	got := deriveSelectors(testPods(), "pod-c")
+	if !strings.HasPrefix(got[0], "app=web") || !strings.Contains(got[0], "on your selected pod") {
+		t.Fatalf("the selected pod's labels must rank first and say so, got %q", got[0])
+	}
+}
+
+func TestEditorRBACOffersTyping(t *testing.T) {
+	saved := podsFn
+	defer func() { podsFn = saved }()
+	podsFn = func(ns, sel string) enum {
+		return enum{err: "pods is forbidden", forbidden: true}
+	}
+	m := readyModel()
+	m.scr = scEditor
+	out := press(t, m, "p")
+	mm := out.(model)
+	if mm.scr != scInput || !strings.Contains(mm.input.title, "RBAC") {
+		t.Fatalf("forbidden pod listing must fall back to typed input with the RBAC reason, got screen %v title %q", mm.scr, mm.input.title)
+	}
+	out = press(t, mm, "p", "o", "d", "-", "z", "enter")
+	if got := out.(model).t.Pod; got != "pod-z" {
+		t.Fatalf("typed pod must apply, got %q", got)
+	}
+}
+
+func TestEditorEmptyIsOnlySaidWhenTrue(t *testing.T) {
+	saved := podsFn
+	defer func() { podsFn = saved }()
+	podsFn = func(ns, sel string) enum { return enum{} } // success, zero rows
+	m := readyModel()
+	m.scr = scEditor
+	out := press(t, m, "p")
+	mm := out.(model)
+	if !strings.Contains(mm.editor.note, "no pods match") {
+		t.Fatalf("genuinely-empty list keeps the honest message, got %q", mm.editor.note)
+	}
+	podsFn = func(ns, sel string) enum { return enum{err: "connection refused"} }
+	out = press(t, m, "p")
+	mm = out.(model)
+	if !strings.Contains(mm.editor.note, "couldn't list pods") {
+		t.Fatalf("a kubectl failure must not read as empty, got %q", mm.editor.note)
+	}
+}
+
+func TestSelectorPickApplierStripsAnnotation(t *testing.T) {
+	m := readyModel()
+	m.pick = picker{items: []string{"app=payments                       matches 3 pod(s)"}, kind: pickSelector}
+	m.scr = scPicker
+	out := press(t, m, "1")
+	if got := out.(model).t.Selector; got != "app=payments" {
+		t.Fatalf("selector must be the first field only, got %q", got)
+	}
+	m.pick = picker{items: []string{"<any pod>   first match wins — risky"}, kind: pickSelector}
+	m.scr = scPicker
+	out = press(t, m, "1")
+	if got := out.(model).t.Selector; got != "" {
+		t.Fatalf("<any pod> with annotation must clear the selector, got %q", got)
+	}
+}
+
 func TestVerbosityFlow(t *testing.T) {
 	out := press(t, readyModel(), "v")
 	mm := out.(model)

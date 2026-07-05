@@ -38,14 +38,21 @@ cluster can enumerate is a live dropdown:
 
 - **c context** — which cluster kubectl talks to (switching is confirmed first)
 - **n namespace** — the app's "folder" in the cluster, listed live
-- **s selector** — the label (like `app=payments`) that finds your app's pods,
-  built from the `app` labels actually on the pods there
+- **s selector** — the label (like `app=payments`) that finds your app's pods.
+  Suggestions come from the labels actually on the pods (your selected pod's
+  own labels first), show how many pods each matches, and stick to stable
+  workload keys — rollout internals like `pod-template-hash` are never
+  offered. Nothing is ever auto-picked: you always confirm
 - **o container / p pod** — a pod is one running copy of the app; the container
   is the app's box inside it. Both are read from the pod spec, and the pod
   picker shows restart counts (*the restarting one is usually the sick one*)
 
 Each field carries the same plain-language explanation inline in the editor,
 so nobody has to leave the screen to decode a term mid-incident.
+
+Locked-down cluster? When RBAC forbids listing, the editor says so plainly
+("Can't list pods in payments with your current RBAC") and drops straight to
+typed input — an access denial is never dressed up as "nothing to list".
 
 The header's one-line status always shows exactly what you're pointed at,
 with a live green/red reachability dot. Menu keys act instantly — no Enter;

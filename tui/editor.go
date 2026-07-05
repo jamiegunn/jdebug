@@ -14,6 +14,24 @@ import (
 
 type editorState struct{ note string }
 
+// enumeration seams — swappable in tests so the RBAC/error/empty paths can
+// be exercised without a cluster (or a kubectl binary).
+var (
+	namespacesFn = namespacesE
+	podsFn       = podsWithStatusE
+	containersFn = containersOfE
+	selectorsFn  = selectorCandidates
+)
+
+// rbacInput drops straight to typed input with a plain-language explanation
+// of the RBAC limit — an empty dropdown must never pretend nothing exists.
+func (m model) rbacInput(title string, then inputTarget) (tea.Model, tea.Cmd) {
+	m.input = inputBox{title: title, then: then}
+	m.prev = scEditor
+	m.scr = scInput
+	return m, nil
+}
+
 func (m model) openEditor() (tea.Model, tea.Cmd) {
 	m.scr = scEditor
 	m.editor.note = ""
@@ -72,26 +90,58 @@ func (m model) editorKey(key string) (tea.Model, tea.Cmd) {
 	case "c", "C":
 		return m.openPicker("Which cluster? (kube contexts on this machine)", kubeContexts(), currentContext(), false, pickContext)
 	case "n", "N":
-		return m.openPicker("Namespace", namespaces(), m.t.Namespace, true, pickNamespace)
+		res := namespacesFn()
+		if res.forbidden {
+			return m.rbacInput("Can't list namespaces with your current RBAC — type the namespace name (or ask for list permission):", inputNamespace)
+		}
+		if res.err != "" {
+			m.editor.note = "couldn't list namespaces: " + res.err
+			return m, nil
+		}
+		return m.openPicker("Namespace", res.items, m.t.Namespace, true, pickNamespace)
 	case "s", "S":
-		return m.openPicker("Selector — apps found in "+m.t.Namespace, appSelectors(m.t.Namespace), orAny(m.t.Selector), true, pickSelector)
+		items, res := selectorsFn(m.t.Namespace, m.t.Pod)
+		if res.forbidden {
+			return m.rbacInput("Can't discover selectors — pods can't be listed with your current RBAC. Type one (e.g. app=payments), or pick a known pod by name with p:", inputSelector)
+		}
+		if res.err != "" {
+			m.editor.note = "couldn't list pods for selector suggestions: " + res.err
+			return m, nil
+		}
+		return m.openPicker("Selector — suggestions from pod labels in "+m.t.Namespace, items, orAny(m.t.Selector), true, pickSelector)
 	case "p", "P":
-		pods := podsWithStatus(m.t.Namespace, m.t.Selector)
-		if len(pods) == 0 {
+		res := podsFn(m.t.Namespace, m.t.Selector)
+		if res.forbidden {
+			return m.rbacInput("Can't list pods in "+m.t.Namespace+" with your current RBAC — you can still type a pod name if you know it:", inputPod)
+		}
+		if res.err != "" {
+			m.editor.note = "couldn't list pods: " + res.err
+			return m, nil
+		}
+		if len(res.items) == 0 {
+			// kubectl succeeded and returned zero rows — this one really is empty
 			m.editor.note = "no pods match this target right now — check namespace/selector"
 			return m, nil
 		}
-		return m.openPicker("Which pod? (a high restart count usually marks the sick one)", pods, m.t.Pod, false, pickPod)
+		return m.openPicker("Which pod? (a high restart count usually marks the sick one)", res.items, m.t.Pod, false, pickPod)
 	case "o", "O":
 		base := m.t.Pod
 		if base == "" {
-			if pods := podsWithStatus(m.t.Namespace, m.t.Selector); len(pods) > 0 {
-				base = strings.Fields(pods[0])[0]
+			if pods := podsFn(m.t.Namespace, m.t.Selector); len(pods.items) > 0 {
+				base = strings.Fields(pods.items[0])[0]
 			}
 		}
 		var conts []string
 		if base != "" {
-			conts = containersOf(m.t.Namespace, base)
+			res := containersFn(m.t.Namespace, base)
+			if res.forbidden {
+				return m.rbacInput("Can't read pod "+base+" with your current RBAC — type the container name (usually 'app'):", inputContainer)
+			}
+			if res.err != "" {
+				m.editor.note = "couldn't read containers: " + res.err
+				return m, nil
+			}
+			conts = res.items
 		}
 		return m.openPicker("Container"+ternary(base != "", " (in "+base+")", ""), conts, m.t.Container, true, pickContainer)
 	case "a", "A":
@@ -165,7 +215,8 @@ func (m model) openPicker(title string, items []string, current string, typed bo
 	}
 	m.pick = picker{title: title, items: items, current: current, typed: typed, kind: kind}
 	for i, it := range items {
-		if strings.Fields(it)[0] == current || it == current {
+		f := strings.Fields(it)
+		if (len(f) > 0 && f[0] == current) || it == current || strings.HasPrefix(it, current+" ") {
 			m.pick.cursor = i
 		}
 	}
@@ -255,10 +306,12 @@ func (m model) applyPick(val string) (tea.Model, tea.Cmd) {
 		m.t.Namespace = val
 		m.t.Pod = ""
 	case pickSelector:
-		if val == "<any pod>" {
+		// items carry "  matches N pod(s)" annotations — the selector is the
+		// first field
+		if strings.HasPrefix(val, "<any pod>") {
 			m.t.Selector = ""
 		} else {
-			m.t.Selector = val
+			m.t.Selector = strings.Fields(val)[0]
 		}
 		m.t.Pod = ""
 	case pickPod:
@@ -282,6 +335,7 @@ const (
 	inputNamespace
 	inputSelector
 	inputContainer
+	inputPod
 )
 
 func inputForPick(k pickKind) inputTarget {
@@ -343,6 +397,10 @@ func (m model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.scr = scEditor
 		case inputContainer:
 			m.t.Container = v
+			m.scr = scEditor
+		case inputPod:
+			m.t.Pod = strings.Fields(v)[0]
+			m.staleP = ""
 			m.scr = scEditor
 		}
 		return m, nil
