@@ -6,6 +6,7 @@ package main
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -161,16 +162,69 @@ func (m model) row(a action) string {
 		cMuted.Render(desc) + strings.Repeat(" ", pad) + dot.Render(right)
 }
 
+// --- click-to-run: a menu row runs by clicking its label, not just its key ---
+
+// menuActions returns every runnable action for the current mode, so a click
+// can be validated against the real menu.
+func (m model) menuActions() []action {
+	if m.mode == 1 {
+		out := append([]action{}, remoteActions.quick...)
+		out = append(out, remoteActions.capture...)
+		return append(out, remoteActions.advanced...)
+	}
+	out := append([]action{}, localActions.quick...)
+	out = append(out, localActions.capture...)
+	return append(out, localActions.advanced...)
+}
+
+// menuKeyRe matches a rendered action row: "   <key>   <name…>".
+var menuKeyRe = regexp.MustCompile(`^\s{3}(\S)\s{3}\S`)
+
+// menuRowClick maps a left-click at (x,y) to the action key on that row, by
+// reading the rendered menu column — tier-agnostic, no fragile geometry. The
+// caller dispatches through menuKey so confirmation gates are preserved.
+func (m model) menuRowClick(x, y int) (string, bool) {
+	if m.scr != scMenu || !m.remote.OK && m.mode == 1 {
+		return "", false
+	}
+	lw := m.leftW()
+	if x < 0 || x >= lw { // only the menu column (panels sit to the right)
+		return "", false
+	}
+	lines := strings.Split(m.menuView(), "\n")
+	if y < 0 || y >= len(lines) {
+		return "", false
+	}
+	seg := ansi.Strip(ansi.Truncate(lines[y], lw, ""))
+	mm := menuKeyRe.FindStringSubmatch(seg)
+	if mm == nil {
+		return "", false
+	}
+	key := mm[1]
+	for _, a := range m.menuActions() {
+		if a.key == key {
+			return key, true
+		}
+	}
+	return "", false
+}
+
 func (m model) footer(nav string) string {
 	w := m.tw()
+	// keys are shown per row; on wide terminals (mouse territory) also tell
+	// users the rows are clickable. Dropped when narrow so it can't wrap.
+	lead := ""
+	if w >= 140 {
+		lead = "press a key or click a row · "
+	}
 	legendPlain := "●●● safe / caution / disruptive"
-	pad := w - 1 - 5 - len(nav) - lipgloss.Width(legendPlain) - 1
+	pad := w - 1 - 5 - lipgloss.Width(lead) - lipgloss.Width(nav) - lipgloss.Width(legendPlain) - 1
 	if pad < 2 {
 		pad = 2
 	}
 	legend := cSafe.Render("●") + cCaut.Render("●") + cDisr.Render("●") + " " +
 		cFaint.Render("safe / caution / disruptive")
-	return rule(w) + "\n " + cFaint.Render("more") + "  " + cDim.Render(nav) +
+	return rule(w) + "\n " + cFaint.Render("more") + "  " + cFaint.Render(lead) + cDim.Render(nav) +
 		strings.Repeat(" ", pad) + legend
 }
 

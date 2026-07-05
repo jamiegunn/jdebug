@@ -282,6 +282,9 @@ func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if m.panelHit(v.X, v.Y) {
 			return m.quickCLI(true, "why") // drill into what the panel summarizes
 		}
+		if key, ok := m.menuRowClick(v.X, v.Y); ok {
+			return m.menuKey(key) // same path as pressing the key (confirms fire)
+		}
 	case v.Button == tea.MouseButtonWheelUp:
 		if in, _ := m.podsHit(v.X, v.Y); in {
 			if m.podsOff > 0 {

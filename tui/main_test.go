@@ -454,6 +454,62 @@ func TestPanelSeparatesResourceFromJVM(t *testing.T) {
 	}
 }
 
+// clickMenuRow finds the display row of a menu action by its name and clicks
+// it, returning the resulting model + cmd.
+func clickMenuRow(t *testing.T, m model, name string) (model, tea.Cmd) {
+	t.Helper()
+	lines := strings.Split(m.menuView(), "\n")
+	lw := m.leftW()
+	for y, l := range lines {
+		col := ansiStrip(ansi.Truncate(l, lw, "")) // the menu column only
+		if strings.Contains(col, "  "+name+" ") {
+			res, cmd := m.Update(tea.MouseMsg{X: 4, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+			return res.(model), cmd
+		}
+	}
+	t.Fatalf("row %q not found in menu", name)
+	return m, nil
+}
+
+func readyModel200() model {
+	m := readyModel()
+	m.width, m.height = 200, 50
+	return m
+}
+
+func TestClickRunsMenuRow(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 200, 50
+	// clicking the status label runs status, exactly like pressing s
+	mm, cmd := clickMenuRow(t, m, "status")
+	if cmd == nil || !mm.out.running || !strings.Contains(mm.out.title, "status") {
+		t.Fatalf("clicking 'status' must run it, got title %q", mm.out.title)
+	}
+}
+
+func TestClickDisruptiveRowStillConfirms(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 200, 50
+	// clicking a disruptive row must open the SAME second-key confirm as the
+	// shortcut — a click can't bypass the gate
+	if mm, _ := clickMenuRow(t, m, "kill pod"); mm.scr != scConfirm || !strings.Contains(mm.confirmMsg, "K again") {
+		t.Fatalf("clicking 'kill pod' must ask to confirm, got screen %v", mm.scr)
+	}
+	if mm, _ := clickMenuRow(t, readyModel200(), "heap"); mm.scr != scConfirm || !strings.Contains(mm.confirmMsg, "H again") {
+		t.Fatalf("clicking 'heap' must ask to confirm, got screen %v", mm.scr)
+	}
+}
+
+func TestClickOutsideMenuColumnIsNotARun(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 200, 50
+	// a click in the panel column (x beyond the menu) must not run a menu row
+	menuW, _, _ := m.cols()
+	if _, ok := m.menuRowClick(menuW+5, 6); ok {
+		t.Fatal("a click outside the menu column must not resolve to a menu action")
+	}
+}
+
 func TestPanelClickDrillsIntoWhy(t *testing.T) {
 	m := readyModel()
 	m.width, m.height = 200, 50

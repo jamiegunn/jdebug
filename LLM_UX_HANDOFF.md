@@ -58,18 +58,19 @@ Start here:
 - `tui/render_demo.go` - canned render states for visual review.
 - `tui/main_test.go` - interaction and layout tests.
 - `ui/tui.sh` - bash fallback menu; keep behavior and copy aligned where practical.
+- `docs/ux-followups.md` - current follow-up backlog for larger UX/product directions.
 
 ## Current UX Assessment
 
 Overall, the UX is strong for junior SREs. The tool already does the most important thing well: it starts from symptoms and turns live context into concrete next actions.
 
-Notable strengths:
+Notable strengths now present in the code:
 
 - The main menu has a clear `START HERE` guided diagnosis entry.
 - The wizard asks “what are you seeing?” instead of asking which JVM tool the user wants.
 - Target setup is gated and checklist-driven.
 - The target editor explains Kubernetes fields inline.
-- Heap dumps are clearly marked as disruptive and require confirmation.
+- Heap dumps, re-rolls, and pod kills are marked as state-changing/disruptive and require confirmation.
 - The live panel turns target state into suggested key presses.
 - Help includes a glossary, first workflow, hidden keys, and safety rules.
 - Documentation repeatedly states that evidence stays local and captures are saved.
@@ -77,68 +78,71 @@ Notable strengths:
 
 Current post-scan notes from the latest code:
 
-- `observe/lifecycle.sh` does a good job explaining what `restart` and `kill` do, their risks, and their next steps after execution.
-- The TUI now shows `W workload`, `R re-roll`, and `K kill pod`, which makes the tool more useful during real incidents.
-- The help screen and safety wording have not fully caught up: it still says everything is read-only except heap dumps and verbosity, but `R` and `K` are also state-changing.
-- `re-roll` currently wraps awkwardly in rendered dashboard/menu output because the description and risk text are too long for the row.
-- The live panel still summarizes important data without exposing where each data point came from or which command gathered it.
+- Safety and correctness fixes have shipped: `?` is documented as help/glossary, risk rows include words not just color, long menu rows truncate instead of wrapping, and help now lists `H`, `x --heap`, `R`, `K`, and `v` accurately.
+- The high-CPU wizard no longer fires two thread dumps back-to-back; the second dump is gated by a wait/confirm prompt.
+- The live panel separates `resource · container, from kubectl top` from `jvm · inside the process`, shows richer autoscale state such as current/max/min and failure reasons, and points missing heap data toward jattach or route setup.
+- NEXT suggestions are severity-ordered, and clicking the TARGET panel runs `why` as a pragmatic drill-down for last-exit, limits, probes, and autoscale context.
+- Larger interaction/product ideas are captured in `docs/ux-followups.md`: click-to-run rows, full command/data transparency cards, actuator credentials, incident workflows, evidence chains, runbook cards, timeline, escalation summary, blocked-by view, and confidence levels.
 
-## Known UX Issues To Address
+## Remaining UX Issues To Address
 
-### 1. Documentation key mismatch
+### 1. Commands should be runnable by key or visible label
 
-`docs/getting-started.md` says the menu glossary is on `h`, but the TUI uses `h` for health and `?` for help/glossary.
+The keyboard shortcut model is good, but users should not have to remember that `s` means status or `h` means health. They should be able to select either the shortcut or the visible command label and run the same action.
 
-Fix the docs to say `?` opens help/glossary.
+Design goal: every command row should support both:
 
-### 2. Risk depends too much on color
+- Pressing the shortcut key, such as `s`.
+- Selecting or clicking the command label, such as `Status`, then running it.
 
-Rows use colored dots for safe/caution/disruptive. This is useful, but the meaning is weaker in `NO_COLOR`, low-color terminals, screenshots, and color-blind contexts.
+This should apply consistently across quick checks, captures, advanced actions, local-mode actions, and any picker-like command list. `docs/ux-followups.md` already proposes a row-to-y map that dispatches through the same key path so confirmation behavior cannot drift.
 
-Improve by adding text for non-safe risk where possible, for example:
+### 2. Full command and data transparency cards are still a follow-up
 
-- `● caution`
-- `● pauses app`
-- `● changes logging`
+Some transparency has shipped: panel group headers name data provenance, heap rows show the active route or next action, command output prints `$ ...`, and panel click runs `why`. The full transparency-card layer is not implemented yet.
 
-Keep the menu compact, but do not make risk depend only on color.
+Users should be able to inspect a command or live-panel value before acting. A detail/interstitial should answer:
 
-### 3. Some labels are still expert-first
+- What command will run, or what command/API produced this value.
+- Why the command or value is useful.
+- What it can and cannot prove.
+- Whether it is safe, state-changing, app-pausing, or likely to expose sensitive data.
+- What alternatives exist when the route is blocked, for example actuator vs jattach vs jdk.
+- What permissions or dependencies it needs, such as RBAC, metrics-server, actuator, jattach, or python3.
 
-Consider renaming or pairing expert terms with plain-language names:
+Examples to cover first: `status`, `memory`, `threads`, `heap`, `re-roll`, `last exit`, `mem`, `cpu`, `autoscale`, and `jvm heap`.
 
-- `jcmd` -> `JVM tools` or `JVM cmd`
-- `top` -> `CPU/memory`
-- `selector` -> `app label` where onboarding matters
-- `actuator` -> `app health URL` where onboarding matters
+This transparency layer should be discoverable from both keyboard and mouse. Avoid hover-only behavior because terminal hover support is inconsistent.
 
-Expert terms can remain in descriptions or help text, but the first visible label should be understandable under stress.
+### 3. Actuator credentials need a guided setup path
 
-### 4. High-CPU wizard flow needs a real interval
+The current UX still appears to assume unauthenticated localhost actuator access. Many real Spring Boot apps secure actuator endpoints, so retarget/settings should guide users through authenticated access.
 
-The high-CPU flow says two thread dumps should be captured a few seconds apart, but the implementation queues two `threads` captures back-to-back.
+Add a design and implementation plan for actuator credentials:
 
-Improve this flow so the second dump is meaningfully separated. Acceptable approaches:
+- Retarget/settings should include actuator auth state, not just actuator URL.
+- Support a safe way to provide credentials or tokens without storing secrets carelessly.
+- Store only a reference, such as an env var name or file path, not the secret value.
+- Explain where credentials usually come from in common Spring Boot deployments.
+- If credentials are unavailable, clearly offer non-actuator routes such as jattach.
+- Avoid guessing or exposing secrets. If a password is generated, injected from a Kubernetes Secret, or printed during startup, tell the user how to verify the source rather than assuming a default.
 
-- Prompt the user to wait and press a key before the second dump.
-- Add a deliberate short delay if it fits the TUI command model.
-- Capture once, explain why to wait, then queue the second capture after confirmation.
+Security note: do not ask another LLM to invent default actuator passwords. Spring Security defaults vary by configuration and version; in many apps the generated password appears in logs only in specific local/dev setups, while production credentials are commonly externalized through environment variables, config, or Kubernetes Secrets.
 
-Do not silently run two immediate captures while saying they are separated.
+### 4. Autoscale detail should connect panel state to workload topology
 
-### 5. First-run path could be even more obvious
+The live panel now shows current/max/min replicas and whether HPA is failing or at max. The remaining gap is connecting that summary to the broader workload story:
 
-The TUI already emphasizes `w` guided diagnosis. For a true junior flow, make “Not sure? Press w” even harder to miss in first-run or gated states.
+- Whether Deployment `replicas:` is fighting HPA-managed scale.
+- Which HPA conditions explain the state.
+- Which workload object owns the target pod.
+- Whether old ReplicaSets are still serving pods during a rollout.
 
-Potential improvements:
+`W workload` and `why` already explain much of this; the UX opportunity is making the autoscale panel/detail card point users there explicitly.
 
-- In the ready menu, make the wizard line visually dominant and plain.
-- In help, put `w` as the first recommended action.
-- In docs, recommend `jdebug` then `w` earlier and more explicitly.
+### 5. Dense dashboard may still overwhelm first-time users
 
-### 6. Dense dashboard may overwhelm first-time users
-
-The wide dashboard is powerful, but it shows many panes at once: menu, target live, trends, next, pods, events, captures, and logs.
+The wide dashboard is powerful, but it shows many panes at once: menu, target live, trends, next, pods, events, captures, and logs. The compact layout already uses a clearer incident-checklist order, but first-time wide-dashboard users may still need stronger hierarchy.
 
 Do not remove this power-user layout, but consider whether first-time users should get a clearer “incident checklist” hierarchy:
 
@@ -147,113 +151,17 @@ Do not remove this power-user layout, but consider whether first-time users shou
 3. What evidence was captured?
 4. What details are available if needed?
 
-### 7. Commands should be runnable by key or visible label
+### 6. Completed items should stay covered by regression tests
 
-The keyboard shortcut model is good, but users should not have to remember that `s` means status or `h` means health. They should be able to select either the shortcut or the visible command label and run the same action.
+Do not re-open these as current work unless a regression appears:
 
-Design goal: every command row should support both:
-
-- Pressing the shortcut key, such as `s`.
-- Selecting the command label, such as `Status`, then running it.
-
-This should apply consistently across all visible menu commands, including quick checks, captures, advanced actions, local-mode actions, and any picker-like command list.
-
-### 8. Live panel details should be explorable
-
-The live panel currently summarizes important signals such as last exit, autoscale, memory, CPU, and JVM heap. These summaries should be clickable or otherwise selectable so the user can drill into the underlying explanation.
-
-Specific examples:
-
-- `last exit` should open details about the previous termination reason, exit code if available, related events, and what command to run next.
-- Autoscale should open HPA details, scaling rules, current/max replicas, target metrics, and any failure condition.
-- Memory and CPU should open a short explanation of what layer the metric comes from and what it means.
-
-### 9. Autoscale metadata is too thin
-
-The dashboard currently reports autoscale as a replica count, for example `4 replicas`. This is useful but incomplete under incident pressure.
-
-Improve autoscale display and drill-down to show:
-
-- Current replicas and max replicas, for example `4/4` or `4/6`.
-- Min replicas if space allows.
-- Whether the Deployment's desired replica count collides with or fights the HPA-managed count.
-- Whether the HPA is healthy and able to scale.
-- If autoscale cannot start or cannot compute metrics, say so plainly, for example `autoscale failing - no metrics` or `autoscale failing - no rules`.
-- A detail view with the HPA conditions and the raw reason/message translated into plain language.
-
-### 10. Resource metrics and JVM metrics need clearer separation
-
-The dashboard shows memory, CPU, and JVM heap near each other. A junior user may not know whether memory and CPU are pod/container resource metrics or JVM-internal metrics.
-
-Consider splitting the live panel into two explicit groups:
-
-- Resource usage: pod/container CPU and memory from Kubernetes metrics and resource limits.
-- JVM usage: heap, non-heap, GC, and JVM route used (`actuator`, `jattach`, or `jcmd`).
-
-The labels should answer “where did this number come from?” without requiring the user to know Kubernetes metrics-server or actuator internals.
-
-### 11. JVM heap fallback behavior should be explicit
-
-The live panel labels heap values with the route used, such as `via actuator`. Confirm and preserve graceful fallback behavior when actuator heap metrics are unavailable.
-
-Desired behavior:
-
-- Try actuator first when configured and reachable.
-- Gracefully fall back to jattach or jcmd where possible.
-- Show the route used next to the value.
-- If no route works, show why in plain language and suggest the next action, such as staging jattach or fixing actuator settings.
-
-### 12. Actuator credentials need a guided setup path
-
-The current UX appears to assume unauthenticated localhost actuator access. Many real Spring Boot apps secure actuator endpoints, so retarget/settings should guide users through authenticated access.
-
-Add a design and implementation plan for actuator credentials:
-
-- Retarget/settings should include actuator auth state, not just actuator URL.
-- Support a safe way to provide credentials or tokens without storing secrets carelessly.
-- Explain where credentials usually come from in common Spring Boot deployments.
-- If credentials are unavailable, clearly offer non-actuator routes such as jattach.
-- Avoid guessing or exposing secrets. If a password is generated, hashed, injected from a Kubernetes Secret, or printed during startup, tell the user how to verify the source rather than assuming a default.
-
-Security note: do not ask another LLM to invent default actuator passwords. Spring Security defaults vary by configuration and version; in many apps the generated password appears in logs only in specific local/dev setups, while production credentials are commonly externalized through environment variables, config, or Kubernetes Secrets.
-
-### 13. Command and data transparency needs a first-class UI pattern
-
-Users should be able to see what command produced a data point or what command will run before they execute an action. This should be available without requiring them to run the command first and scroll through output.
-
-Add small indicators next to command rows and important live-panel data. The indicator can be a compact symbol, selectable marker, or inline hint, but it should open an interstitial/detail view that answers:
-
-- What command will run, or what command/data source produced this value.
-- Why the command or value is useful.
-- What it can and cannot prove.
-- Whether it is safe, state-changing, app-pausing, or likely to expose sensitive data.
-- What alternatives exist when the route is blocked, for example actuator vs jattach vs jdk.
-- What permissions or dependencies it needs, such as RBAC, metrics-server, actuator, jattach, or python3.
-
-Examples:
-
-- `status` detail: runs `jdebug status`; uses Kubernetes pod status and events; safe/read-only; good first check for restarts and scheduling failures.
-- `memory` detail: runs `jdebug memory`; reconciles Kubernetes/container RSS with JVM heap/non-heap; requires metrics and python3; alternatives include `jdebug-local memory` inside the pod.
-- `threads` detail: runs `jdebug threads`; captures thread state; safe; alternatives are actuator, jattach, and jdk route.
-- `heap` detail: runs `jdebug heap --confirm`; pauses the JVM; may contain user data; alternatives are MAT analysis after capture or memory reports before capture.
-- `re-roll` detail: runs `jdebug restart --confirm`; maps to `kubectl rollout restart`; restarts every pod in the Deployment; alternative is `kill pod` for one sick replica.
-- `last exit` detail: comes from pod container status; explain previous termination reason, exit code if available, related events, and the next command to run.
-- `mem` / `cpu` detail: comes from Kubernetes metrics-server via `kubectl top`; it is pod/container resource usage, not JVM heap.
-- `jvm heap` detail: comes from actuator metrics or jcmd fallback; label the active route and what failed if no route worked.
-
-This transparency layer should be discoverable from both keyboard and mouse. Avoid requiring hover-only behavior, because terminal hover support is inconsistent.
-
-### 14. Safety copy must include all state-changing actions
-
-The TUI now exposes `R re-roll` and `K kill pod`. These are useful recovery actions, but they change cluster state. Help text, footer legends, risk labels, docs, and tests should treat them as state-changing alongside heap dumps and log-level changes.
-
-Required updates:
-
-- Help safety rules should mention `R` and `K` explicitly.
-- Risk text should avoid implying only heap pauses the app.
-- `R` and `K` should remain shifted-key actions with second-key confirmation.
-- Any selected-label command flow must preserve the same confirmations.
-- The row copy should fit without awkward wrapping at supported dashboard widths.
+- `?` help/glossary documentation is fixed.
+- Risk labels no longer rely only on color.
+- High-CPU wizard has a real user-controlled interval between thread dumps.
+- Resource/JVM live-panel grouping has shipped.
+- Autoscale current/max/min/failing state has shipped.
+- JVM heap route/fallback text has shipped.
+- `R`/`K` safety copy and row wrapping have shipped.
 
 ## Operator Workflows To Consider
 
@@ -396,24 +304,28 @@ The current `re-roll` and `kill pod` actions are examples of recovery-oriented g
 
 ## Suggested Implementation Tasks
 
-Handle these in small commits or patches:
+Prioritize these remaining items in small commits or patches:
 
-1. Fix `docs/getting-started.md` help key mismatch from `h` to `?`.
-2. Review all menu/help/docs references to `h`, `?`, `d`, `a`, `g`, and `M` for consistency.
-3. Add non-color risk text for caution/disruptive actions while keeping safe rows compact.
-4. Update wizard high-CPU flow so the two thread dumps are actually separated.
-5. Review expert labels in `tui/menu.go`, `tui/editor.go`, and `docs/tui.md`; prefer plain-language labels first.
-6. Add row selection support so commands can be run by shortcut key or selected visible label.
-7. Add drill-down behavior for live-panel signals, starting with last exit and autoscale.
-8. Expand autoscale metadata to show current/max replicas, health, HPA failures, and Deployment/HPA replica conflicts.
-9. Split or relabel live metrics into Resource usage and JVM usage groups.
-10. Verify JVM heap fallback from actuator to jattach/jcmd and make route/failure state visible.
-11. Design actuator credential setup in retarget/settings without unsafe secret storage or guessed defaults.
-12. Add an operator workflow design pass for incident modes, evidence chains, runbook cards, timeline, blocked-by view, and escalation summary.
-13. Add command/data transparency indicators and detail interstitials for command rows and live-panel data.
-14. Update help/docs/risk copy for state-changing actions: `R re-roll`, `K kill pod`, verbosity changes, and heap dumps.
-15. Tighten long row copy so `re-roll` and other destructive rows do not wrap awkwardly in supported menu/dashboard widths.
-16. Run render checks and tests after changes.
+1. Add click/select-to-run menu rows so every visible command can run by shortcut key or selected label.
+2. Build the command/data transparency-card layer described in `docs/ux-followups.md`.
+3. Add actuator credential setup in retarget/settings without unsafe secret storage or guessed defaults.
+4. Make autoscale drill-down connect panel state to workload topology, HPA conditions, and Deployment/HPA replica conflicts.
+5. Productize operator workflows from `docs/ux-followups.md`: incident modes, evidence chains, runbook cards, timeline, What changed, escalation summary, blocked-by view, and confidence levels.
+6. Reassess first-time wide-dashboard hierarchy after the above interactions exist.
+7. Run render checks and tests after changes.
+
+Already shipped and regression-covered; do not duplicate this work unless tests reveal a regression:
+
+- `?` help/glossary docs fix.
+- Color-independent risk labels.
+- Row truncation/no-wrap behavior.
+- Honest safety copy for `H`, `x --heap`, `R`, `K`, and `v`.
+- High-CPU wizard wait/confirm before dump #2.
+- Resource/JVM live-panel grouping.
+- HPA current/max/min/failing display.
+- JVM heap route/next-action text.
+- TARGET panel click-to-`why` drill-down.
+- Severity-sorted NEXT suggestions.
 
 ## Validation Commands
 
@@ -450,26 +362,29 @@ done
 
 ## Test Adjustments To Add
 
-Add or update tests around the UX contracts, not just rendering. The strongest tests should assert that junior-operator affordances keep working as the UI changes.
+Add or update tests around the remaining UX contracts, not just rendering. The strongest tests should assert that junior-operator affordances keep working as the UI changes.
 
 Suggested TUI test coverage:
 
 - Command rows can run by shortcut key and by selected visible label.
 - Row selection works for quick checks, captures, advanced actions, and local-mode actions.
 - Disruptive selected-label actions still require the same confirmation behavior as shortcut actions.
+- Command and data transparency indicators/cards expose command provenance, data source, why it matters, risks, alternatives, and dependencies before execution or drill-down.
+- Autoscale transparency covers HPA conditions, maxed HPA, missing metrics/rules, and Deployment/HPA replica conflict states.
+- Actuator auth settings render without exposing secrets, and secured-actuator failures point to credential setup or jattach fallback.
+- Blocked-by states render actionable explanations for RBAC, metrics-server, secured actuator, missing jattach, no selector, and no previous logs.
+- Escalation summary includes target, symptom/workflow, findings, commands run, captures, blocked checks, and sensitive-evidence warnings.
+- Incident-mode selection changes NEXT ordering and wizard defaults without hiding safety gates.
+
+Regression tests to keep or strengthen:
+
 - Help/glossary key consistency: `?` opens help, `h` runs health, and docs/rendered help do not imply otherwise.
 - Risk text remains visible when `NO_COLOR=1` or styling is stripped.
 - High-CPU wizard does not run two thread captures back-to-back without a wait, prompt, or confirmation step.
-- Live-panel drill-down opens details for `last exit` and autoscale/HPA.
-- Autoscale render covers healthy HPA, maxed HPA, missing metrics, missing rules, and Deployment/HPA replica conflict states.
 - Resource metrics and JVM metrics render under distinct labels or sections.
 - JVM heap render covers actuator success, actuator failure with jattach/jcmd fallback, and no-route failure with a clear next action.
-- Actuator auth settings render without exposing secrets, and secured-actuator failures point to credential setup or jattach fallback.
-- Blocked-by states render actionable explanations for RBAC, metrics-server, secured actuator, missing jattach, no selector, and no previous logs.
 - NEXT suggestions are severity sorted when multiple signals are present.
-- Escalation summary includes target, symptom/workflow, findings, commands run, captures, blocked checks, and sensitive-evidence warnings.
-- Command and data transparency indicators expose command provenance, data source, why it matters, risks, alternatives, and dependencies before execution or drill-down.
-- New state-changing actions such as `re-roll` and `kill pod` are documented in help/safety copy and retain hard confirmation gates.
+- State-changing actions such as `re-roll` and `kill pod` are documented in help/safety copy and retain hard confirmation gates.
 
 Suggested docs/test-suite checks:
 
@@ -480,27 +395,30 @@ Suggested docs/test-suite checks:
 
 ## Acceptance Criteria
 
-A good follow-up change should satisfy these checks:
+A good new follow-up change should satisfy the relevant checks below:
+
+- Every visible command can be run by shortcut key or by selecting its command label.
+- Live-panel summary fields that imply deeper context have a discoverable detail path; TARGET panel click-to-`why` exists now, and transparency cards should add finer-grained detail.
+- Autoscale drill-down connects current/max/failing panel state to HPA conditions, workload topology, and Deployment/HPA conflicts.
+- Actuator authentication has an explicit guided setup path and does not rely on guessed default credentials.
+- Operator workflow ideas are either implemented or captured as explicit follow-up tasks with clear UX entry points.
+- NEXT suggestions, where touched, explain their evidence chain and confidence.
+- The UI can produce a concise escalation summary from the current session state and captured evidence.
+- Blocked checks are shown as actionable blocked states, not generic failures.
+- Command/data transparency indicators are visible and open detail views that show source command/API, purpose, risks, alternatives, and dependencies.
+- Existing tests pass, especially TUI interaction and render tests.
+- The bash fallback remains behaviorally aligned with the Go TUI where relevant.
+
+Regression criteria to preserve:
 
 - A new user can identify the recommended first action without reading docs.
 - Help/glossary keys are consistent across TUI, bash menu, README, and docs.
 - Dangerous actions are identifiable without relying only on color.
 - The high-CPU wizard does not misrepresent back-to-back thread dumps as separated samples.
-- Every visible command can be run by shortcut key or by selecting its command label.
-- Live-panel summary fields that imply deeper context, especially last exit and autoscale, have a discoverable detail path.
-- Autoscale shows enough metadata to answer whether the app is at max replicas, can scale, and is fighting Deployment replicas.
 - Pod/container resource metrics are visually and textually distinct from JVM metrics.
 - JVM heap values show which route supplied them and what to do when no route works.
-- Actuator authentication has an explicit guided setup path and does not rely on guessed default credentials.
-- Operator workflow ideas are either implemented or captured as explicit follow-up tasks with clear UX entry points.
-- NEXT suggestions prioritize severity and, where possible, explain their evidence chain and confidence.
-- The UI can produce a concise escalation summary from the current session state and captured evidence.
-- Blocked checks are shown as actionable blocked states, not generic failures.
-- Command/data transparency indicators are visible and open detail views that show source command/API, purpose, risks, alternatives, and dependencies.
 - State-changing actions such as `re-roll` and `kill pod` are represented accurately in help, risk copy, confirmations, and layout tests.
 - Target setup errors explain the next action in plain language.
-- Existing tests pass, especially TUI interaction and render tests.
-- The bash fallback remains behaviorally aligned with the Go TUI where relevant.
 
 ## Tone And Copy Guidance
 

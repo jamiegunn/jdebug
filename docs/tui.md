@@ -89,6 +89,11 @@ rules, a footer with navigation keys and a risk legend, and a live `❯` prompt:
  ❯ █
 ```
 
+**Every command runs by key OR by clicking its row.** The shortcut key is
+shown on each row, but you can also just click the row's label — it runs the
+same action through the same path, so a click on a disruptive row (`H` heap,
+`R` re-roll, `K` kill pod) still asks for confirmation exactly like the key.
+
 **Esc always goes back.** On every screen — wizard, target editor, pickers,
 capture-route prompt, output pane, expanded logs — Esc backs out to the
 screen underneath without running anything, and stray keys never pick a

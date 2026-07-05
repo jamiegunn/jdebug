@@ -11,16 +11,15 @@ and safety items (honest safety copy, colour-free risk text, no-wrap rows, the
 CPU-flow interval, the Resource/JVM panel split, richer autoscale, severity-
 sorted NEXT, panel click-to-drill-in) already shipped.
 
-## Click-to-run menu rows
+## Click-to-run menu rows — SHIPPED
 
-**Goal:** every visible command runs by clicking its label, not only by key.
-
-**Entry point:** extend `handleMouse` with a `menuRowHit(x, y)` that maps a
-click in the menu column to the action on that row, then dispatches the same
-key path (so confirms for `H`/`R`/`K` still fire). Build the row→y map while
-rendering `remoteBody`/`localBody` so geometry can't drift from the layout.
-Test: clicking a safe row runs it; clicking `H`/`R`/`K` opens the same
-second-key confirm as the shortcut.
+Every visible command now runs by clicking its label as well as by key.
+`menuRowClick` reads the clicked line's menu column, extracts the action key,
+and dispatches through `menuKey` — the same path as a keypress, so confirms
+for `H`/`R`/`K` still fire. Tier-agnostic (parses the rendered column rather
+than mapping geometry). The footer says "press a key or click a row" on wide
+terminals. Remaining refinement: extend the same affordance to picker-like
+lists (jcmd picks, log-level).
 
 ## Command & data transparency cards
 
