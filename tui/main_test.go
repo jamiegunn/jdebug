@@ -221,11 +221,23 @@ func TestDashboardShowsPanes(t *testing.T) {
 	m := readyModel()
 	m.width, m.height = 200, 50
 	out := m.menuView()
-	for _, want := range []string{"LIVE LOGS", "EVENTS", "CAPTURES", "TRENDS", "PODS", "▲",
-		"OutOfMemoryError", "BackOff", "20260705T091500Z", "click switches"} {
+	for _, want := range []string{"LIVE LOGS", "WORKLOAD", "CAPTURES", "TRENDS", "PODS", "▲",
+		"OutOfMemoryError", "app-debug-demo-app", "config:configmap", "20260705T091500Z", "click switches"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dashboard missing %q", want)
 		}
+	}
+}
+
+func TestDashboardDoesNotSpendMainPaneOnEvents(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 200, 50
+	out := m.menuView()
+	if strings.Contains(out, "EVENTS") {
+		t.Fatal("main dashboard should reserve the right column for workload context, not recent events")
+	}
+	if !strings.Contains(out, "WORKLOAD") || !strings.Contains(out, "volumes") {
+		t.Fatal("main dashboard must show workload context in the right column")
 	}
 }
 
@@ -629,6 +641,154 @@ func TestNextSuggestionsSeverityOrdered(t *testing.T) {
 	oom := strings.Index(got, "OOMKilled")
 	if crash < 0 || oom < 0 || crash > oom {
 		t.Fatalf("crash-loop must rank above OOM in NEXT:\n%s", got)
+	}
+}
+
+func TestNextConfidenceLevels(t *testing.T) {
+	// a confirmed OOM at high memory reads as "likely" and shows the cause→effect
+	// chain OOMKilled → mem 95% of limit, so the junior sees why, not just what.
+	m := readyModel()
+	m.panel = panelData{When: time.Now(), Phase: "Running", LastReason: "OOMKilled", MemPct: 95}
+	got := ansiStrip(strings.Join(m.suggestions(), "\n"))
+	if !strings.Contains(got, "likely") {
+		t.Fatalf("a confirmed OOM must read as 'likely':\n%s", got)
+	}
+	if !strings.Contains(got, "OOMKilled") || !strings.Contains(got, "mem 95% of limit") {
+		t.Fatalf("NEXT must chain OOMKilled → mem 95%% of limit:\n%s", got)
+	}
+	// a blind autoscaler is genuinely uncertain → "unknown"
+	m2 := readyModel()
+	m2.panel = panelData{When: time.Now(), Phase: "Running", HPAName: "a", HPAFailing: true, HPAReason: "no metrics"}
+	if got2 := ansiStrip(strings.Join(m2.suggestions(), "\n")); !strings.Contains(got2, "unknown") {
+		t.Fatalf("a blind HPA must read as 'unknown':\n%s", got2)
+	}
+	// a restart storm without a named reason is only "possible"
+	m3 := readyModel()
+	m3.panel = panelData{When: time.Now(), Phase: "Running", Restarts: 7}
+	if got3 := ansiStrip(strings.Join(m3.suggestions(), "\n")); !strings.Contains(got3, "possible") {
+		t.Fatalf("an unexplained restart storm must read as 'possible':\n%s", got3)
+	}
+}
+
+func TestBlockedByStatesAndFixes(t *testing.T) {
+	m := readyModel()
+	m.mode = 1
+	m.remote = probe{OK: true, Cluster: true, When: time.Now().Add(time.Hour)}
+	m.t.Selector = ""
+	m.panel = panelData{When: time.Now(), NoMetrics: true, ActuatorOK: false}
+	m.podsErr = "pods is forbidden: User cannot list resource pods"
+	var states, fixes string
+	for _, b := range m.blockers() {
+		states += b.state + "\n"
+		fixes += b.fix + "\n"
+		if b.fix == "" {
+			t.Fatalf("every blocked state must name a fix, got none for %q", b.state)
+		}
+	}
+	for _, want := range []string{"no selector", "RBAC", "metrics-server", "actuator"} {
+		if !strings.Contains(states, want) {
+			t.Fatalf("blockers must surface %q as a state:\n%s", want, states)
+		}
+	}
+	// RBAC fix must name a least-privilege permission, not "become admin"
+	if !strings.Contains(fixes, "get/list") {
+		t.Fatalf("RBAC fix must name the least-privilege verbs:\n%s", fixes)
+	}
+}
+
+func TestBlockedByClusterShortCircuits(t *testing.T) {
+	m := readyModel()
+	m.mode = 1
+	m.remote = probe{OK: false, Cluster: false, When: time.Now().Add(time.Hour)}
+	bs := m.blockers()
+	if len(bs) != 1 || !strings.Contains(bs[0].state, "cluster") {
+		t.Fatalf("an unreachable cluster must be the only (root) blocker, got %+v", bs)
+	}
+}
+
+func TestBlockedKeyOpensAndDismisses(t *testing.T) {
+	m := readyModel()
+	out := press(t, m, "b")
+	if out.(model).scr != scBlocked {
+		t.Fatal("b must open the blocked-by view")
+	}
+	if back := press(t, out.(model), "x"); back.(model).scr != scMenu {
+		t.Fatal("any key must dismiss the blocked-by view")
+	}
+	// reachable even while the target gate is up (that's when it matters most)
+	g := readyModel()
+	g.remote = probe{OK: false, Cluster: true, When: time.Now().Add(time.Hour)}
+	g.t.Pod = ""
+	if gated := press(t, g, "b"); gated.(model).scr != scBlocked {
+		t.Fatal("b must open blocked-by even while gated")
+	}
+}
+
+func TestNothingBlocked(t *testing.T) {
+	m := readyModel()
+	m.mode = 1
+	m.remote = probe{OK: true, Cluster: true, When: time.Now().Add(time.Hour)}
+	m.t.Selector = "app=demo"
+	m.panel = panelData{When: time.Now(), ActuatorOK: true}
+	m.podsErr, m.eventsErr = "", ""
+	if bs := m.blockers(); len(bs) != 0 {
+		t.Fatalf("a healthy target must have no blockers, got %+v", bs)
+	}
+	if v := ansiStrip(m.blockedView()); !strings.Contains(v, "nothing is blocked") {
+		t.Fatalf("blocked view must reassure when clear:\n%s", v)
+	}
+}
+
+func TestBackgroundModeCycle(t *testing.T) {
+	m := readyModel()
+	if m.bgMode != bgLive {
+		t.Fatal("default background mode must be live")
+	}
+	m = press(t, m, "z").(model)
+	if m.bgMode != bgQuiet {
+		t.Fatal("z must move live → quiet")
+	}
+	if s := m.bgStatus(); !strings.Contains(s, "QUIET") || !strings.Contains(s, "JVM") {
+		t.Fatalf("quiet status must name what's off: %q", s)
+	}
+	m = press(t, m, "z").(model)
+	if m.bgMode != bgPaused {
+		t.Fatal("z must move quiet → paused")
+	}
+	if s := m.bgStatus(); !strings.Contains(s, "PAUSED") || !strings.Contains(s, "r ") {
+		t.Fatalf("paused status must point at r: %q", s)
+	}
+	m = press(t, m, "z").(model)
+	if m.bgMode != bgLive {
+		t.Fatal("z must wrap paused → live")
+	}
+}
+
+func TestQuietRefreshHoldsLastHeap(t *testing.T) {
+	// a quiet-mode panel refresh skips the JVM probe, so the last-known heap and
+	// actuator status must be carried forward, not blanked to "no route".
+	m := readyModel()
+	m.panel = panelData{When: time.Now(), HeapUsed: "121Mi", HeapMax: "512Mi", HeapVia: "actuator", ActuatorOK: true}
+	out, _ := m.Update(panelMsg{When: time.Now(), Phase: "Running", HeapSkipped: true})
+	got := out.(model).panel
+	if got.HeapUsed != "121Mi" || got.HeapVia != "actuator" || !got.ActuatorOK {
+		t.Fatalf("a skipped JVM probe must keep the last heap/actuator status, got %+v", got)
+	}
+}
+
+func TestRefreshKeyReturnsCommand(t *testing.T) {
+	m := readyModel()
+	if _, cmd := m.Update(key("r")); cmd == nil {
+		t.Fatal("r must trigger a manual refresh command")
+	}
+}
+
+func TestTrendsLegend(t *testing.T) {
+	m := readyModel()
+	rows := strings.Join(m.trendsRows(46), "\n")
+	got := ansiStrip(rows)
+	if !strings.Contains(got, "mem=%limit") || !strings.Contains(got, "▲=restart") {
+		t.Fatalf("trends must carry a self-explanatory legend:\n%s", got)
 	}
 }
 

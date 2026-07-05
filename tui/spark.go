@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/x/ansi"
 )
 
 type sample struct {
@@ -150,8 +152,12 @@ func (m model) trendsRows(w int) []string {
 	}
 	rows = append(rows, " "+cFaint.Render("rst   ")+marks.String()+" "+cMuted.Render(rval))
 
+	// a legend so the sparklines aren't a mystery: what each row is, that
+	// values are point-in-time samples (not averages), and the cadence/gaps
+	legend := "mem=%limit cpu=vs-limit ▲=restart · point-in-time, 1/20s"
 	if len(m.hist) < 2 {
-		rows = append(rows, " "+cFaint.Render("– one point per 20s refresh –"))
+		legend = "collecting… 1 point per 20s refresh · mem=%limit ▲=restart"
 	}
+	rows = append(rows, " "+cFaint.Render(ansi.Truncate(legend, w-2, "…")))
 	return rows
 }

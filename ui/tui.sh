@@ -471,6 +471,8 @@ show_help() {
   ${B}KEYS NOT SHOWN ON THE MENU${OFF}
     ${GN}i${OFF} stage jattach in the pod · ${GN}p${OFF} push the in-pod tool (jdebug-local)
     ${GN}g${OFF} target editor · ${GN}M${OFF} switch mode · ${GN}d${OFF} browse captures
+    ${GN}b${OFF} what's blocked right now + how to unblock it (RBAC, metrics, actuator…)
+    ${GN}E${OFF} escalation summary — a paste-ready handoff for asking a senior for help
 
   ${B}THE SAFETY RULES${OFF}
     · most actions are read-only. The ones that CHANGE things ask first:
@@ -484,6 +486,53 @@ show_help() {
     · heap dumps can contain real user data: treat them like production data
 
 EOF
+}
+# show_blocked — the blocked-by view ('b'): each check that can't run is shown as
+# an operator STATE with the least-privilege permission, setup step, or fallback
+# route that unblocks it — never a bare failure. Mirrors the Go TUI overlay; the
+# building block is lib/common.sh's explain_kubectl_error, aggregated here.
+show_blocked() {
+    box "blocked-by — what can't run right now, and what unblocks it"
+    printf '\n'
+    if [[ "$MODE" == 1 ]]; then
+        if [[ -z "$TARGET_OK" && -n "$TARGET_WHY" ]]; then
+            printf '  %scurrent target checks%s\n' "$B" "$OFF"
+            printf '%s\n' "$TARGET_WHY"
+        fi
+        cat <<EOF
+  ${B}COMMON BLOCKED STATES${OFF}
+    ${RD}✗ blocked by RBAC${OFF}
+      why  your kube context is denied a read it needs (a Forbidden reply)
+      fix  ask for get/list on pods, events, and pods/log in this namespace — nothing more
+    ${RD}✗ blocked by missing metrics-server${OFF}
+      why  kubectl top has no data source, so live CPU/mem % is blank
+      fix  install metrics-server; requests/limits still show, JVM heap still via actuator/jattach
+    ${RD}✗ blocked by secured/absent actuator${OFF}
+      why  the app's health URL didn't answer (secured, wrong path, or not exposed)
+      fix  if secured set auth (${GN}k${OFF} in the target editor); check the URL; or capture with no HTTP via jattach
+    ${RD}✗ blocked by no selector${OFF}
+      why  no label filter is set, so jdebug can't tell which pods are your app's
+      fix  press ${GN}g${OFF} → set a selector like app=NAME
+    ${RD}✗ blocked by missing jattach${OFF}
+      why  the no-HTTP JVM route isn't staged in the pod
+      fix  press ${GN}i${OFF} to stage jattach (~80 KB) — it needs no actuator
+EOF
+    else
+        if [[ -z "$LOCAL_OK" && -n "$LOCAL_WHY" ]]; then
+            printf '  %scurrent route checks%s\n' "$B" "$OFF"
+            printf '%s\n' "$LOCAL_WHY"
+        fi
+        cat <<EOF
+  ${B}COMMON BLOCKED STATES${OFF}
+    ${RD}✗ blocked by no route${OFF}
+      why  neither the actuator HTTP endpoint nor jattach is available in this pod
+      fix  press ${GN}s${OFF} to fix the actuator URL, or ${GN}i${OFF} to stage jattach (~80 KB, no HTTP)
+    ${RD}✗ blocked by missing jattach${OFF}
+      why  actuator-less captures (threads/heap/jcmd) need it
+      fix  press ${GN}i${OFF} to stage jattach — it talks to the JVM directly
+EOF
+    fi
+    printf '\n  %spress c for the full cluster why + fix · any key returns%s\n' "$DIM" "$OFF"
 }
 # retarget — the TARGET editor ('t'). Each field is one keypress; fields the
 # cluster can enumerate open a live dropdown (contexts, namespaces, selectors
@@ -840,6 +889,7 @@ menu_remote() {
     mrow m memory  "is the app near its memory limit?"      safe
     mrow y why     "pod deep-dive — limits, probes, exit codes, autoscaling" safe
     mrow W workload "deployment → replicasets → pods, HPA, services"        safe
+    mrow e context  "services, env, probes, deps (Valkey/Redis) — how it's wired" safe
     mrow S security "running as root? privileged? network policy?"          safe
     mrow l logs    "what did the app say? (live stream)"    safe
     printf '\n'
@@ -903,6 +953,7 @@ dispatch_remote() {
         case "$1" in
             ""|g|G) retarget; SKIP_PAUSE=1 ;;
             '?')    show_help ;;
+            b|B)    show_blocked ;;
             c|C)    run "$DBG" doctor ;;
             M)      choose_mode; SKIP_PAUSE=1 ;;
             q|Q)    confirm "quit jdebug?" && bye; return 1 ;;
@@ -915,6 +966,8 @@ dispatch_remote() {
         s)   run "$DBG" status ;;
         y|Y) run "$DBG" why ${POD_PIN:+"$POD_PIN"} ;;
         W)   run "$DBG" topology ${POD_PIN:+"$POD_PIN"} ;;
+        e)   run "$DBG" context ${POD_PIN:+"$POD_PIN"} ;;
+        E)   run "$DBG" escalate ${POD_PIN:+"$POD_PIN"} ;;
         S)   run "$DBG" security ${POD_PIN:+"$POD_PIN"} ;;
         h)   run "$DBG" health ${POD_PIN:+"$POD_PIN"} ;;
         o|O) run "$DBG" top ;;
@@ -943,6 +996,7 @@ dispatch_remote() {
              case "$lvk" in 1) lv=TRACE;; 2) lv=DEBUG;; 3) lv=INFO;; 4) lv=WARN;; 5) lv=ERROR;; 6) lv=OFF;; esac
              [[ -n "$lg" && -n "$lv" ]] && run "$DBG" log-level "$lg" "$lv" ;;
         '?') show_help ;;
+        b|B) show_blocked ;;
         c|C) run "$DBG" doctor ;;
         a|A) run "$DBG" analyze ;;
         d|D) run "$DBG" dumps ;;
@@ -962,6 +1016,7 @@ dispatch_local() {
             ""|s|S) local_settings; SKIP_PAUSE=1 ;;
             i|I)    run stage_jattach_local ;;
             '?')    show_help ;;
+            b|B)    show_blocked ;;
             M)      choose_mode; SKIP_PAUSE=1 ;;
             q|Q)    confirm "quit jdebug?" && bye; return 1 ;;
             *)      printf '  %sset up a route to the JVM first — press s (actuator URL) or i (stage jattach).%s\n' "$YL" "$OFF"; return 1 ;;
@@ -981,6 +1036,7 @@ dispatch_local() {
         x|X) jattach_fallback_check
              if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run sh "$LOCAL" snapshot --heap; else run sh "$LOCAL" snapshot; fi ;;
         '?') show_help ;;
+        b|B) show_blocked ;;
         a|A) run "$SCRIPTS_ROOT/observe/analyze.sh" "${OUT_DIR:-/tmp}" ;;
         d|D) run sh "$LOCAL" dumps ;;
         i|I) run stage_jattach_local ;;

@@ -47,9 +47,14 @@ mounted as env — verify with `T`, then `env | grep -i actuator`) and does NOT
 guess a default password. When actuator fetches fail, the capture scripts point
 users at this setup or at the no-HTTP jattach route.
 
-Remaining refinement: detect a 401/403 specifically (curl `-w`/`--fail-with-body`)
-to distinguish "secured" from "absent", and pre-fill the likely env-var name by
-reading the pod spec's `env`.
+401-vs-absent detection — SHIPPED. A failed actuator fetch now probes the HTTP
+status (`pod_http_status`, a `curl -w %{http_code}` / busybox `wget -S` snippet)
+and `explain_actuator_fail` names the precise next action: `401/403` → set auth
+(or jattach), `404` → wrong path/disabled (fix the URL, or jattach), no reply →
+app wedged (jattach). A 200 that isn't a dump is run through `classify_capture`.
+
+Remaining refinement: pre-fill the likely env-var name by reading the pod spec's
+`env` in the target editor's auth field.
 
 ## Operator incident workflows
 
@@ -61,9 +66,10 @@ must never make destructive changes automatically.
   memory / CPU / deployed / not-sure) that pre-select a wizard flow and reorder
   NEXT. Entry point: a top-level pick in `openWizard`, and a `mode` field that
   weights `suggestions()`.
-- **Evidence chains** — show the short cause→effect behind a recommendation
-  (`OOMKilled → mem 94% of limit → w flow 1`). Entry point: `suggestions()`
-  returns a chain, not just a line.
+- **Evidence chains — SHIPPED.** NEXT rows now show the short cause→effect
+  behind a recommendation (`likely  OOMKilled last restart → mem 94% of limit →
+  w flow 1`). `suggestionRows()` returns structured rows (`{conf, msg, ev, key}`)
+  and `suggestions()` renders them; each render site clips to its column width.
 - **Runbook cards** — the transparency card, specialised per signal (what it
   means / why / check first / safe cmd / risky cmd / what to tell the next
   person). Good first cards: last exit, HPA, container memory, JVM heap, probe
@@ -76,32 +82,47 @@ must never make destructive changes automatically.
   events since last restart, previous logs, probe failures, HPA vs Deployment
   replicas. Much of this is already in `topology` + `logs --previous`; the
   workflow names the question.
-- **Escalation summary** — one key builds a handoff: target, symptom/workflow,
-  findings + confidence, commands run (from the session log), captures + paths,
-  blocked checks + why, suggested next action, and a sensitive-evidence
-  warning. Entry point: a verb that reads the session log + current panel
-  state.
-- **Blocked-by view** — surface a failed check as an operator state (blocked by
-  RBAC / metrics-server / secured actuator / missing jattach / no selector /
-  no previous logs), each with the least-privilege fix or fallback route. The
-  building block (`explain_kubectl_error`) exists; this aggregates it into a
-  view.
-- **Confidence levels** — `likely / possible / unknown` prefixes on NEXT so a
-  junior knows which warnings are certain.
+- **Escalation summary — SHIPPED.** `jdebug escalate` (`E` in both frontends)
+  builds a paste-ready handoff from the current target + live pod state + the
+  session log + captures on disk: TARGET, FINDINGS with confidence
+  (likely/possible/unknown, reusing the NEXT tiers), BLOCKED CHECKS (RBAC /
+  metrics-server), COMMANDS ALREADY RUN (parsed from the newest
+  `session-*.log`), CAPTURES with paths, a SUGGESTED NEXT action, and a
+  sensitive-evidence warning when heap dumps/logs are present. Read-only;
+  degrades to a minimal brief without python3.
+- **Blocked-by view — SHIPPED.** `b` opens a BLOCKED-BY overlay in both
+  frontends. `blockers()` (Go) reads the live signals — cluster reachability,
+  selector, pinned pod, RBAC (Forbidden replies via `forbiddenRe`),
+  metrics-server, actuator — and lists each currently-blocked check as an
+  operator state paired with the least-privilege permission, setup step, or
+  fallback route (a dead cluster short-circuits as the one root blocker). The
+  bash side mirrors the same catalog and echoes the live gate checks. Reachable
+  even while the target gate is up (that's when it matters most).
+- **Confidence levels — SHIPPED.** `likely / possible / unknown` prefixes lead
+  each NEXT row (coloured by certainty) so a junior knows which warnings are
+  certain: a named OOM/crash-loop is `likely`, a blind autoscaler is `unknown`.
 
 These stay diagnostic-first. Recovery guidance (scale up, roll back, loosen a
 probe, raise a limit) should be explanation or copy-paste unless a strongly
 confirmed remediation flow is designed — the pattern set by `re-roll` and
 `kill pod` (hard confirm + full risk brief).
 
-## Runtime context / app wiring
+## Runtime context / app wiring — SHIPPED
 
-**Goal:** answer “what is this app, what exposes it, what config is it running
-with, and what dependencies might be miswired?” without making the user jump
-between pod specs, Services, ConfigMaps, Secrets, and JVM commands.
+A new read-only verb `jdebug context` (`observe/context.sh`, reachable as `e` in
+both frontends) answers "what is this app, what exposes it, what config is it
+running with, and what dependencies might be miswired?" in one pass. It reads the
+pod spec + Services/Endpoints + referenced ConfigMaps and prints scan-friendly
+sections — **owner & rollout · services & ports (incl. endpoint membership) ·
+probes · environment (JVM env, Spring profiles, tz, proxies, envFrom) · secret &
+config references · volumes & storage (tmpfs/PVC/memory-backed flagged) ·
+dependencies · Valkey/Redis** — each naming the command it used. Secret VALUES
+are never printed: sensitive keys and secretKeyRef values show as
+`<redacted>` / `← Secret name/key`. JVM live flags are pointed at
+`jdebug jcmd 'VM.flags'` rather than probed, keeping `context` kubectl-only.
 
-**Entry point:** expand `jdebug topology` or add a sibling read-only verb such
-as `jdebug context`. Organize the output into scan-friendly sections:
+Remaining refinement (kept as ideas): external IP/hostname for LoadBalancer
+Services, Ingress/Gateway/NetworkPolicy discovery. Original section spec:
 
 - Owner and rollout: Deployment/ReplicaSet revision, ready/updated/available
   replicas, strategy, image tag/digest, command/args, rollout status.
@@ -125,13 +146,19 @@ as `jdebug context`. Organize the output into scan-friendly sections:
 Every section should print or link to the command/API used to gather it. Secret
 values must be redacted; show names/keys/references only.
 
-## Dependency-aware checks: Valkey / Redis-compatible
+## Dependency-aware checks: Valkey / Redis-compatible — SHIPPED
 
-**Goal:** when env/config suggests Valkey or Redis-compatible clients, surface
-the configuration that commonly explains connectivity and cluster routing
-failures.
+The `dependencies · Valkey / Redis` section of `jdebug context` surfaces both
+client-side settings (from the app's `REDIS/VALKEY/LETTUCE/JEDIS` env, passwords
+redacted) and server-side config found in mounted `redis.conf`-style ConfigMaps:
+`cluster-enabled`, all `cluster-announce-*` / `replica-announce-*`,
+`bind`/`protected-mode`/`port`/`tls-port`, `requirepass`/`masterauth`
+(presence only, always `<redacted>`), `maxmemory*`, `appendonly`, and the
+`cluster-node-timeout`/`require-full-coverage`/`migration-barrier` knobs. When
+announce settings are present it flags the classic "works in the pod, clients
+fail from elsewhere" footgun. Extensible for future deps (DB/Kafka/mesh).
 
-Useful safe clues/checks:
+Original clue list:
 
 - Client host/port/db/SSL settings from env/config, with secrets redacted.
 - `cluster-enabled`.
@@ -169,49 +196,48 @@ Design points:
 - Support keyboard selection in addition to click-to-open.
 - Preserve sensitive-evidence warnings for heaps and logs.
 
-## Trends transparency
+## Invalid heap capture recovery — SHIPPED
 
-**Goal:** make the trends pane understandable without reading source code.
+When a `.hprof` is actually an actuator error page, login response, JSON error,
+or empty/truncated download, the tool now explains it as a capture-route problem
+rather than sending the user toward Eclipse MAT.
 
-The UI should explain:
+- Capture time still validates `JAVA PROFILE` magic and leaves bad files for
+  inspection; a 200 that isn't a dump is run through `classify_capture`
+  (`lib/common.sh`) and named (HTML login/error page · JSON error · empty).
+- `analyze` (`observe/analyze.sh`) classifies the bad file and prints exact
+  recovery — set auth (`k`), `jdebug heap --via jattach --confirm`, `--via jdk`,
+  or fix the actuator URL — instead of MAT-oriented next steps.
+- The captures browser (`captures.go`) marks invalid `.hprof` files with `⚠` in
+  a warn colour, `capHint` says "not a heap dump — a explains", and viewing one
+  shows the classification + recovery (`classifyHead` mirrors the CLI).
 
-- One sample is added per panel refresh, currently about every 20 seconds.
-- Values are point-in-time samples from Kubernetes/JVM reads, not averages
-  computed by jdebug.
-- `mem` means container memory percentage of limit.
-- `cpu` means Kubernetes CPU usage scaled against the limit when available.
-- `rst` means restart count markers; `▲` means the restart count increased at
-  that sample.
-- History is capped at `histCap` samples, roughly 30 minutes at 20 seconds per
-  sample.
-- Gaps mean missing metrics or unknown values.
+Test fixtures cover bad magic, HTML login, JSON error, empty, and valid HPROF
+(bash `run-tests.sh` + Go `hprof_test.go`).
 
-Prefer `restarts` over `rst` where width allows, and provide a trends detail
-card or inline legend.
+## Trends transparency — SHIPPED
 
-## Idle/background activity transparency
+The TRENDS section now carries an inline legend (`spark.go`) —
+`mem=%limit cpu=vs-limit ▲=restart · point-in-time, 1/20s` (a "collecting…"
+variant until there are 2 samples) — and the help screen (`?`) adds a full
+"TRENDS + WHAT THE SCREEN DOES WHILE IDLE" section spelling out point-in-time
+(not averaged) semantics, the ~20s cadence, the ~30-min (`histCap`) window, and
+that a gap in a sparkline is a missing metric sample.
 
-**Goal:** answer “what is the TUI doing in the background while I am just
-looking at it?” and let the operator control that activity.
+## Idle/background activity transparency — SHIPPED
 
-Current shape to expose:
+The panel now shows a live status line of what runs on its own
+(`auto 20s · logs 5s · z quiets`), and a three-state background mode cycles with
+`z`:
 
-- Live logs refresh about every 5 seconds.
-- Target/panel/dashboard reads refresh around every 20 seconds and may burst
-  several Kubernetes reads.
-- Actuator heap metric reads touch the app/JVM when actuator works.
-- `jcmd GC.heap_info` fallback is read-only but heavier and should not be
-  repeated in quiet mode.
+- **live** (default) — logs every 5s, pod/top/hpa/events/pods every 20s, plus the
+  app/JVM-touching actuator heap probe (with its `jcmd GC.heap_info` fallback).
+- **quiet** — stops log polling AND the JVM/actuator probe; the cheap kubectl
+  reads stay, and the last-known heap/actuator status is held (`HeapSkipped`
+  carry-forward) rather than blanked.
+- **paused** — nothing runs automatically.
 
-Controls to add:
-
-- Visible status such as `idle refresh: logs 5s · target 20s · actuator heap 20s`.
-- Background probes summary: `kubectl logs, pod/top/hpa, actuator metrics`.
-- Pause/resume background refresh.
-- Manual refresh once.
-- Slow down / speed up intervals.
-- Quiet mode: disable logs and JVM probes, keep manual refresh.
-
-Classify cost/risk in the transparency card: low-cost Kubernetes reads,
-medium-cost logs/top, app/JVM-touching actuator metrics, heavier JVM-touching
-`jcmd` fallback.
+`r` does one full refresh on demand (works in every mode). The help screen
+classifies the cost/risk of each probe (cheap kubectl vs medium logs/top vs
+app/JVM-touching actuator + jcmd). Implemented in `main.go` (mode + tick gating +
+`refreshNow`/`bgStatus`), `panel.go` (`fetchPanel(probeJVM)`), `menu.go` (`r`/`z`).

@@ -123,11 +123,11 @@ func (m model) podsHit(x, y int) (bool, int) {
 	return true, y - y0
 }
 
-// right-column vertical split: PODS on top, EVENTS, then CAPTURES.
-func rightHeights(topH int) (podH, evH, capH int) {
+// right-column vertical split: PODS on top, WORKLOAD context, then CAPTURES.
+func rightHeights(topH int) (podH, workH, capH int) {
 	podH = topH * 2 / 5
-	evH = (topH - podH) / 2
-	capH = topH - podH - evH
+	workH = (topH - podH) / 2
+	capH = topH - podH - workH
 	return
 }
 
@@ -165,7 +165,7 @@ func (m model) switchPod(pod string) (tea.Model, tea.Cmd) {
 	m.hist = nil
 	saveTarget(m.t)
 	m.remote = remoteProbe(m.t)
-	cmds := []tea.Cmd{m.panelFetch(), fetchEvents(m.t), fetchPodList(m.t)}
+	cmds := []tea.Cmd{m.panelFetch(m.bgMode == bgLive), fetchEvents(m.t), fetchPodList(m.t)}
 	if !m.logBusy {
 		cmds = append(cmds, m.logsFetch())
 	}

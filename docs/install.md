@@ -5,6 +5,10 @@ nav_order: 2
 
 # Install
 
+These instructions are for **macOS**. Windows may work through WSL or another
+Unix-like shell, but this kit and its install/build commands are not verified
+as native Windows PowerShell/CMD steps.
+
 ```sh
 ./install.sh                 # symlinks `jdebug` into ~/.local/bin
 ./install.sh --prefix ~/bin  # or a bin dir of your choice
@@ -21,9 +25,56 @@ anywhere on PATH.
 |---|---|---|
 | `kubectl` + a reachable context | your machine | everything remote goes through it |
 | `curl` | your machine | downloads the jattach helper (once, then cached) |
-| `python3` | your machine | only `jdebug memory` needs it |
+| `python3` | your machine | deeper reports and tests: `memory`, `why`, `security`, `topology`, lifecycle ownership checks, selector discovery, and the pty integration test |
 | `curl` **or** busybox `wget` | in the pod | the actuator tier uses whichever exists — a stock JRE-alpine image works untouched |
 | same uid as the JVM | your `kubectl exec` | the jattach tier attaches same-uid only |
+
+`python3` is not required to build the Go TUI with `make tui`, and many basic
+checks still run without it. Treat it as a recommended macOS prerequisite for
+the full diagnostic experience: the richer Kubernetes/JVM reports use it to
+parse JSON and turn raw pod specs into plain-language findings.
+
+## Build the optional Go TUI on a new Mac
+
+The shell CLI runs directly from the checkout. The nicer Bubble Tea TUI is a
+Go binary; build it once and `jdebug` will prefer it automatically.
+
+Install macOS build prerequisites:
+
+```sh
+xcode-select --install       # installs make, git, compiler tools
+brew install go kubectl python
+```
+
+Then build from the repo root:
+
+```sh
+make tui                     # writes tui/jdebug-tui
+./jdebug                     # opens the menu; prefers the built TUI
+```
+
+If Homebrew is not installed, install Go and kubectl by your normal Mac
+software-management path; the important pieces for `make tui` are `make` and
+`go`. Install Python 3 as well if you want the full diagnostic command set and
+test suite.
+
+If you copied the repo in a way that stripped executable bits, repair them:
+
+```sh
+chmod +x install.sh jdebug jdebug-local
+chmod +x capture/*.sh observe/*.sh ui/*.sh tests/run-tests.sh
+```
+
+The repository should already have those modes when cloned with `git`; the
+`chmod` commands are only a fix-up for zip/copy/fileshare transfers.
+
+To verify the checkout and build:
+
+```sh
+make tui
+tests/run-tests.sh
+jdebug doctor
+```
 
 ## Verify before you need it
 

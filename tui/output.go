@@ -356,7 +356,7 @@ func (m model) outputKey(key string) (tea.Model, tea.Cmd) {
 		}
 		m.scr = m.prev
 		m.out.show = false
-		return m, tea.Batch(m.panelFetch(), fetchCaps(m.kit, m.capsDir()))
+		return m, tea.Batch(m.panelFetch(m.bgMode == bgLive), fetchCaps(m.kit, m.capsDir()))
 	case "C":
 		return m.copyTranscript(), nil
 	case "ctrl+c":
@@ -379,7 +379,7 @@ func (m model) menuOutKey(key string) (tea.Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		m.out.show = false
-		return m, tea.Batch(m.panelFetch(), fetchCaps(m.kit, m.capsDir())), true
+		return m, tea.Batch(m.panelFetch(m.bgMode == bgLive), fetchCaps(m.kit, m.capsDir())), true
 	case "C":
 		return m.copyTranscript(), nil, true
 	case "up", "down", "pgup", "pgdown":

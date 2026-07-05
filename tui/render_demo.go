@@ -21,7 +21,10 @@ func demoModel() model {
 	m.remote = probe{OK: true, Cluster: true, When: time.Now().Add(time.Hour)}
 	m.panel = panelData{When: time.Now(), Phase: "Running", Waiting: "CrashLoopBackOff",
 		Restarts: 34, LastReason: "OOMKilled",
-		MemUse: "480Mi", MemLimit: "512Mi", MemPct: 94, CPUUse: "250m", CPULimit: "500m",
+		OwnerKind: "ReplicaSet", OwnerName: "app-debug-demo-app-6c6c4b5769", DeployName: "app-debug-demo-app",
+		NodeName: "ddk3s-agent-1", ServiceAcct: "app-debug-demo",
+		Volumes: []string{"config:configmap", "creds:secret", "tmp:emptydir"},
+		MemUse:  "480Mi", MemLimit: "512Mi", MemPct: 94, CPUUse: "250m", CPULimit: "500m",
 		HPAName: "app-debug-demo-app", HPACur: 6, HPAMax: 6, HPAMin: 2,
 		HeapUsed: "121Mi", HeapMax: "1732Mi", HeapVia: "actuator", ActuatorOK: true}
 	m.local = probe{OK: true, Jattach: true, When: time.Now().Add(time.Hour),
@@ -119,6 +122,15 @@ func renderDemo(what string) string {
 			cFaint.Render("   · container — checked once a pod is selected"),
 		}}
 		return m.menuView()
+	case "blocked":
+		// a multi-blocked target: no selector, RBAC denial, no metrics, secured actuator
+		m.scr = scBlocked
+		m.width, m.height = 120, 0
+		m.t.Selector = ""
+		m.podsErr = "pods is forbidden: User \"dev\" cannot list resource \"pods\""
+		m.panel.NoMetrics = true
+		m.panel.ActuatorOK = false
+		return m.blockedView()
 	case "local":
 		m.mode = 2
 		return m.menuView()
@@ -132,5 +144,5 @@ func renderDemo(what string) string {
 		m.scr = scWizard
 		return m.wizardView()
 	}
-	return "unknown screen: " + what + " (menu|dashboard|compact|focus|output|runpane|gate|local|help|chooser|editor|wizard)"
+	return "unknown screen: " + what + " (menu|dashboard|compact|focus|output|runpane|gate|local|help|chooser|editor|wizard|blocked)"
 }

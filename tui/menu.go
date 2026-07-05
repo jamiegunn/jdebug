@@ -244,6 +244,7 @@ var remoteActions = struct {
 		{"m", "memory", "is the app near its memory limit?", "safe", ""},
 		{"y", "why", "limits, probes, exit codes, autoscaling", "safe", ""},
 		{"W", "workload", "deployment → replicasets → pods", "safe", ""},
+		{"e", "context", "services, env, probes, deps — how it's wired", "safe", ""},
 		{"S", "security", "root? privileged? network policy?", "safe", ""},
 		{"l", "logs", "what did the app say? (live stream)", "safe", ""},
 	},
@@ -399,6 +400,10 @@ func (m model) menuKey(key string) (tea.Model, tea.Cmd) {
 			case "?":
 				m.scr = scHelp
 				return m, nil
+			case "b", "B":
+				m.prev = m.scr
+				m.scr = scBlocked
+				return m, nil
 			case "c", "C":
 				return m.quickCLI(false, "doctor")
 			case "M":
@@ -424,6 +429,10 @@ func (m model) menuKey(key string) (tea.Model, tea.Cmd) {
 		case "?":
 			m.scr = scHelp
 			return m, nil
+		case "b", "B":
+			m.prev = m.scr
+			m.scr = scBlocked
+			return m, nil
 		case "M":
 			m.scr = scChooser
 			return m, nil
@@ -446,6 +455,10 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 		return m.quickCLI(true, "why")
 	case "W":
 		return m.quickCLI(true, "topology")
+	case "e":
+		return m.quickCLI(true, "context")
+	case "E": // one-key handoff brief for asking a senior for help
+		return m.quickCLI(true, "escalate")
 	case "S": // shifted deliberately: s = status is the most-pressed key
 		return m.quickCLI(true, "security")
 	case "h":
@@ -495,6 +508,15 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ".":
 		return m.openDetail("") // transparency cards for every command
+	case "b", "B":
+		m.prev = m.scr
+		m.scr = scBlocked
+		return m, nil
+	case "r": // refresh the dashboard now (works even while quiet/paused)
+		return m, m.refreshNow()
+	case "z", "Z": // cycle background refresh: live → quiet → paused → live
+		m.bgMode = (m.bgMode + 1) % 3
+		return m, nil
 	case "c", "C":
 		return m.quickCLI(false, "doctor")
 	case "a", "A":
@@ -547,6 +569,10 @@ func (m model) localKey(key string) (tea.Model, tea.Cmd) {
 		return m, nil
 	case ".":
 		return m.openDetail("")
+	case "b", "B":
+		m.prev = m.scr
+		m.scr = scBlocked
+		return m, nil
 	case "a", "A":
 		return m.openQuick("analyze /tmp", nil, m.kit+"/observe/analyze.sh", "/tmp")
 	case "d", "D":

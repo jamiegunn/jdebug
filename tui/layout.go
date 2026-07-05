@@ -138,11 +138,11 @@ func (m model) dashboardView() string {
 	return prefix + suffix
 }
 
-// rightColumn stacks PODS, EVENTS, CAPTURES into exactly h rows.
+// rightColumn stacks PODS, WORKLOAD, CAPTURES into exactly h rows.
 func (m model) rightColumn(w, h int) []string {
-	podH, evH, capH := rightHeights(h)
+	podH, workH, capH := rightHeights(h)
 	rows := m.podsRows(w, podH)
-	rows = append(rows, m.eventsRows(w, evH)...)
+	rows = append(rows, m.workloadRows(w, workH)...)
 	rows = append(rows, m.capsRows(w, capH)...)
 	return rows
 }

@@ -19,6 +19,8 @@
 #     why           pod deep-dive: limits, probes, exit codes, HPA (why.sh)
 #     security      pod security posture, in plain language (security.sh)
 #     topology      deployment → replicasets → pods + HPA/services (topology.sh)
+#     context       app wiring: services, env, probes, volumes, deps (context.sh)
+#     escalate      paste-ready handoff brief for asking for help (escalate.sh)
 #     restart       re-roll the owning deployment (needs --confirm)
 #     kill          delete a pod; managed pods respawn (needs --confirm)
 #     logs          stream logs from all replicas         (tail-logs.sh)
@@ -257,6 +259,8 @@ case "$cmd" in
     why)             fwd "$D/observe/why.sh" ;;
     security)        fwd "$D/observe/security.sh" ;;
     topology)        fwd "$D/observe/topology.sh" ;;
+    context|wiring)  fwd "$D/observe/context.sh" ;;
+    escalate|handoff) fwd "$D/observe/escalate.sh" ;;
     restart)         fwd "$D/observe/lifecycle.sh" restart ;;
     kill)            fwd "$D/observe/lifecycle.sh" kill ;;
     memory)          fwd "$D/observe/memory-report.sh" ;;

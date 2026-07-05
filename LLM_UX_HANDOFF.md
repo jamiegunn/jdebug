@@ -205,7 +205,24 @@ Redesign goals:
 - Keep click-to-open, but also support keyboard selection for accessibility.
 - Preserve evidence safety warnings, especially for heap dumps and logs.
 
-### 9. Trends need labels that explain sampling and meaning
+### 9. Invalid heap captures need a clearer recovery path
+
+When `jdebug analyze <heap.hprof>` finds bad HPROF magic, the output currently identifies the file as invalid and suggests retrying with `--via jattach`. That is directionally right, but the UX should make the likely cause and next action more concrete, especially because old invalid `.hprof` files may remain in `dumps/` for inspection.
+
+Improve invalid heap handling across capture, analyze, and captures browser:
+
+- At capture time, continue validating HPROF magic before calling a file usable.
+- If an actuator heap download returns an error page, JSON error, HTML login page, 401/403, 404, or truncated content, classify that probable cause where possible.
+- In `analyze`, avoid generic “heap questions in Eclipse MAT” next steps for invalid heaps; MAT cannot use a bad HPROF.
+- Show a short preview or classification of the first bytes/content type when safe, for example `looks like HTML error page`, `looks like JSON actuator error`, or `empty/truncated file`.
+- Suggest exact recovery commands:
+  - secured/disabled actuator: configure actuator credentials or use `jdebug heap --via jattach --confirm`.
+  - app too wedged to serve HTTP: use `--via jattach` or `--via jdk`.
+  - route/base path wrong: check actuator URL in target settings.
+- Mark invalid heap captures visibly in the captures browser so users do not try to open them in MAT.
+- Preserve the invalid file for inspection, but keep it out of “valid evidence” summaries unless explicitly included.
+
+### 10. Trends need labels that explain sampling and meaning
 
 The current trends section is not self-explanatory. It should answer:
 
@@ -218,7 +235,7 @@ The current trends section is not self-explanatory. It should answer:
 
 Consider renaming `rst` to `restarts` where width allows, and add a trends detail card or legend.
 
-### 10. Idle background activity should be visible and controllable
+### 11. Idle background activity should be visible and controllable
 
 The TUI is not zero-touch while open. The fastest idle loop is the live log refresh, about every 5 seconds. Other panel/dashboard refreshes happen around every 20 seconds and can issue several read-only calls in a burst.
 
@@ -247,7 +264,7 @@ Classify background work by cost/risk:
 
 For junior-SRE transparency, the UI should answer: “while I’m just looking at this screen, what is it doing in the background?”
 
-### 11. Completed items should stay covered by regression tests
+### 12. Completed items should stay covered by regression tests
 
 Do not re-open these as current work unless a regression appears:
 
@@ -409,11 +426,12 @@ Prioritize these remaining items in small commits or patches:
 5. Reorganize `W workload` into clear sections and add service/ports, image, probes, env/config references, volumes/PVCs, secrets references, and the commands used to gather each section.
 6. Add a runtime context/app wiring workflow with dependency-aware checks, starting with Valkey/Redis-compatible configuration clues.
 7. Redesign the captures browser around clear scope, refresh state, filters, keyboard selection, and pod-change behavior.
-8. Explain trends sampling cadence, meaning, history window, gaps, and restart markers in the UI.
-9. Add idle/background activity transparency and controls: refresh status, pause/resume, manual refresh, interval controls, and quiet mode.
-10. Productize operator workflows from `docs/ux-followups.md`: incident modes, evidence chains, runbook cards, timeline, What changed, escalation summary, blocked-by view, and confidence levels.
-11. Reassess first-time wide-dashboard hierarchy after the above interactions exist.
-12. Run render checks and tests after changes.
+8. Improve invalid heap capture handling in capture, analyze, and captures browser.
+9. Explain trends sampling cadence, meaning, history window, gaps, and restart markers in the UI.
+10. Add idle/background activity transparency and controls: refresh status, pause/resume, manual refresh, interval controls, and quiet mode.
+11. Productize operator workflows from `docs/ux-followups.md`: incident modes, evidence chains, runbook cards, timeline, What changed, escalation summary, blocked-by view, and confidence levels.
+12. Reassess first-time wide-dashboard hierarchy after the above interactions exist.
+13. Run render checks and tests after changes.
 
 Already shipped and regression-covered; do not duplicate this work unless tests reveal a regression:
 
@@ -475,6 +493,7 @@ Suggested TUI test coverage:
 - Workload topology tests cover section order, Services/ports, image, probes, env/config references, volumes/PVCs, Secret references with values redacted, and displayed source commands.
 - Runtime context tests detect Valkey/Redis-style configuration safely and redact credentials.
 - Captures browser tests cover selected-pod scope, pod-change reset/prompt behavior, refresh state, filters, keyboard navigation, and `a analyzes current view` semantics.
+- Invalid heap tests cover actuator error-page/JSON/login/truncated files, analyze recovery wording, captures-browser invalid markers, and exclusion from valid-evidence summaries.
 - Trends tests cover the legend/copy for 20-second samples, point-in-time values, `rst`/restart markers, history window, and missing metrics gaps.
 - Idle activity tests cover visible refresh cadence, pause/resume, manual refresh, quiet mode, and no repeated `jcmd` fallback when quieted.
 - Actuator auth settings render without exposing secrets, and secured-actuator failures point to credential setup or jattach fallback.
@@ -509,6 +528,7 @@ A good new follow-up change should satisfy the relevant checks below:
 - Workload topology is organized into readable sections and includes Services/ports, image, probes, env/config references, volumes/PVCs, Secret references, and source commands with sensitive values redacted.
 - Runtime context/app wiring identifies relevant dependency configuration, including Valkey/Redis-compatible config where detectable, without printing secrets.
 - Captures navigation makes current scope, refresh state, selected pod, filters, and analysis target obvious.
+- Invalid heap captures are detected early, classified when possible, marked in the captures browser, and paired with exact retry/configuration guidance instead of MAT-oriented next steps.
 - Trends explain sample cadence, point-in-time semantics, labels, restart markers, history window, and missing-data gaps.
 - Idle background activity is visible and controllable, including pause/resume, manual refresh, interval controls, and quiet mode.
 - Actuator authentication has an explicit guided setup path and does not rely on guessed default credentials.
