@@ -15,7 +15,10 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
+
+func ansiStrip(s string) string { return ansi.Strip(s) }
 
 func key(s string) tea.KeyMsg {
 	switch s {
@@ -913,6 +916,64 @@ func TestChooserStrayKeysDontPickAMode(t *testing.T) {
 			t.Errorf("stray %q must stay on the chooser without picking a mode, got screen %v mode %d", k, mm.scr, mm.mode)
 		}
 	}
+}
+
+func TestRiskReadsWithoutColor(t *testing.T) {
+	// risk must be legible with all styling stripped (NO_COLOR, screenshots,
+	// colour-blind) — the word, not just the dot colour.
+	m := readyModel()
+	m.width, m.height = 200, 50
+	plain := ansiStrip(m.menuView())
+	for _, want := range []string{"● pauses app", "● restarts app", "● drops the pod", "● caution"} {
+		if !strings.Contains(plain, want) {
+			t.Errorf("risk text missing without colour: %q", want)
+		}
+	}
+}
+
+func TestNoRowWrapsAtMinTierTwoWidth(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 140, 50 // smallest tier-2 grid → tightest menu column
+	for i, l := range strings.Split(m.menuView(), "\n") {
+		if w := lipgloss.Width(l); w > 140 {
+			t.Errorf("row %d wraps at 140 cols (width %d): %q", i+1, w, ansiStrip(l))
+		}
+	}
+}
+
+func TestHelpListsStateChangingActions(t *testing.T) {
+	m := readyModel()
+	help := ansiStrip(m.helpView())
+	for _, want := range []string{"R re-roll", "K kill pod", "PAUSE the JVM", "changes log volume"} {
+		if !strings.Contains(help, want) {
+			t.Errorf("safety rules must mention %q", want)
+		}
+	}
+	// the wizard must be the first recommended action
+	if !strings.Contains(help, "NOT SURE? START HERE") {
+		t.Error("help must lead with the wizard as the first action")
+	}
+}
+
+func TestHighCPUFlowSeparatesTheTwoDumps(t *testing.T) {
+	for _, f := range wizardFlows {
+		if f.key != "3" {
+			continue
+		}
+		if f.steps[0].args[0] != "threads" {
+			t.Fatal("flow 3 must open with a thread dump")
+		}
+		// the SECOND thread dump must be gated (a wait/confirm), not queued
+		// back-to-back while claiming the dumps are separated
+		if f.steps[1].confirm == "" || f.steps[1].args[0] != "threads" {
+			t.Fatal("the second thread dump must be a confirm step so the user can wait between samples")
+		}
+		if !strings.Contains(f.steps[1].confirm, "second") && !strings.Contains(f.steps[1].confirm, "#2") {
+			t.Fatalf("the gate must explain it's the second sample, got %q", f.steps[1].confirm)
+		}
+		return
+	}
+	t.Fatal("flow 3 (high CPU) missing")
 }
 
 func TestReRollNeedsSecondPress(t *testing.T) {

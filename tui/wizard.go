@@ -46,9 +46,11 @@ var wizardFlows = []struct {
 	}, []string{"press a (analyze) — it flags deadlocks and blocked pools automatically", "then open the .txt in VisualVM (free, local)"}},
 
 	{"3", "High CPU / autoscaler adding pods", []wstep{
-		{narr: []string{"Two thread dumps a few seconds apart — a stack RUNNABLE in both is your hot loop."},
+		{narr: []string{"A hot loop is the SAME stack RUNNABLE in two dumps taken a few seconds apart.",
+			"Capturing dump #1 now:"},
 			args: []string{"threads"}, withPod: true},
-		{args: []string{"threads"}, withPod: true},
+		{confirm: "dump #1 saved. Let the app run under load for ~5 seconds, THEN press y for dump #2 — comparing the two is what reveals the hot loop (any other key skips it) [y/N]",
+			args: []string{"threads"}, withPod: true},
 		{args: []string{"top"}, remote: true},
 		{narr: []string{"The JVM's own CPU number (0.0–1.0 of what it's allowed to use):"},
 			args: []string{"metrics", "process.cpu.usage"}, withPod: true},

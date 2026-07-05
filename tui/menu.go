@@ -10,6 +10,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 // (tw/tier/showPanel/leftW live in layout.go)
@@ -134,17 +135,30 @@ func (m model) row(a action) string {
 	case "disruptive":
 		dot = cDisr
 	}
-	right := "●"
-	if a.riskText != "" {
-		right += " " + a.riskText
+	// risk must read WITHOUT colour (NO_COLOR, screenshots, colour-blind):
+	// safe = bare dot, caution/disruptive = dot + a word. An explicit
+	// riskText wins; otherwise fall back to the risk level's name.
+	rt := a.riskText
+	if rt == "" && a.risk != "safe" {
+		rt = a.risk
 	}
-	left := fmt.Sprintf("   %s   %-12s%s", a.key, a.name, a.desc)
-	pad := w - lipgloss.Width(left) - lipgloss.Width(right) - 1
+	right := "●"
+	if rt != "" {
+		right += " " + rt
+	}
+	// truncate the description so a long row never wraps at any width
+	prefix := fmt.Sprintf("   %s   %-12s", a.key, a.name)
+	avail := w - lipgloss.Width(prefix) - lipgloss.Width(right) - 2
+	if avail < 8 {
+		avail = 8
+	}
+	desc := ansi.Truncate(a.desc, avail, "…")
+	pad := w - lipgloss.Width(prefix) - lipgloss.Width(desc) - lipgloss.Width(right) - 1
 	if pad < 1 {
 		pad = 1
 	}
 	return "   " + cKey.Render(a.key) + "   " + cBody.Render(fmt.Sprintf("%-12s", a.name)) +
-		cMuted.Render(a.desc) + strings.Repeat(" ", pad) + dot.Render(right)
+		cMuted.Render(desc) + strings.Repeat(" ", pad) + dot.Render(right)
 }
 
 func (m model) footer(nav string) string {
@@ -174,9 +188,9 @@ var remoteActions = struct {
 		{"h", "health", "is a dependency — db, queue — down?", "safe", ""},
 		{"o", "top", "which pod is eating CPU or memory?", "safe", ""},
 		{"m", "memory", "is the app near its memory limit?", "safe", ""},
-		{"y", "why", "pod deep-dive — limits, probes, exit codes, autoscaling", "safe", ""},
-		{"W", "workload", "deployment → replicasets → pods, HPA, services", "safe", ""},
-		{"S", "security", "running as root? privileged? network policy?", "safe", ""},
+		{"y", "why", "limits, probes, exit codes, autoscaling", "safe", ""},
+		{"W", "workload", "deployment → replicasets → pods", "safe", ""},
+		{"S", "security", "root? privileged? network policy?", "safe", ""},
 		{"l", "logs", "what did the app say? (live stream)", "safe", ""},
 	},
 	capture: []action{
@@ -188,8 +202,8 @@ var remoteActions = struct {
 		{"j", "jcmd", "raw JVM commands — GC, profiling, native memory", "caution", ""},
 		{"v", "verbosity", "change log level live, no restart", "caution", ""},
 		{"T", "terminal", "a shell inside the pod — exit returns here", "caution", ""},
-		{"R", "re-roll", "rolling-restart the deployment — cycles every pod", "disruptive", "restarts app"},
-		{"K", "kill pod", "delete this pod (a managed one respawns)", "disruptive", "drops the pod"},
+		{"R", "re-roll", "rolling-restart the pods", "disruptive", "restarts app"},
+		{"K", "kill pod", "delete one pod", "disruptive", "drops the pod"},
 	},
 }
 

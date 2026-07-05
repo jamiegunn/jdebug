@@ -73,6 +73,15 @@ Notable strengths:
 - The live panel turns target state into suggested key presses.
 - Help includes a glossary, first workflow, hidden keys, and safety rules.
 - Documentation repeatedly states that evidence stays local and captures are saved.
+- Recent additions move in the right operator-workflow direction: `workload` exposes Deployment/ReplicaSet/HPA/service context, and `re-roll` / `kill pod` expose recovery-oriented actions through hard confirmation gates.
+
+Current post-scan notes from the latest code:
+
+- `observe/lifecycle.sh` does a good job explaining what `restart` and `kill` do, their risks, and their next steps after execution.
+- The TUI now shows `W workload`, `R re-roll`, and `K kill pod`, which makes the tool more useful during real incidents.
+- The help screen and safety wording have not fully caught up: it still says everything is read-only except heap dumps and verbosity, but `R` and `K` are also state-changing.
+- `re-roll` currently wraps awkwardly in rendered dashboard/menu output because the description and risk text are too long for the row.
+- The live panel still summarizes important data without exposing where each data point came from or which command gathered it.
 
 ## Known UX Issues To Address
 
@@ -207,6 +216,44 @@ Add a design and implementation plan for actuator credentials:
 - Avoid guessing or exposing secrets. If a password is generated, hashed, injected from a Kubernetes Secret, or printed during startup, tell the user how to verify the source rather than assuming a default.
 
 Security note: do not ask another LLM to invent default actuator passwords. Spring Security defaults vary by configuration and version; in many apps the generated password appears in logs only in specific local/dev setups, while production credentials are commonly externalized through environment variables, config, or Kubernetes Secrets.
+
+### 13. Command and data transparency needs a first-class UI pattern
+
+Users should be able to see what command produced a data point or what command will run before they execute an action. This should be available without requiring them to run the command first and scroll through output.
+
+Add small indicators next to command rows and important live-panel data. The indicator can be a compact symbol, selectable marker, or inline hint, but it should open an interstitial/detail view that answers:
+
+- What command will run, or what command/data source produced this value.
+- Why the command or value is useful.
+- What it can and cannot prove.
+- Whether it is safe, state-changing, app-pausing, or likely to expose sensitive data.
+- What alternatives exist when the route is blocked, for example actuator vs jattach vs jdk.
+- What permissions or dependencies it needs, such as RBAC, metrics-server, actuator, jattach, or python3.
+
+Examples:
+
+- `status` detail: runs `jdebug status`; uses Kubernetes pod status and events; safe/read-only; good first check for restarts and scheduling failures.
+- `memory` detail: runs `jdebug memory`; reconciles Kubernetes/container RSS with JVM heap/non-heap; requires metrics and python3; alternatives include `jdebug-local memory` inside the pod.
+- `threads` detail: runs `jdebug threads`; captures thread state; safe; alternatives are actuator, jattach, and jdk route.
+- `heap` detail: runs `jdebug heap --confirm`; pauses the JVM; may contain user data; alternatives are MAT analysis after capture or memory reports before capture.
+- `re-roll` detail: runs `jdebug restart --confirm`; maps to `kubectl rollout restart`; restarts every pod in the Deployment; alternative is `kill pod` for one sick replica.
+- `last exit` detail: comes from pod container status; explain previous termination reason, exit code if available, related events, and the next command to run.
+- `mem` / `cpu` detail: comes from Kubernetes metrics-server via `kubectl top`; it is pod/container resource usage, not JVM heap.
+- `jvm heap` detail: comes from actuator metrics or jcmd fallback; label the active route and what failed if no route worked.
+
+This transparency layer should be discoverable from both keyboard and mouse. Avoid requiring hover-only behavior, because terminal hover support is inconsistent.
+
+### 14. Safety copy must include all state-changing actions
+
+The TUI now exposes `R re-roll` and `K kill pod`. These are useful recovery actions, but they change cluster state. Help text, footer legends, risk labels, docs, and tests should treat them as state-changing alongside heap dumps and log-level changes.
+
+Required updates:
+
+- Help safety rules should mention `R` and `K` explicitly.
+- Risk text should avoid implying only heap pauses the app.
+- `R` and `K` should remain shifted-key actions with second-key confirmation.
+- Any selected-label command flow must preserve the same confirmations.
+- The row copy should fit without awkward wrapping at supported dashboard widths.
 
 ## Operator Workflows To Consider
 
@@ -345,6 +392,8 @@ The tool should stay diagnostic-first, but it can suggest recovery options witho
 
 These should be explanation-only or copy-paste commands unless an explicit, strongly confirmed remediation flow is designed later.
 
+The current `re-roll` and `kill pod` actions are examples of recovery-oriented guidance becoming executable. Preserve their hard confirmation gates and explanatory output; add pre-execution transparency so users understand the exact command, scope, and alternatives before confirming.
+
 ## Suggested Implementation Tasks
 
 Handle these in small commits or patches:
@@ -361,7 +410,10 @@ Handle these in small commits or patches:
 10. Verify JVM heap fallback from actuator to jattach/jcmd and make route/failure state visible.
 11. Design actuator credential setup in retarget/settings without unsafe secret storage or guessed defaults.
 12. Add an operator workflow design pass for incident modes, evidence chains, runbook cards, timeline, blocked-by view, and escalation summary.
-13. Run render checks and tests after changes.
+13. Add command/data transparency indicators and detail interstitials for command rows and live-panel data.
+14. Update help/docs/risk copy for state-changing actions: `R re-roll`, `K kill pod`, verbosity changes, and heap dumps.
+15. Tighten long row copy so `re-roll` and other destructive rows do not wrap awkwardly in supported menu/dashboard widths.
+16. Run render checks and tests after changes.
 
 ## Validation Commands
 
@@ -416,6 +468,8 @@ Suggested TUI test coverage:
 - Blocked-by states render actionable explanations for RBAC, metrics-server, secured actuator, missing jattach, no selector, and no previous logs.
 - NEXT suggestions are severity sorted when multiple signals are present.
 - Escalation summary includes target, symptom/workflow, findings, commands run, captures, blocked checks, and sensitive-evidence warnings.
+- Command and data transparency indicators expose command provenance, data source, why it matters, risks, alternatives, and dependencies before execution or drill-down.
+- New state-changing actions such as `re-roll` and `kill pod` are documented in help/safety copy and retain hard confirmation gates.
 
 Suggested docs/test-suite checks:
 
@@ -442,6 +496,8 @@ A good follow-up change should satisfy these checks:
 - NEXT suggestions prioritize severity and, where possible, explain their evidence chain and confidence.
 - The UI can produce a concise escalation summary from the current session state and captured evidence.
 - Blocked checks are shown as actionable blocked states, not generic failures.
+- Command/data transparency indicators are visible and open detail views that show source command/API, purpose, risks, alternatives, and dependencies.
+- State-changing actions such as `re-roll` and `kill pod` are represented accurately in help, risk copy, confirmations, and layout tests.
 - Target setup errors explain the next action in plain language.
 - Existing tests pass, especially TUI interaction and render tests.
 - The bash fallback remains behaviorally aligned with the Go TUI where relevant.

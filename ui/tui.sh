@@ -439,7 +439,7 @@ ask_jcmd() {
     esac
 }
 
-# show_help — the glossary + workflow screen ('h'). Assumes zero prior K8s/JVM
+# show_help — the glossary + workflow screen ('?'). Assumes zero prior K8s/JVM
 # knowledge: every word the menus use is explained here in plain language.
 show_help() {
     box "jdebug help — the words, the workflow, the safety rules"
@@ -472,8 +472,11 @@ show_help() {
     ${GN}g${OFF} target editor · ${GN}M${OFF} switch mode · ${GN}d${OFF} browse captures
 
   ${B}THE SAFETY RULES${OFF}
-    · everything is read-only except: ${RD}heap dumps pause the app${OFF} (H asks for a
-      second H before it fires), log-level adds log volume
+    · most actions are read-only. The ones that CHANGE things ask first:
+        ${RD}H heap / x --heap${OFF}  PAUSE the JVM while they write (H asks for a second H)
+        ${RD}R re-roll${OFF}          rolling-restarts every pod in the deployment (second R)
+        ${RD}K kill pod${OFF}         deletes this pod; a managed one respawns (second K)
+        ${YL}v verbosity${OFF}        changes log volume live on every replica
     · anything risky asks you first — cancelling is always safe
     · every capture is saved under dumps/ and every command's output goes to the
       session log — you can't lose evidence by pressing the wrong key
@@ -711,10 +714,12 @@ wiz_slow() {
 }
 wiz_cpu() {
     wiz_hd "High CPU / autoscaler scaling up"
-    wiz_say "Two thread dumps a few seconds apart — a stack that is RUNNABLE in both"
-    wiz_say "is your hot loop. Both are safe and instant:"
+    wiz_say "A hot loop is the SAME stack RUNNABLE in two dumps taken a few seconds apart."
+    wiz_say "Capturing dump #1 now (safe, instant):"
     wrun threads
-    wrun threads
+    wiz_say "dump #1 saved. Let the app run under load for ~5 seconds before dump #2 —"
+    wiz_say "comparing the two is what reveals the hot loop."
+    confirm "capture dump #2 now?" && wrun threads
     wrun top
     wiz_say "And the JVM's own CPU number (0.0–1.0 of what it's allowed to use):"
     wrun metrics process.cpu.usage

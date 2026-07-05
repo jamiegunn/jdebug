@@ -6,7 +6,7 @@ nav_order: 3
 # Getting started
 
 A first session, end to end. No prior Kubernetes or JVM knowledge is assumed
-— the tool defines its own terms (`h` in the menu is a full glossary).
+— the tool defines its own terms (`?` in the menu opens a full glossary).
 
 ## 1. Check your setup
 
