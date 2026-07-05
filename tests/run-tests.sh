@@ -223,6 +223,17 @@ rm -rf "$AD"
 run_case ./jdebug analyze
 assert_has "empty: says capture first" "nothing to analyze"
 
+# --- workload topology --------------------------------------------------------
+section "topology (deployment → replicasets → pods)"
+run_case ./jdebug topology pod-a
+assert_rc  "topology exits 0" 0
+assert_has "topology names the deployment + revision" "Deployment app  (revision 3)"
+assert_has "topology marks the current ReplicaSet" "← current"
+assert_has "topology flags an old RS still running pods" "OLD revision still running pods"
+assert_has "topology detects the replicas-vs-HPA fight" "they FIGHT"
+assert_has "topology lists the routing Service" "Services routing here: app"
+assert_has "topology ends with a verdict" "Bottom line:"
+
 # --- lifecycle: state-changing actions, gated hard -------------------------------
 section "lifecycle (re-roll / kill)"
 run_case ./jdebug restart pod-a

@@ -47,11 +47,18 @@ case "$*" in
         [ "${MOCK_POD_GONE:-}" = 1 ] && exit 1
         printf '{"metadata":{"name":"pod-a","labels":{"app":"payments"},"ownerReferences":[{"kind":"ReplicaSet","name":"app-6c6c4b5769"}]},"status":{"phase":"Running","qosClass":"Burstable","containerStatuses":[{"name":"app","restartCount":3,"state":{"waiting":{"reason":"CrashLoopBackOff"}},"lastState":{"terminated":{"reason":"OOMKilled","exitCode":137}}}]},"spec":{"serviceAccountName":"default","containers":[{"name":"app","resources":{"requests":{"memory":"256Mi","cpu":"100m"},"limits":{"memory":"512Mi","cpu":"500m"}},"livenessProbe":{"httpGet":{"path":"/actuator/health","port":8080},"periodSeconds":10,"failureThreshold":3}}]}}' ;;
     *"get deployment"*"-o json"*)
-        printf '{"metadata":{"name":"app","annotations":{"kubectl.kubernetes.io/last-applied-configuration":"{\\"spec\\":{\\"replicas\\":3}}"}},"spec":{}}' ;;
+        # rich enough for both why.sh (last-applied replicas) and topology.sh
+        # (kind, revision, status, template labels)
+        printf '{"kind":"Deployment","metadata":{"name":"app","annotations":{"deployment.kubernetes.io/revision":"3","kubectl.kubernetes.io/last-applied-configuration":"{\\"spec\\":{\\"replicas\\":3}}"}},"spec":{"replicas":3,"strategy":{"type":"RollingUpdate"},"template":{"metadata":{"labels":{"app":"payments"}}}},"status":{"readyReplicas":2,"updatedReplicas":2,"availableReplicas":2}}' ;;
     *"get hpa -o json"*|*"get hpa"*"-o json"*)
-        printf '{"items":[{"metadata":{"name":"app-hpa"},"spec":{"minReplicas":2,"maxReplicas":10,"metrics":[{"resource":{"name":"cpu","target":{"averageUtilization":80}}}]},"status":{"currentReplicas":3,"desiredReplicas":3,"conditions":[{"type":"ScalingActive","status":"False","reason":"FailedGetResourceMetric"}]}}]}' ;;
+        printf '{"items":[{"metadata":{"name":"app-hpa"},"spec":{"scaleTargetRef":{"kind":"Deployment","name":"app"},"minReplicas":2,"maxReplicas":10,"metrics":[{"resource":{"name":"cpu","target":{"averageUtilization":80}}}]},"status":{"currentReplicas":3,"desiredReplicas":3,"conditions":[{"type":"ScalingActive","status":"False","reason":"FailedGetResourceMetric"}]}}]}' ;;
     *"get networkpolicy"*)
         printf '{"items":[]}' ;;
+    *"get rs"*"-o json"*)
+        # topology: current revision-3 RS + an old revision-2 RS still running a pod
+        printf '{"items":[{"metadata":{"name":"app-6c6c4b5769","annotations":{"deployment.kubernetes.io/revision":"3"},"ownerReferences":[{"kind":"Deployment","name":"app"}]},"spec":{"replicas":3},"status":{"readyReplicas":2}},{"metadata":{"name":"app-59d8ff7c44","annotations":{"deployment.kubernetes.io/revision":"2"},"ownerReferences":[{"kind":"Deployment","name":"app"}]},"spec":{"replicas":1},"status":{"readyReplicas":1}}]}' ;;
+    *"get svc"*"-o json"*)
+        printf '{"items":[{"metadata":{"name":"app"},"spec":{"selector":{"app":"payments"}}}]}' ;;
     *" top pod "*)
         if [ "${MOCK_TOP:-}" = absent ]; then
             echo 'error: Metrics API not available' >&2; exit 1

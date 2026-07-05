@@ -16,6 +16,7 @@ optional trailing pod name. `jdebug -V` prints the version.
 | `jdebug status` | pods, restarts, recent events | output ends with a "how to read this" key |
 | `jdebug why [pod]` | kubernetes-layer deep-dive: requests/limits, QoS, probes, exit-code meanings, cgroup memory beyond the JVM, HPA scaling rules and the classic replicas-vs-HPA fight | every finding explained in plain language; degrades loudly when metrics-server/RBAC block a check |
 | `jdebug security [pod]` | pod security posture: live-verified uid (root?), privilege/capabilities, read-only rootfs, host namespaces, service-account token exposure, NetworkPolicy reachability | each ⚠ names its one-line fix; unknowns are flagged, never assumed safe |
+| `jdebug topology [pod]` | the workload tree: Deployment → its ReplicaSets (current + old revisions) → pods, plus HPA and routing Services | flags old ReplicaSets still running pods (mid/stuck rollout) and the replicas-vs-HPA fight; explains what's current vs stale |
 | `jdebug health` | actuator health, per subsystem + liveness/readiness | DOWN component = failing dependency |
 | `jdebug top` | `kubectl top pods` + HPA state | needs metrics-server |
 | `jdebug memory` | container RSS vs JVM heap/non-heap, reconciled per pool | needs `python3` on the host; refuses to print a misleading table if metrics fail |

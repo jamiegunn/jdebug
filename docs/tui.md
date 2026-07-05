@@ -67,6 +67,7 @@ rules, a footer with navigation keys and a risk legend, and a live `❯` prompt:
    o   top         which pod is eating CPU or memory?                    ●
    m   memory      is the app near its memory limit?                     ●
    y   why         pod deep-dive — limits, probes, exit codes, autoscale ●
+   W   workload    deployment → replicasets → pods, HPA, services        ●
    S   security    running as root? privileged? network policy?         ●
    l   logs        what did the app say? (live stream)                   ●
 
@@ -79,6 +80,8 @@ rules, a footer with navigation keys and a risk legend, and a live `❯` prompt:
    j   jcmd        raw JVM commands — GC, profiling, native memory       ●
    v   verbosity   change log level live, no restart                     ●
    T   terminal    a shell inside the pod — exit returns here            ●
+   R   re-roll     rolling-restart the deployment       ● restarts app
+   K   kill pod    delete this pod (a managed one respawns) ● drops the pod
 
  ─────────────────────────────────────────────────────────────────────────
  more  [a] analyze  [c] check setup  [?] help  [q] quit   ●●● safe / caution / disruptive

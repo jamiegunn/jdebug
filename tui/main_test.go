@@ -150,7 +150,7 @@ func TestMenuParityStrings(t *testing.T) {
 	out := v.menuView()
 	for _, want := range []string{"START HERE", "QUICK CHECKS", "CAPTURE EVIDENCE", "ADVANCED",
 		"guided diagnosis", "pauses app", "safe / caution / disruptive", "❯", "[?] help",
-		"why", "security", "terminal"} {
+		"why", "workload", "security", "terminal", "re-roll", "kill pod"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("menu missing %q", want)
 		}
