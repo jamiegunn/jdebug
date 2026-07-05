@@ -62,12 +62,14 @@ Product directions to turn the launcher into an incident companion. Each
 should bias the wizard, dashboard, and NEXT toward the checks that matter and
 must never make destructive changes automatically.
 
-- **Incident modes — MOSTLY SHIPPED.** The wizard IS the symptom-first mode
-  picker: OOM(1) · slow(2) · CPU(3) · leak(4) · GC(5) · not-sure(6) ·
-  crash-loop(7) · **deploy-just-happened(8, new)**. Flow 8 runs `what-changed`
-  → `timeline` → `logs --previous`. Remaining refinement: a `mode` field that
-  also re-weights the dashboard `suggestions()` ordering (NEXT is already
-  severity + confidence sorted, so this is incremental).
+- **Incident modes — SHIPPED.** The wizard IS the symptom-first mode picker:
+  OOM(1) · slow(2) · CPU(3) · leak(4) · GC(5) · not-sure(6) · crash-loop(7) ·
+  **deploy-just-happened(8)**. Flow 8 runs `what-changed` → `timeline` →
+  `logs --previous`. Running a flow sets an incident mode (`flowMode`; flow 6
+  clears it) and `suggestionRows()` floats that mode's signal categories
+  (`modeBoost`) to the top of NEXT — stably, so severity still breaks ties —
+  with the active mode shown in the NEXT header. Go-only (the bash menu has no
+  live NEXT panel to weight).
 - **Evidence chains — SHIPPED.** NEXT rows now show the short cause→effect
   behind a recommendation (`likely  OOMKilled last restart → mem 94% of limit →
   w flow 1`). `suggestionRows()` returns structured rows (`{conf, msg, ev, key}`)

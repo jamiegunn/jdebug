@@ -25,6 +25,14 @@ type wizardState struct {
 	after  []string // "Next →" lines appended when the flow completes
 }
 
+// flowMode maps each wizard flow to the incident mode it sets — running a flow
+// tells the dashboard "this is what I'm chasing", so NEXT leads with it after.
+// "not sure" (6) clears the mode.
+var flowMode = map[string]string{
+	"1": "memory", "2": "slow", "3": "cpu", "4": "memory",
+	"5": "memory", "6": "", "7": "restarting", "8": "deployed",
+}
+
 var wizardFlows = []struct {
 	key, label string
 	steps      []wstep
@@ -130,6 +138,7 @@ func (m model) wizardKey(key string) (tea.Model, tea.Cmd) {
 			// flows run ON the dashboard: every step streams into the
 			// bottom output pane, so the live panels stay in view
 			m.wiz = wizardState{active: true, queue: append([]wstep(nil), f.steps...), after: f.after}
+			m.incMode = flowMode[f.key] // this flow sets the incident mode → weights NEXT
 			m.scr = scMenu
 			if m.out.running && m.out.cancel != nil {
 				m.out.cancel()

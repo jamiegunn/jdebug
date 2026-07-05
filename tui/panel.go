@@ -396,6 +396,20 @@ type suggestion struct {
 	ev    string         // optional evidence hop that explains the headline
 	key   string         // the action hint, e.g. "w flow 1" ("" = none)
 	style lipgloss.Style // headline colour (severity)
+	cat   string         // signal category, for incident-mode weighting
+}
+
+// modeBoost maps the active incident mode to the suggestion categories it cares
+// about. When a mode is set (usually by running the matching wizard flow), those
+// categories float to the top of NEXT — the operator said "I'm here because of
+// X", so lead with X — while severity order still breaks ties within a group.
+var modeBoost = map[string][]string{
+	"down":       {"down", "restart"},
+	"slow":       {"down"},
+	"restarting": {"restart", "down"},
+	"memory":     {"mem", "restart"},
+	"cpu":        {"scale"},
+	"deployed":   {"down", "restart", "scale"},
 }
 
 // confStyle maps a confidence word to a colour: certainty → visual weight, so a
@@ -452,9 +466,9 @@ func (m model) suggestionRows() []suggestion {
 	var s []suggestion
 	// 1. app unavailable / crash-looping
 	if d.Waiting == "CrashLoopBackOff" {
-		s = append(s, suggestion{"likely", "CrashLoopBackOff — won't stay up", "", "w flow 7", cDisr})
+		s = append(s, suggestion{"likely", "CrashLoopBackOff — won't stay up", "", "w flow 7", cDisr, "down"})
 	} else if d.Phase != "" && d.Phase != "Running" {
-		s = append(s, suggestion{"possible", "pod is " + d.Phase, "", "s events", cWarn})
+		s = append(s, suggestion{"possible", "pod is " + d.Phase, "", "s events", cWarn, "down"})
 	}
 	// 2. OOM / restart storm — chain OOM to the memory reading when we have it
 	if d.LastReason == "OOMKilled" {
@@ -462,32 +476,53 @@ func (m model) suggestionRows() []suggestion {
 		if d.MemPct >= 75 {
 			ev = fmt.Sprintf("mem %d%% of limit", d.MemPct)
 		}
-		s = append(s, suggestion{"likely", "OOMKilled last restart", ev, "w flow 1", cDisr})
+		s = append(s, suggestion{"likely", "OOMKilled last restart", ev, "w flow 1", cDisr, "restart"})
 	} else if d.Restarts > 3 {
-		s = append(s, suggestion{"possible", fmt.Sprintf("%d restarts", d.Restarts), "", "w diagnose", cWarn})
+		s = append(s, suggestion{"possible", fmt.Sprintf("%d restarts", d.Restarts), "", "w diagnose", cWarn, "restart"})
 	}
 	// 3. autoscale failed / maxed — "blind" means we genuinely can't tell
 	if d.HPAFailing {
-		s = append(s, suggestion{"unknown", "autoscale blind — " + d.HPAReason, "", "W", cWarn})
+		s = append(s, suggestion{"unknown", "autoscale blind — " + d.HPAReason, "", "W", cWarn, "scale"})
 	} else if d.HPAMax > 0 && d.HPACur >= d.HPAMax {
-		s = append(s, suggestion{"possible", "at max replicas", "", "W workload", cWarn})
+		s = append(s, suggestion{"possible", "at max replicas", "", "W workload", cWarn, "scale"})
 	}
 	// 4. resource pressure
 	if d.MemPct >= 90 {
-		s = append(s, suggestion{"likely", fmt.Sprintf("memory %d%% of limit", d.MemPct), "", "m", cDisr})
+		s = append(s, suggestion{"likely", fmt.Sprintf("memory %d%% of limit", d.MemPct), "", "m", cDisr, "mem"})
 	} else if d.MemPct >= 75 {
-		s = append(s, suggestion{"possible", fmt.Sprintf("memory %d%% of limit", d.MemPct), "", "m", cWarn})
+		s = append(s, suggestion{"possible", fmt.Sprintf("memory %d%% of limit", d.MemPct), "", "m", cWarn, "mem"})
 	}
 	// 5. observability gaps — only when nothing more urgent is showing
 	if len(s) == 0 {
 		if len(m.caps) == 0 {
-			s = append(s, suggestion{"", "new here?", "", "w — describe the symptom", cMuted})
+			s = append(s, suggestion{"", "new here?", "", "w — describe the symptom", cMuted, "obs"})
 		} else {
-			s = append(s, suggestion{"", "evidence captured →", "", "a analyzes it", cMuted})
+			s = append(s, suggestion{"", "evidence captured →", "", "a analyzes it", cMuted, "obs"})
 		}
 	}
 	if !d.When.IsZero() && !d.ActuatorOK && len(s) < 3 {
-		s = append(s, suggestion{"", "no actuator — captures still work (jattach/jcmd)", "", "", cMuted})
+		s = append(s, suggestion{"", "no actuator — captures still work (jattach/jcmd)", "", "", cMuted, "obs"})
+	}
+	// incident mode (from the wizard flow you ran) floats its categories up first,
+	// stably — severity order is preserved within the boosted and the rest groups.
+	if boost := modeBoost[m.incMode]; len(boost) > 0 {
+		inBoost := func(cat string) bool {
+			for _, b := range boost {
+				if b == cat {
+					return true
+				}
+			}
+			return false
+		}
+		var lead, rest []suggestion
+		for _, r := range s {
+			if inBoost(r.cat) {
+				lead = append(lead, r)
+			} else {
+				rest = append(rest, r)
+			}
+		}
+		s = append(lead, rest...)
 	}
 	if len(s) > 3 {
 		s = s[:3]
@@ -686,7 +721,15 @@ func (m model) panelView(w, h int, trends bool) string {
 		rows = append(rows, m.trendsRows(w)...)
 		rows = append(rows, "")
 	}
-	rows = append(rows, " "+cDim.Render("NEXT")+"  "+cRule.Render(strings.Repeat("─", w-8)))
+	nextHdr := " " + cDim.Render("NEXT")
+	if m.incMode != "" {
+		nextHdr += " " + cKey.Render("· "+m.incMode)
+	}
+	fillN := w - lipgloss.Width(nextHdr) - 2
+	if fillN < 3 {
+		fillN = 3
+	}
+	rows = append(rows, nextHdr+"  "+cRule.Render(strings.Repeat("─", fillN)))
 	for _, s := range m.suggestions() {
 		rows = append(rows, " "+ansi.Truncate(s, w-2, "…"))
 	}

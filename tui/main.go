@@ -68,7 +68,8 @@ type model struct {
 	editor editorState
 
 	// wizard
-	wiz wizardState
+	wiz     wizardState
+	incMode string // active incident mode (set by the wizard flow), weights NEXT
 
 	// pending capture flavor
 	viaFlag  string
