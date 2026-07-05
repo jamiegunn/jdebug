@@ -16,6 +16,8 @@
 #     top           kubectl top pods + HPA state
 #     metrics       list JVM/process metric names, or one metric's live value:
 #                   metrics jvm.gc.pause — run twice to see a trend
+#     why           pod deep-dive: limits, probes, exit codes, HPA (why.sh)
+#     security      pod security posture, in plain language (security.sh)
 #     logs          stream logs from all replicas         (tail-logs.sh)
 #                   logs --previous [pod]: the crashed container's last lines
 #     log-level     runtime logger change: log-level <logger> <LEVEL>
@@ -249,6 +251,8 @@ case "$cmd" in
     heap)     capture heap ;;
 
     jcmd)            fwd "$D/capture/jattach.sh" jcmd ;;
+    why)             fwd "$D/observe/why.sh" ;;
+    security)        fwd "$D/observe/security.sh" ;;
     memory)          fwd "$D/observe/memory-report.sh" ;;
     snapshot)        fwd "$D/observe/snapshot.sh" ;;
 

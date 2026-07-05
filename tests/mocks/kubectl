@@ -45,8 +45,17 @@ case "$*" in
         printf 'app\nsidecar\n' ;;
     *" get pod "*"-o json"*)
         [ "${MOCK_POD_GONE:-}" = 1 ] && exit 1
-        printf '{"status":{"phase":"Running","containerStatuses":[{"name":"app","restartCount":3,"state":{"waiting":{"reason":"CrashLoopBackOff"}},"lastState":{"terminated":{"reason":"OOMKilled"}}}]},"spec":{"containers":[{"name":"app","resources":{"limits":{"memory":"512Mi","cpu":"500m"}}}]}}' ;;
+        printf '{"metadata":{"name":"pod-a","labels":{"app":"payments"},"ownerReferences":[{"kind":"ReplicaSet","name":"app-6c6c4b5769"}]},"status":{"phase":"Running","qosClass":"Burstable","containerStatuses":[{"name":"app","restartCount":3,"state":{"waiting":{"reason":"CrashLoopBackOff"}},"lastState":{"terminated":{"reason":"OOMKilled","exitCode":137}}}]},"spec":{"serviceAccountName":"default","containers":[{"name":"app","resources":{"requests":{"memory":"256Mi","cpu":"100m"},"limits":{"memory":"512Mi","cpu":"500m"}},"livenessProbe":{"httpGet":{"path":"/actuator/health","port":8080},"periodSeconds":10,"failureThreshold":3}}]}}' ;;
+    *"get deployment"*"-o json"*)
+        printf '{"metadata":{"name":"app","annotations":{"kubectl.kubernetes.io/last-applied-configuration":"{\\"spec\\":{\\"replicas\\":3}}"}},"spec":{}}' ;;
+    *"get hpa -o json"*|*"get hpa"*"-o json"*)
+        printf '{"items":[{"metadata":{"name":"app-hpa"},"spec":{"minReplicas":2,"maxReplicas":10,"metrics":[{"resource":{"name":"cpu","target":{"averageUtilization":80}}}]},"status":{"currentReplicas":3,"desiredReplicas":3,"conditions":[{"type":"ScalingActive","status":"False","reason":"FailedGetResourceMetric"}]}}]}' ;;
+    *"get networkpolicy"*)
+        printf '{"items":[]}' ;;
     *" top pod "*)
+        if [ "${MOCK_TOP:-}" = absent ]; then
+            echo 'error: Metrics API not available' >&2; exit 1
+        fi
         printf 'pod-a   250m   480Mi\n' ;;
     *"get hpa"*"--no-headers"*)
         printf 'app-hpa   Deployment/app   cpu: 50%%/80%%   2   4   3   10h\n' ;;

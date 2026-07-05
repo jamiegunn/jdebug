@@ -72,12 +72,19 @@ exit $rc`,
 // podTerminal opens an interactive shell inside the target pod. This is the
 // one action that genuinely needs the real tty, so it drops out of the
 // altscreen; exiting the shell (exit / Ctrl-D) lands back on the dashboard,
-// which then re-runs status automatically to re-orient you.
+// which then re-runs status automatically to re-orient you. When the image
+// has no shell at all (distroless), it explains that and attaches an
+// ephemeral busybox DEBUG container targeting the app instead.
 func (m *model) podTerminal() tea.Cmd {
 	m.postExec = "status"
-	sh := `command -v bash >/dev/null 2>&1 && exec bash || exec sh`
-	c := exec.Command("kubectl", "-n", m.t.Namespace, "exec", "-it", m.t.Pod,
-		"-c", m.t.Container, "--", "sh", "-c", sh)
+	script := fmt.Sprintf(`kubectl -n %s exec -it %s -c %s -- sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh' || {
+printf '\n→ no shell in that container (distroless image?) — attaching a busybox DEBUG container that shares its process/network space\n'
+printf '  (needs the pods/ephemeralcontainers permission; the container lingers in the pod spec until restart — harmless)\n\n'
+kubectl -n %s debug -it %s --image=busybox:1.36 --target=%s -- sh
+}`,
+		shq(m.t.Namespace), shq(m.t.Pod), shq(m.t.Container),
+		shq(m.t.Namespace), shq(m.t.Pod), shq(m.t.Container))
+	c := exec.Command("bash", "-c", script)
 	return tea.ExecProcess(c, func(err error) tea.Msg { return execDoneMsg{err} })
 }
 

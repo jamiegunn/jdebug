@@ -6,6 +6,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -147,7 +148,8 @@ func TestMenuParityStrings(t *testing.T) {
 	v.scr = scMenu
 	out := v.menuView()
 	for _, want := range []string{"START HERE", "QUICK CHECKS", "CAPTURE EVIDENCE", "ADVANCED",
-		"guided diagnosis", "pauses app", "safe / caution / disruptive", "❯", "[?] help"} {
+		"guided diagnosis", "pauses app", "safe / caution / disruptive", "❯", "[?] help",
+		"why", "security", "terminal"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("menu missing %q", want)
 		}
@@ -781,6 +783,71 @@ func TestAutoStatusFiresOncePer(t *testing.T) {
 		t.Fatal("auto-status must never interrupt user activity")
 	}
 	_ = res
+}
+
+func TestPanelExplainsMissingMetricsServer(t *testing.T) {
+	m := readyModel()
+	m.panel.MemUse, m.panel.CPUUse, m.panel.MemPct = "", "", -1
+	m.panel.NoMetrics = true
+	v := m.panelView(46, 20, false)
+	if !strings.Contains(v, "no metrics-server") {
+		t.Fatal("missing metrics-server must be named, not rendered as a dash")
+	}
+}
+
+func TestCopyTranscriptNotices(t *testing.T) {
+	saved := clipboardFn
+	defer func() { clipboardFn = saved }()
+	m := readyModel()
+	m.out.raw = []byte("hello")
+	clipboardFn = func(s string) error {
+		if !strings.Contains(s, "hello") {
+			t.Error("the transcript body must reach the clipboard")
+		}
+		return nil
+	}
+	if got := m.copyTranscript().out.notice; !strings.Contains(got, "copied") {
+		t.Fatalf("successful copy must confirm itself, got %q", got)
+	}
+	clipboardFn = func(string) error { return fmt.Errorf("no clipboard tool") }
+	if got := m.copyTranscript().out.notice; !strings.Contains(got, "couldn't copy") {
+		t.Fatalf("failed copy must explain, got %q", got)
+	}
+}
+
+func TestCaptureClickOpens(t *testing.T) {
+	saved := openFileFn
+	defer func() { openFileFn = saved }()
+	var opened string
+	openFileFn = func(p string) error { opened = p; return nil }
+	m := readyModel()
+	m.width, m.height = 200, 50
+	menuW, midW, _ := m.cols()
+	body := m.remoteBody()
+	topH := strings.Count(body, "\n") + 1
+	podH, evH, _ := rightHeights(topH)
+	x := menuW + midW + 4 + 2
+	y := 3 + podH + evH + 1 // first capture row
+	res, _ := m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	_ = res
+	if !strings.Contains(opened, m.caps[0].Name) {
+		t.Fatalf("clicking the first capture must open it, got %q", opened)
+	}
+}
+
+func TestWheelScrollsOutputPane(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 200, 50
+	var raw []string
+	for i := 0; i < 60; i++ {
+		raw = append(raw, "line")
+	}
+	m.out = outState{done: true, ok: true, show: true, raw: []byte(strings.Join(raw, "\n"))}
+	(&m).rewrapOut()
+	res, _ := m.Update(tea.MouseMsg{X: 10, Y: 40, Button: tea.MouseButtonWheelUp})
+	if got := res.(model).out.off; got != 3 {
+		t.Fatalf("wheel over the output pane must scroll it, off = %d want 3", got)
+	}
 }
 
 func TestChooserStrayKeysDontPickAMode(t *testing.T) {

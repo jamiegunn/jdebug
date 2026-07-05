@@ -44,9 +44,36 @@ type outState struct {
 	done    bool
 	ok      bool
 	errStr  string
-	show    bool // rendering in the bottom strip (vs scOutput fallback)
+	notice  string // transient feedback, e.g. "copied to clipboard ✓"
+	show    bool   // rendering in the bottom strip (vs scOutput fallback)
 	ch      chan tea.Msg
 	cancel  context.CancelFunc
+}
+
+// copyTranscript puts the pane's ANSI-free transcript on the system
+// clipboard. Seam-injected for tests.
+var clipboardFn = copyToClipboard
+
+func copyToClipboard(s string) error {
+	for _, c := range [][]string{{"pbcopy"}, {"wl-copy"}, {"xclip", "-selection", "clipboard"}, {"xsel", "-ib"}} {
+		if _, err := exec.LookPath(c[0]); err != nil {
+			continue
+		}
+		cmd := exec.Command(c[0], c[1:]...)
+		cmd.Stdin = strings.NewReader(s)
+		return cmd.Run()
+	}
+	return fmt.Errorf("no clipboard tool found (pbcopy / xclip / wl-copy)")
+}
+
+func (m model) copyTranscript() model {
+	text := "$ " + m.out.display + "\n\n" + ansi.Strip(string(m.out.raw))
+	if err := clipboardFn(text); err != nil {
+		m.out.notice = "couldn't copy: " + err.Error()
+	} else {
+		m.out.notice = "copied to clipboard ✓"
+	}
+	return m
 }
 
 const outRawCap = 256 << 10 // keep the newest 256K of a long stream
@@ -185,6 +212,9 @@ func (m *model) appendChunk(data []byte) {
 
 // outStatus renders the right-hand side of the pane title.
 func (m model) outStatus(strip bool) string {
+	if m.out.notice != "" {
+		return cSafe.Render(m.out.notice)
+	}
 	back := "esc back to logs"
 	if !strip {
 		back = "q back"
@@ -195,7 +225,7 @@ func (m model) outStatus(strip bool) string {
 	case m.out.errStr == "stopped":
 		return cWarn.Render("◼ stopped") + cFaint.Render(" · "+back)
 	case m.out.ok:
-		return cSafe.Render("✓") + cFaint.Render(" · ↑↓ scroll · "+back)
+		return cSafe.Render("✓") + cFaint.Render(" · ↑↓/wheel · C copies · "+back)
 	default:
 		return cDisr.Render("✗ "+m.out.errStr) + cFaint.Render(" · "+back)
 	}
@@ -289,6 +319,7 @@ func (m model) outputView() string {
 
 // outScroll adjusts the tail offset (shared by scOutput and the strip).
 func (m model) outScroll(key string, page int) model {
+	m.out.notice = "" // any movement clears transient feedback
 	if page < 1 {
 		page = 1
 	}
@@ -325,6 +356,8 @@ func (m model) outputKey(key string) (tea.Model, tea.Cmd) {
 		m.scr = m.prev
 		m.out.show = false
 		return m, tea.Batch(m.panelFetch(), fetchCaps(m.kit))
+	case "C":
+		return m.copyTranscript(), nil
 	case "ctrl+c":
 		if m.out.cancel != nil {
 			m.out.cancel()
@@ -346,6 +379,8 @@ func (m model) menuOutKey(key string) (tea.Model, tea.Cmd, bool) {
 		}
 		m.out.show = false
 		return m, tea.Batch(m.panelFetch(), fetchCaps(m.kit)), true
+	case "C":
+		return m.copyTranscript(), nil, true
 	case "up", "down", "pgup", "pgdown":
 		page := m.height / 3
 		return m.outScroll(key, page), nil, true

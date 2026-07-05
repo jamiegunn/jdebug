@@ -86,6 +86,8 @@ afetch() { aexec sh -c "$(pod_fetch "$@")"; }
 info "snapshot of pod $POD → $SNAP"
 
 step pod.txt           "kubectl describe pod"        kubectl -n "$NAMESPACE" describe pod "$POD"
+step why.txt           "pod deep-dive (limits/probes/exit codes/HPA)" "$SCRIPTS_ROOT/observe/why.sh" -n "$NAMESPACE" -l "$SELECTOR" --container "$APP_CONTAINER" "$POD"
+step security.txt      "pod security posture"        "$SCRIPTS_ROOT/observe/security.sh" -n "$NAMESPACE" -l "$SELECTOR" --container "$APP_CONTAINER" "$POD"
 # health: no curl -f — a DOWN health is HTTP 503 *with* the diagnostic body,
 # and that body is exactly what an incident snapshot needs. (busybox wget
 # can't emit an error body; there the 503 case degrades to the failure note.)

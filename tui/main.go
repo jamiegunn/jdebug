@@ -259,18 +259,36 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// handleMouse: click a pod in the PODS pane to retarget; wheel scrolls it.
+// handleMouse: click a pod to retarget, click a capture to open it, wheel
+// scrolls whichever pane is under the pointer (output pane included).
 func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
+	outVisible := m.out.show || m.scr == scOutput
 	switch {
 	case v.Action == tea.MouseActionPress && v.Button == tea.MouseButtonLeft:
-		return m.switchPod(m.podsClickTarget(v.X, v.Y))
+		if pod := m.podsClickTarget(v.X, v.Y); pod != "" {
+			return m.switchPod(pod)
+		}
+		if path := m.captureClickPath(v.X, v.Y); path != "" {
+			if err := openFileFn(path); err != nil {
+				m.out.notice = "couldn't open: " + firstLine(err.Error())
+			}
+			return m, nil
+		}
 	case v.Button == tea.MouseButtonWheelUp:
-		if in, _ := m.podsHit(v.X, v.Y); in && m.podsOff > 0 {
-			m.podsOff--
+		if in, _ := m.podsHit(v.X, v.Y); in {
+			if m.podsOff > 0 {
+				m.podsOff--
+			}
+		} else if outVisible {
+			return m.outScroll("pgup", 3), nil // 3 lines per wheel notch
 		}
 	case v.Button == tea.MouseButtonWheelDown:
-		if in, _ := m.podsHit(v.X, v.Y); in && m.podsOff < len(m.pods)-1 {
-			m.podsOff++
+		if in, _ := m.podsHit(v.X, v.Y); in {
+			if m.podsOff < len(m.pods)-1 {
+				m.podsOff++
+			}
+		} else if outVisible {
+			return m.outScroll("pgdown", 3), nil
 		}
 	}
 	return m, nil

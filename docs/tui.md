@@ -20,15 +20,17 @@ config, and session-log behavior:
   on a big window (≥140×34) it becomes a grid — menu on the left, a **live
   TARGET panel with sparkline TRENDS** (memory %, CPU, restart ▲ markers)
   and a **NEXT box** of concrete key-press suggestions in the middle,
-  **PODS, EVENTS and CAPTURES** on the right (the PODS list is clickable —
-  **click any pod to retarget everything at it**, wheel scrolls; it shows
-  the selector's matches, or the whole namespace as fallback), and a
+  **PODS, EVENTS and CAPTURES** on the right (both lists are clickable —
+  **click any pod to retarget everything at it**, **click any capture to
+  open it** in your OS's default app, wheel scrolls; PODS shows the
+  selector's matches, or the whole namespace as fallback), and a
   **live log tail** filling the bottom (5 s refresh, errors red; when a
   crash-looping container can't serve logs it shows the **previous
   container's last words**, labeled as such; `f` expands it full-screen with
   scrollback). Commands **stream live into that bottom pane**, replacing
   the log tail while they run — the menu stays interactive, `esc`
-  stops/dismisses, ↑↓ scrolls, and the pane title carries the ✓/✗ verdict.
+  stops/dismisses, ↑↓ **or the mouse wheel** scrolls, `C` **copies the whole
+  transcript to your clipboard**, and the pane title carries the ✓/✗ verdict.
   **Guided-diagnosis flows stream there too**, narration and all — you
   never leave the main page (confirms overlay it). The dashboard opens by
   **running `status` for you** after two quiet seconds, and `T` drops into
@@ -64,6 +66,8 @@ rules, a footer with navigation keys and a risk legend, and a live `❯` prompt:
    h   health      is a dependency — db, queue — down?                   ●
    o   top         which pod is eating CPU or memory?                    ●
    m   memory      is the app near its memory limit?                     ●
+   y   why         pod deep-dive — limits, probes, exit codes, autoscale ●
+   S   security    running as root? privileged? network policy?         ●
    l   logs        what did the app say? (live stream)                   ●
 
  CAPTURE EVIDENCE  saves to dumps/ · [d] browse ───────────────────────────
@@ -74,6 +78,7 @@ rules, a footer with navigation keys and a risk legend, and a live `❯` prompt:
  ADVANCED ─────────────────────────────────────────────────────────────────
    j   jcmd        raw JVM commands — GC, profiling, native memory       ●
    v   verbosity   change log level live, no restart                     ●
+   T   terminal    a shell inside the pod — exit returns here            ●
 
  ─────────────────────────────────────────────────────────────────────────
  more  [a] analyze  [c] check setup  [?] help  [q] quit   ●●● safe / caution / disruptive

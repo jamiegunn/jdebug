@@ -682,7 +682,7 @@ wiz_hd()  { printf '\n  %s— %s —%s\n\n' "$B" "$*" "$OFF"; }
 wrun() {
     if [[ "$MODE" == 1 ]]; then run "$DBG" "$@" ${POD_PIN:+"$POD_PIN"}
     else case "$1" in
-            top|status|logs) wiz_say "(skipping '$1' — it needs kubectl, so it only works in remote mode)" ;;
+            top|status|logs|why|security) wiz_say "(skipping '$1' — it needs kubectl, so it only works in remote mode)" ;;
             *) run sh "$LOCAL" "$@" ;;
          esac
     fi
@@ -754,13 +754,13 @@ wiz_all() {
 }
 wiz_crash() {
     wiz_hd "Crash-looping / CrashLoopBackOff"
-    wiz_say "How often is it dying, and what does kubernetes say about why:"
-    wrun status
+    wiz_say "First the kubernetes layer — exit code, limits, probes decoded in plain language:"
+    wrun why
     wiz_say "The previous container's last words — the crash reason is almost always here:"
     wrun logs --previous
     wiz_say "Next → OutOfMemoryError / exit 137 above = memory: re-run this wizard, option 1."
     wiz_say "       A stack trace names the failing class — startup config is the usual culprit."
-    wiz_say "       Nothing useful? The events in the status output carry the kubernetes-side reasons."
+    wiz_say "       A failing liveness probe restarting a healthy-but-slow app → loosen the probe."
 }
 wizard() {
     while true; do
@@ -822,6 +822,8 @@ menu_remote() {
     mrow h health  "is a dependency — db, queue — down?"    safe
     mrow o top     "which pod is eating CPU or memory?"     safe
     mrow m memory  "is the app near its memory limit?"      safe
+    mrow y why     "pod deep-dive — limits, probes, exit codes, autoscaling" safe
+    mrow S security "running as root? privileged? network policy?"          safe
     mrow l logs    "what did the app say? (live stream)"    safe
     printf '\n'
     msection "CAPTURE EVIDENCE" "saves to dumps/ · [d] browse"
@@ -891,7 +893,9 @@ dispatch_remote() {
     fi
     case "$1" in
         w|W) wizard; SKIP_PAUSE=1 ;;
-        s|S) run "$DBG" status ;;
+        s)   run "$DBG" status ;;
+        y|Y) run "$DBG" why ${POD_PIN:+"$POD_PIN"} ;;
+        S)   run "$DBG" security ${POD_PIN:+"$POD_PIN"} ;;
         h)   run "$DBG" health ${POD_PIN:+"$POD_PIN"} ;;
         o|O) run "$DBG" top ;;
         m)   run "$DBG" memory ${POD_PIN:+"$POD_PIN"} ;;

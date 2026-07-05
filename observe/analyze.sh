@@ -108,6 +108,21 @@ analyze_pod() {
     [[ "$warn" -gt 0 ]] && say "$warn Warning event line(s) in the file — worth reading"
 }
 
+# analyze_findings — surface the ⚠ lines a why/security report already
+# computed, so the analyze summary carries the kubernetes-layer verdicts too.
+analyze_findings() {
+    local f="$1" label="$2" n
+    hd "$label: $f"
+    n=$(grep -c '⚠' "$f" 2>/dev/null || echo 0)
+    if [[ "$n" -gt 0 ]]; then
+        grep '⚠' "$f" | head -4 | sed 's/^ *⚠ */    ⚠ /' | cut -c1-108
+        [[ "$n" -gt 4 ]] && say "…and $((n-4)) more finding(s) — open the file"
+        FLAGS=$((FLAGS+1))
+    else
+        say "no findings flagged — this layer looks clean"
+    fi
+}
+
 analyze_snapshot() {
     local d="$1" m h
     printf '\n━━ snapshot bundle: %s\n' "$d"
@@ -116,6 +131,8 @@ analyze_snapshot() {
     [[ -f "$d/threads.txt" ]] && grep -q 'Full thread dump' "$d/threads.txt" 2>/dev/null && analyze_threads "$d/threads.txt"
     [[ -f "$d/gc-heap-info.txt" ]] && analyze_gcheap "$d/gc-heap-info.txt"
     [[ -f "$d/pod.txt" ]] && analyze_pod "$d/pod.txt"
+    [[ -f "$d/why.txt" ]] && analyze_findings "$d/why.txt" "pod deep-dive"
+    [[ -f "$d/security.txt" ]] && analyze_findings "$d/security.txt" "security posture"
     for h in "$d"/*.hprof; do [[ -f "$h" ]] && analyze_hprof "$h"; done
 }
 
@@ -127,6 +144,8 @@ analyze_file() {
     case "$(basename "$f")" in
         health.json)              analyze_health "$f" ;;
         memory-report.txt|memory.txt) analyze_memreport "$f" ;;
+        why.txt)                  analyze_findings "$f" "pod deep-dive" ;;
+        security.txt)             analyze_findings "$f" "security posture" ;;
         *) return 1 ;;
     esac
     return 0

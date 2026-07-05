@@ -111,6 +111,39 @@ run_case ./jdebug top
 assert_has "top explains what near-limit means" "OOM risk"
 assert_has "top names the next move" "Next:"
 
+# --- pod-layer analysis: why & security ---------------------------------------
+section "pod deep-dive (why) & security posture"
+run_case ./jdebug why pod-a
+assert_rc  "why exits 0" 0
+assert_has "why: requests vs limits explained" "requests = the scheduler's promise"
+assert_has "why: missing readiness probe warned" "traffic arrives the MOMENT"
+assert_has "why: exit 137 decoded" "KERNEL killed it"
+assert_has "why: HPA blindness explained" "ScalingActive=False"
+assert_has "why: replicas-vs-HPA fight detected" "fights it back"
+assert_has "why: HPA percent-of-request explained" "of the REQUEST"
+assert_has "why: ends with a verdict" "Bottom line:"
+
+MOCK_TOP=absent run_case ./jdebug why pod-a
+assert_has "why: metrics-server absence explained, not blank" "metrics-server isn't installed"
+
+MOCK_RBAC=forbidden run_case ./jdebug why pod-a
+assert_rc  "why under RBAC denial exits 1" 1
+assert_has "why: RBAC denial explained, never silent" "your RBAC doesn't allow"
+
+run_case ./jdebug security pod-a
+assert_rc  "security exits 0" 0
+assert_has "security: root exposure explained" "prevents root"
+assert_has "security: privilege escalation flagged" "allowPrivilegeEscalation"
+assert_has "security: SA token risk explained" "kubernetes API"
+assert_has "security: open network flagged" "no NetworkPolicy"
+assert_has "security: verdict counts findings" "hardened"
+
+MOCK_EXEC_OUT='0' run_case ./jdebug security pod-a
+assert_has "security: live uid check beats the spec" "VERIFIED LIVE"
+
+MOCK_RBAC=forbidden run_case ./jdebug security pod-a
+assert_has "security: RBAC denial explained" "your RBAC doesn't allow"
+
 # --- multi-pod transparency ----------------------------------------------------
 section "pod resolution"
 MOCK_PODS=multi MOCK_EXEC_OUT='{"status":"UP"}' run_case ./jdebug health
@@ -487,6 +520,9 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         assert_has "tui: menu sections" "QUICK CHECKS"
         assert_has "tui: start-here section" "START HERE"
         assert_has "tui: advanced tools demoted" "ADVANCED"
+        assert_has "tui: pod deep-dive on key y" "y   why"
+        assert_has "tui: security on shifted S" "S   security"
+        assert_has "tui: terminal on shifted T" "T   terminal"
         assert_has "tui: heap inline risk" "pauses app"
         assert_has "tui: risk legend" "safe / caution / disruptive"
         assert_has "tui: hero banner" "guided diagnosis"
@@ -517,7 +553,7 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         # the ExecProcess drop-out → quit
         if command -v python3 >/dev/null 2>&1; then
             if pty_out="$(python3 tests/pty-drive.py "$KIT" "$TMP/ptydrive" 2>&1)"; then
-                printf '%s\n' "$pty_out"; PASS=$((PASS+11))
+                printf '%s\n' "$pty_out"; PASS=$((PASS+13))
             else
                 printf '%s\n' "$pty_out"; bad "pty: interactive round-trip" "see lines above"
             fi

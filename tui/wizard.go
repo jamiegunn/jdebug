@@ -79,13 +79,13 @@ var wizardFlows = []struct {
 		"threads.txt → VisualVM · heap.hprof → Eclipse MAT (both free, local)"}},
 
 	{"7", "Crash-looping / CrashLoopBackOff", []wstep{
-		{narr: []string{"How often is it dying, and what does kubernetes say about why:"},
-			args: []string{"status"}, remote: true},
+		{narr: []string{"First the kubernetes layer — exit code, limits, probes decoded in plain language:"},
+			args: []string{"why"}, remote: true, withPod: true},
 		{narr: []string{"The previous container's last words — the crash reason is almost always in the final lines:"},
 			args: []string{"logs", "--previous"}, remote: true, withPod: true},
-	}, []string{"exit 137 / OOMKilled in the last lines → it's memory: re-run the wizard, flow 1",
+	}, []string{"exit 137 / OOMKilled above → it's memory: re-run the wizard, flow 1",
 		"a stack trace names the failing class — startup config/dependency is the usual culprit",
-		"image or scheduling problems show in the events from the status step"}},
+		"a failing liveness probe restarting a healthy-but-slow app → loosen the probe, not the app"}},
 }
 
 func (m model) openWizard() (tea.Model, tea.Cmd) {

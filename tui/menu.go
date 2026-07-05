@@ -174,6 +174,8 @@ var remoteActions = struct {
 		{"h", "health", "is a dependency — db, queue — down?", "safe", ""},
 		{"o", "top", "which pod is eating CPU or memory?", "safe", ""},
 		{"m", "memory", "is the app near its memory limit?", "safe", ""},
+		{"y", "why", "pod deep-dive — limits, probes, exit codes, autoscaling", "safe", ""},
+		{"S", "security", "running as root? privileged? network policy?", "safe", ""},
 		{"l", "logs", "what did the app say? (live stream)", "safe", ""},
 	},
 	capture: []action{
@@ -367,8 +369,12 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 	switch key {
 	case "w", "W":
 		return m.openWizard()
-	case "s", "S":
+	case "s":
 		return m.quickCLI(false, "status")
+	case "y", "Y":
+		return m.quickCLI(true, "why")
+	case "S": // shifted deliberately: s = status is the most-pressed key
+		return m.quickCLI(true, "security")
 	case "h":
 		return m.quickCLI(true, "health")
 	case "o", "O":

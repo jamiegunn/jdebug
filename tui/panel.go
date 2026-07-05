@@ -6,6 +6,7 @@ package main
 // command, and turned into concrete "press X" suggestions.
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -34,6 +35,7 @@ type panelData struct {
 	HeapMax    string
 	HeapVia    string // "actuator" or "jcmd" — which route answered
 	ActuatorOK bool
+	NoMetrics  bool // kubectl top failed because metrics-server is absent
 }
 
 type panelMsg panelData
@@ -102,12 +104,17 @@ func fetchPanel(t target) tea.Cmd {
 					}
 				}
 			}
-			if out, err := exec.CommandContext(ctx, "kubectl", "-n", t.Namespace, "top", "pod", t.Pod, "--no-headers").Output(); err == nil {
+			topCmd := exec.CommandContext(ctx, "kubectl", "-n", t.Namespace, "top", "pod", t.Pod, "--no-headers")
+			var topErr bytes.Buffer
+			topCmd.Stderr = &topErr
+			if out, err := topCmd.Output(); err == nil {
 				f := strings.Fields(string(out))
 				if len(f) >= 3 {
 					d.CPUUse, d.MemUse = f[1], f[2]
 					d.MemPct = pctOf(d.MemUse, d.MemLimit)
 				}
+			} else if s := strings.ToLower(topErr.String()); strings.Contains(s, "metrics") {
+				d.NoMetrics = true // absence explained, not a silent dash
 			}
 			d.HeapUsed, d.HeapMax, d.HeapVia = jvmHeap(t)
 			d.ActuatorOK = d.HeapVia == "actuator"
@@ -348,6 +355,9 @@ func (m model) panelView(w, h int, trends bool) string {
 		}
 		// "usage of limit" — usage from kubectl top, limit from the pod spec
 		mem := dash(d.MemUse)
+		if d.NoMetrics && d.MemUse == "" {
+			mem = "no metrics-server · limit " + dash(d.MemLimit)
+		}
 		if d.MemUse != "" && d.MemLimit != "" {
 			mem = d.MemUse + " of " + d.MemLimit + " limit"
 			if d.MemPct >= 0 {
@@ -358,6 +368,9 @@ func (m model) panelView(w, h int, trends bool) string {
 		}
 		rows = append(rows, line("mem", mem, d.MemPct >= 90))
 		cpu := dash(d.CPUUse)
+		if d.NoMetrics && d.CPUUse == "" {
+			cpu = "no metrics-server · limit " + dash(d.CPULimit)
+		}
 		if d.CPUUse != "" && d.CPULimit != "" {
 			cpu = d.CPUUse + " of " + d.CPULimit + " limit"
 		} else if d.CPUUse != "" {

@@ -1,3 +1,6 @@
 dumps/
 *.hprof
 tui/jdebug-tui
+
+# stray artifact from `go build ./...` (binary named after the dir)
+tui/tui

@@ -60,6 +60,10 @@ press("\x1b", 1)        # esc back
 press("w", 1)           # guided diagnosis…
 press("2", 8)           #   …streams BOTH steps + wrap-up into the pane
 press("\x1b", 1)        # esc back to the live logs
+press("y", 4)           # pod deep-dive (why) streams into the pane
+press("\x1b", 1)        # esc back
+press("S", 4)           # security posture streams into the pane
+press("\x1b", 1)        # esc back
 press("T", 4)           # pod terminal (mock exec exits at once) → auto-status
 press("q", 1)           # quit → confirm
 press("y", 2)
@@ -78,6 +82,8 @@ checks = {
     "events + captures panes":  "EVENTS" in txt and "CAPTURES" in txt,
     "trends sparklines":        "TRENDS" in txt,
     "status streams into pane": "OUTPUT" in txt and "how to read this" in txt,
+    "why: pod deep-dive runs":  "pod deep-dive" in txt or "requests = the scheduler" in txt,
+    "security: posture runs":   "security posture" in txt,
     "logs stream into pane":    "mock log line" in txt,
     "wizard streams on-page":   "flow complete" in txt and "any key for the menu" not in txt,
     "session log transcript":   "$ " in logtxt and "status" in logtxt,

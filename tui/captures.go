@@ -9,7 +9,9 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"runtime"
 	"sort"
 	"strings"
 	"time"
@@ -112,9 +114,44 @@ func capHint(ce capEntry) string {
 	return ""
 }
 
+// openFileFn opens a capture with the OS's default handler (Finder/editor).
+// Seam-injected for tests.
+var openFileFn = func(path string) error {
+	opener := "xdg-open"
+	if runtime.GOOS == "darwin" {
+		opener = "open"
+	}
+	return exec.Command(opener, path).Start()
+}
+
+// captureClickPath maps a click to a capture's absolute path ("" = miss).
+func (m model) captureClickPath(x, y int) string {
+	if m.tier() != 2 || m.scr != scMenu || !m.remote.OK {
+		return ""
+	}
+	menuW, midW, evW := m.cols()
+	x0 := menuW + midW + 4
+	if x < x0 || x >= x0+evW {
+		return ""
+	}
+	body := m.remoteBody()
+	topH := strings.Count(body, "\n") + 1
+	podH, evH, capH := rightHeights(topH)
+	y0 := 3 + podH + evH // header rows + panes above
+	row := y - y0
+	if row < 1 || row >= capH { // row 0 is the title
+		return ""
+	}
+	i := row - 1
+	if i < 0 || i >= len(m.caps) {
+		return ""
+	}
+	return filepath.Join(dumpsDir(m.kit), m.caps[i].Name)
+}
+
 // capsRows renders exactly h rows at width w.
 func (m model) capsRows(w, h int) []string {
-	rows := []string{paneTitle(w, "CAPTURES", "dumps/", "[d] browse · [a] analyze")}
+	rows := []string{paneTitle(w, "CAPTURES", "dumps/", "click opens · [a] analyze")}
 	if len(m.caps) == 0 {
 		rows = append(rows, " "+cFaint.Render("– nothing captured yet –"))
 	}

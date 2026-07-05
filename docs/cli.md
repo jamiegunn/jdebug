@@ -14,6 +14,8 @@ optional trailing pod name. `jdebug -V` prints the version.
 | command | does | notes |
 |---|---|---|
 | `jdebug status` | pods, restarts, recent events | output ends with a "how to read this" key |
+| `jdebug why [pod]` | kubernetes-layer deep-dive: requests/limits, QoS, probes, exit-code meanings, cgroup memory beyond the JVM, HPA scaling rules and the classic replicas-vs-HPA fight | every finding explained in plain language; degrades loudly when metrics-server/RBAC block a check |
+| `jdebug security [pod]` | pod security posture: live-verified uid (root?), privilege/capabilities, read-only rootfs, host namespaces, service-account token exposure, NetworkPolicy reachability | each ⚠ names its one-line fix; unknowns are flagged, never assumed safe |
 | `jdebug health` | actuator health, per subsystem + liveness/readiness | DOWN component = failing dependency |
 | `jdebug top` | `kubectl top pods` + HPA state | needs metrics-server |
 | `jdebug memory` | container RSS vs JVM heap/non-heap, reconciled per pool | needs `python3` on the host; refuses to print a misleading table if metrics fail |
@@ -27,7 +29,7 @@ optional trailing pod name. `jdebug -V` prints the version.
 | `jdebug threads [--via t]` | thread dump | safe, instant |
 | `jdebug heap --confirm [--via t]` | heap dump (hprof) | **pauses the JVM** — seconds on small heaps, minutes on multi-GB |
 | `jdebug jcmd "<cmd>"` | any jcmd via jattach (`GC.heap_info`, `VM.native_memory summary`, `JFR.start …`) | mostly safe; individual jcmds vary |
-| `jdebug snapshot [--heap --confirm]` | one offline bundle: describe + health + threads + memory + jcmd set (+ optional hprof) | safe unless `--heap` |
+| `jdebug snapshot [--heap --confirm]` | one offline bundle: describe + **why** + **security** + health + threads + memory + jcmd set (+ optional hprof) | safe unless `--heap` |
 
 With no `--via`, capture **auto-degrades** `actuator → jattach → jdk`,
 announcing each fallback. Force one tier with `--via actuator|jattach|jdk`.

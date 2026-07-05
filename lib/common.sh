@@ -178,3 +178,33 @@ check_cluster() {
     esac
     return 1
 }
+
+# explain_kubectl_error <first-stderr-line> [what] — turn a failed kubectl
+# call into plain language + a next step. A failure must never read as
+# "there was nothing" — the WHY is the diagnostic.
+explain_kubectl_error() {
+    local e="$1" what="${2:-that command}"
+    case "$e" in
+        *[Ff]orbidden*)
+            echo "  ✗ your RBAC doesn't allow $what — kubernetes' exact words:"
+            echo "      $e"
+            echo "    → ask your cluster admin for the permission named above; the rest of jdebug still works" ;;
+        *"Metrics API not available"*|*metrics.k8s.io*|*"metrics not available"*)
+            echo "  ✗ metrics-server isn't installed (or isn't healthy) in this cluster,"
+            echo "    so live CPU/memory numbers simply don't exist here."
+            echo "    → requests/limits still come from the pod spec (shown above/below),"
+            echo "      and an HPA with CPU/memory targets is BLIND without it" ;;
+        *refused*|*"i/o timeout"*|*"no such host"*|*"context deadline"*)
+            echo "  ✗ can't reach the cluster: $e"
+            echo "    → wrong context? VPN down? 'jdebug doctor' walks through it" ;;
+        *NotFound*|*"not found"*)
+            echo "  ✗ it doesn't exist (anymore): $e"
+            echo "    → a crash-looping pod may have been REPLACED under a new name — re-pick it (menu: g → p)" ;;
+        *"is waiting to start"*)
+            echo "  ✗ the container can't run commands right now: $e"
+            echo "    → it's between crashes — 'jdebug logs --previous' has its last words" ;;
+        "") : ;;
+        *)
+            echo "  ✗ $what failed: $e" ;;
+    esac
+}
