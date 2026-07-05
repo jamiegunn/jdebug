@@ -79,7 +79,7 @@ checks = {
     "dashboard rendered":       "guided diagnosis" in txt,
     "live log pane":            "LIVE LOGS" in txt and "OutOfMemoryError" in txt,
     "pods pane, clickable":     "PODS" in txt and "click switches" in txt,
-    "events + captures panes":  "EVENTS" in txt and "CAPTURES" in txt,
+    "workload + captures panes": "WORKLOAD" in txt and "CAPTURES" in txt,
     "trends sparklines":        "TRENDS" in txt,
     "status streams into pane": "OUTPUT" in txt and "how to read this" in txt,
     "why: pod deep-dive runs":  "pod deep-dive" in txt or "requests = the scheduler" in txt,

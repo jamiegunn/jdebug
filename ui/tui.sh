@@ -827,6 +827,17 @@ wiz_crash() {
     wiz_say "       A stack trace names the failing class — startup config is the usual culprit."
     wiz_say "       A failing liveness probe restarting a healthy-but-slow app → loosen the probe."
 }
+wiz_deploy() {
+    wiz_hd "A deploy just happened — did that break it?"
+    wiz_say "What the new revision changed — image digest, rollout timing, restart reason, scale intent:"
+    wrun what-changed
+    wiz_say "The chronology — the pod's events and your captures in time order:"
+    wrun timeline
+    wiz_say "And the previous container's last words, if it restarted after the rollout:"
+    wrun logs --previous
+    wiz_say "Next → a fresh OOM/crash right after the deploy → suspect the new revision (roll back to test)."
+    wiz_say "       An OLD ReplicaSet still serving pods → the rollout is stuck: press W (workload)."
+}
 wizard() {
     while true; do
         maybe_clear
@@ -839,12 +850,13 @@ wizard() {
         printf '   %s5%s  %sGC pauses%s climbing\n'                   "$GN" "$OFF" "$B" "$OFF"
         printf '   %s6%s  Not sure — %scapture everything%s\n'        "$GN" "$OFF" "$B" "$OFF"
         printf '   %s7%s  %sCrash-looping%s / CrashLoopBackOff\n'     "$GN" "$OFF" "$B" "$OFF"
+        printf '   %s8%s  A %sdeploy just happened%s — did that break it?\n' "$GN" "$OFF" "$B" "$OFF"
         printf '   %sb%s  back\n'                                     "$GN" "$OFF"
         local tgt; if [[ "$MODE" == 1 ]]; then tgt="$NAMESPACE / ${SELECTOR:-<any pod>}"; else tgt="this machine (localhost)"; fi
         printf '\n  %starget: %s · anything that could hurt the app asks you first%s\n' "$DIM" "$tgt" "$OFF"
         printf '\n  %s> %s' "$B" "$OFF"; local s; read -rn1 s || return; printf '\n'
         case "$s" in
-            1) wiz_oom ;; 2) wiz_slow ;; 3) wiz_cpu ;; 4) wiz_leak ;; 5) wiz_gc ;; 6) wiz_all ;; 7) wiz_crash ;;
+            1) wiz_oom ;; 2) wiz_slow ;; 3) wiz_cpu ;; 4) wiz_leak ;; 5) wiz_gc ;; 6) wiz_all ;; 7) wiz_crash ;; 8) wiz_deploy ;;
             b|B|""|$'\e') return ;;
             *) continue ;;
         esac

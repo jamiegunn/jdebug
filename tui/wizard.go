@@ -88,6 +88,16 @@ var wizardFlows = []struct {
 	}, []string{"exit 137 / OOMKilled above → it's memory: re-run the wizard, flow 1",
 		"a stack trace names the failing class — startup config/dependency is the usual culprit",
 		"a failing liveness probe restarting a healthy-but-slow app → loosen the probe, not the app"}},
+
+	{"8", "A deploy just happened — did that break it?", []wstep{
+		{narr: []string{"What the new revision changed — image digest, rollout timing, restart reason, scale intent:"},
+			args: []string{"what-changed"}, remote: true, withPod: true},
+		{narr: []string{"The chronology — the pod's events and your captures in time order:"},
+			args: []string{"timeline"}, remote: true, withPod: true},
+		{narr: []string{"And the previous container's last words, if it restarted after the rollout:"},
+			args: []string{"logs", "--previous"}, remote: true, withPod: true},
+	}, []string{"a fresh OOM/crash right after the deploy → suspect the new revision (roll back to test)",
+		"an OLD ReplicaSet still serving pods → the rollout is stuck: jdebug topology"}},
 }
 
 func (m model) openWizard() (tea.Model, tea.Cmd) {

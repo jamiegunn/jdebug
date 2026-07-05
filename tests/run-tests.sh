@@ -316,6 +316,29 @@ assert_rc  "escalate: empty state still works" 0
 assert_has "escalate: notes nothing sensitive yet" "nothing sensitive to warn about"
 rm -rf "$ESC"
 
+# --- incident timeline: events + captures in time order -----------------------
+section "timeline (events merged with captures, chronological)"
+TL="$TMP/tl"; rm -rf "$TL"; mkdir -p "$TL/pods/pod-a/20260705T140900Z"
+: > "$TL/pods/pod-a/20260705T140900Z/heap-actuator.hprof"
+run_case env JDEBUG_DUMPS="$TL" ./jdebug timeline -n default pod-a
+assert_rc  "timeline exits 0" 0
+assert_has "timeline: events oldest-first" "14:00:00Z"
+assert_has "timeline: warning event marked" "BackOff (x7)"
+assert_has "timeline: your captures interleaved" "YOU captured"
+assert_has "timeline: capture sorts after the events" "14:09:00Z"
+assert_has "timeline: has a legend" "a capture you took"
+rm -rf "$TL"
+
+# --- what changed: the deploy-just-happened workflow --------------------------
+section "what-changed (image / rollout / restart / scale)"
+run_case ./jdebug what-changed -n default pod-a
+assert_rc  "what-changed exits 0" 0
+assert_has "what-changed: spec image" "spec image : reg/payments:1.4.2"
+assert_has "what-changed: running image digest" "sha256:abc123"
+assert_has "what-changed: restart reason" "last exit    : OOMKilled"
+assert_has "what-changed: HPA vs Deployment replicas" "each deploy resets the count"
+assert_has "what-changed: points at logs --previous" "the previous container's last words"
+
 # --- lifecycle: state-changing actions, gated hard -------------------------------
 section "lifecycle (re-roll / kill)"
 run_case ./jdebug restart pod-a
@@ -669,7 +692,7 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         assert_has "tui: chooser self-test entry" "self-test"
         run_case ./tui/jdebug-tui -render dashboard
         assert_has "tui: dashboard log pane" "LIVE LOGS"
-        assert_has "tui: dashboard events pane" "EVENTS"
+        assert_has "tui: dashboard workload pane" "WORKLOAD"
         assert_has "tui: dashboard captures pane" "CAPTURES"
         assert_has "tui: dashboard trends" "TRENDS"
         assert_has "tui: restart marker" "▲"
@@ -680,6 +703,7 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         assert_has "tui: strip verdict + way back" "esc back to logs"
         run_case ./tui/jdebug-tui -render wizard
         assert_has "tui: crash-loop flow offered" "CrashLoopBackOff"
+        assert_has "tui: deploy/what-changed flow offered" "deploy just happened"
         run_case ./tui/jdebug-tui -render detail
         assert_has "tui: transparency cards render" "what each command does"
         assert_has "tui: cards name the data source" "kubectl pod status"

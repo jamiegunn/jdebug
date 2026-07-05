@@ -21,6 +21,8 @@
 #     topology      deployment → replicasets → pods + HPA/services (topology.sh)
 #     context       app wiring: services, env, probes, volumes, deps (context.sh)
 #     escalate      paste-ready handoff brief for asking for help (escalate.sh)
+#     timeline      pod events + your captures, in time order (timeline.sh)
+#     what-changed  image/rollout/restart/scale after a deploy (what-changed.sh)
 #     restart       re-roll the owning deployment (needs --confirm)
 #     kill          delete a pod; managed pods respawn (needs --confirm)
 #     logs          stream logs from all replicas         (tail-logs.sh)
@@ -261,6 +263,8 @@ case "$cmd" in
     topology)        fwd "$D/observe/topology.sh" ;;
     context|wiring)  fwd "$D/observe/context.sh" ;;
     escalate|handoff) fwd "$D/observe/escalate.sh" ;;
+    timeline)        fwd "$D/observe/timeline.sh" ;;
+    what-changed|changed) fwd "$D/observe/what-changed.sh" ;;
     restart)         fwd "$D/observe/lifecycle.sh" restart ;;
     kill)            fwd "$D/observe/lifecycle.sh" kill ;;
     memory)          fwd "$D/observe/memory-report.sh" ;;

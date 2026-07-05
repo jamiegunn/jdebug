@@ -62,10 +62,12 @@ Product directions to turn the launcher into an incident companion. Each
 should bias the wizard, dashboard, and NEXT toward the checks that matter and
 must never make destructive changes automatically.
 
-- **Incident modes** — explicit starting points (down / slow / restarting /
-  memory / CPU / deployed / not-sure) that pre-select a wizard flow and reorder
-  NEXT. Entry point: a top-level pick in `openWizard`, and a `mode` field that
-  weights `suggestions()`.
+- **Incident modes — MOSTLY SHIPPED.** The wizard IS the symptom-first mode
+  picker: OOM(1) · slow(2) · CPU(3) · leak(4) · GC(5) · not-sure(6) ·
+  crash-loop(7) · **deploy-just-happened(8, new)**. Flow 8 runs `what-changed`
+  → `timeline` → `logs --previous`. Remaining refinement: a `mode` field that
+  also re-weights the dashboard `suggestions()` ordering (NEXT is already
+  severity + confidence sorted, so this is incremental).
 - **Evidence chains — SHIPPED.** NEXT rows now show the short cause→effect
   behind a recommendation (`likely  OOMKilled last restart → mem 94% of limit →
   w flow 1`). `suggestionRows()` returns structured rows (`{conf, msg, ev, key}`)
@@ -74,14 +76,15 @@ must never make destructive changes automatically.
   means / why / check first / safe cmd / risky cmd / what to tell the next
   person). Good first cards: last exit, HPA, container memory, JVM heap, probe
   failures, CrashLoopBackOff, secured actuator.
-- **Incident timeline** — order the pod's events + the operator's captures
-  (created → pulled → started → probe failed → OOM → restarted → HPA scaled →
-  captured threads/heap). Entry point: a verb over `kubectl get events
-  --sort-by` merged with the session log's capture timestamps.
-- **What changed** — image + imageID, restart/rollout time, rollout history,
-  events since last restart, previous logs, probe failures, HPA vs Deployment
-  replicas. Much of this is already in `topology` + `logs --previous`; the
-  workflow names the question.
+- **Incident timeline — SHIPPED.** `jdebug timeline` (`observe/timeline.sh`,
+  wizard flow 8) merges the pod's Kubernetes events with the capture directories
+  under `dumps/pods/<pod>/` and prints them oldest→newest with a legend
+  (⚠ warning · · normal · ⬇ a capture you took). Undated entries still show.
+- **What changed — SHIPPED.** `jdebug what-changed` (`observe/what-changed.sh`,
+  wizard flow 8) pulls the deploy-suspects into one place: spec image vs running
+  imageID (digest), pod/rollout timing, restart reason + code + time, and
+  Deployment `replicas:` vs HPA scale intent — with pointers to `logs
+  --previous`, `timeline`, and `topology`.
 - **Escalation summary — SHIPPED.** `jdebug escalate` (`E` in both frontends)
   builds a paste-ready handoff from the current target + live pod state + the
   session log + captures on disk: TARGET, FINDINGS with confidence
