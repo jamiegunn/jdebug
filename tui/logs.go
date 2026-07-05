@@ -27,13 +27,15 @@ type logState struct {
 	lines []logLine
 	when  time.Time
 	focus bool
-	off   int // scroll offset back from the tail; 0 = follow
+	prev  bool // showing the PREVIOUS container's logs (current one can't serve any)
+	off   int  // scroll offset back from the tail; 0 = follow
 	err   string
 }
 
 type logTickMsg struct{}
 type logMsg struct {
 	lines []logLine
+	prev  bool
 	err   string
 }
 
@@ -43,22 +45,35 @@ func logTickCmd() tea.Cmd {
 
 func fetchLogs(t target) tea.Cmd {
 	return func() tea.Msg {
-		ctx, cancel := context.WithTimeout(context.Background(), 4*time.Second)
+		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
-		args := []string{"-n", t.Namespace, "logs", t.Pod, "--tail=200"}
-		if t.Container != "" {
-			args = append(args, "-c", t.Container)
-		}
-		out, err := exec.CommandContext(ctx, "kubectl", args...).CombinedOutput()
-		if err != nil {
-			msg := firstLine(strings.TrimSpace(string(out)))
-			if msg == "" {
-				msg = firstLine(err.Error())
+		get := func(previous bool) ([]byte, error) {
+			args := []string{"-n", t.Namespace, "logs", t.Pod, "--tail=200"}
+			if previous {
+				args = append(args, "--previous")
 			}
-			return logMsg{err: msg}
+			if t.Container != "" {
+				args = append(args, "-c", t.Container)
+			}
+			return exec.CommandContext(ctx, "kubectl", args...).CombinedOutput()
 		}
-		raw := strings.Split(strings.TrimRight(string(out), "\n"), "\n")
-		return logMsg{lines: classifyLogs(raw)}
+		out, err := get(false)
+		if err == nil && len(strings.TrimSpace(string(out))) > 0 {
+			return logMsg{lines: classifyLogs(strings.Split(strings.TrimRight(string(out), "\n"), "\n"))}
+		}
+		// a crash-looping container can't serve logs while it waits to
+		// restart — the PREVIOUS container's last words are the story anyway
+		if prev, perr := get(true); perr == nil && len(strings.TrimSpace(string(prev))) > 0 {
+			return logMsg{prev: true, lines: classifyLogs(strings.Split(strings.TrimRight(string(prev), "\n"), "\n"))}
+		}
+		msg := firstLine(strings.TrimSpace(string(out)))
+		if msg == "" && err != nil {
+			msg = firstLine(err.Error())
+		}
+		if msg == "" {
+			msg = "no log output yet"
+		}
+		return logMsg{err: msg}
 	}
 }
 
@@ -120,7 +135,11 @@ func (m model) logPane(w, h int) string {
 	} else if !ls.when.IsZero() {
 		right = fmt.Sprintf("%ds ago · ", int(time.Since(ls.when).Seconds())) + right
 	}
-	rows := []string{paneTitle(w, "LIVE LOGS", podShort(m.t.Pod, 28), right)}
+	sub := podShort(m.t.Pod, 28)
+	if ls.prev {
+		sub += " · previous container (it crashed — these are its last words)"
+	}
+	rows := []string{paneTitle(w, "LIVE LOGS", sub, right)}
 	switch {
 	case ls.err != "" && len(ls.lines) == 0:
 		rows = append(rows, " "+cFaint.Render("– logs unavailable: "+ls.err+" –"))

@@ -5,6 +5,7 @@ package main
 // every mode (kubectl-only steps are skipped in local modes, with a note).
 
 import (
+	"path/filepath"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
@@ -21,8 +22,7 @@ type wstep struct {
 type wizardState struct {
 	active bool
 	queue  []wstep
-	after  []string // "Next →" lines shown when the flow completes
-	done   bool
+	after  []string // "Next →" lines appended when the flow completes
 }
 
 var wizardFlows = []struct {
@@ -95,13 +95,6 @@ func (m model) openWizard() (tea.Model, tea.Cmd) {
 }
 
 func (m model) wizardView() string {
-	if m.wiz.done {
-		out := "\n  " + cTitle.Render("flow complete") + "\n"
-		for _, l := range m.wiz.after {
-			out += "  " + cMuted.Render("Next → "+l) + "\n"
-		}
-		return out + "  " + cFaint.Render("any key for the symptom list") + " "
-	}
 	var b strings.Builder
 	b.WriteString("\n  " + cTitle.Render("Guided diagnosis — what are you seeing?") + "\n\n")
 	for _, f := range wizardFlows {
@@ -117,16 +110,20 @@ func (m model) wizardView() string {
 }
 
 func (m model) wizardKey(key string) (tea.Model, tea.Cmd) {
-	if m.wiz.done {
-		m.wiz = wizardState{}
-		return m, nil
-	}
 	if m.wiz.active {
-		return m, nil // steps advance via execDoneMsg
+		return m, nil // steps advance via streamDoneMsg
 	}
 	for _, f := range wizardFlows {
 		if key == f.key {
+			// flows run ON the dashboard: every step streams into the
+			// bottom output pane, so the live panels stay in view
 			m.wiz = wizardState{active: true, queue: append([]wstep(nil), f.steps...), after: f.after}
+			m.scr = scMenu
+			if m.out.running && m.out.cancel != nil {
+				m.out.cancel()
+			}
+			m.out = outState{id: m.out.id} // fresh transcript for this flow
+			m.out.raw = []byte("── guided diagnosis: " + f.label + " ──\n")
 			return m.wizardAdvance()
 		}
 	}
@@ -137,7 +134,8 @@ func (m model) wizardKey(key string) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
-// wizardAdvance runs the next step in the queue (called after each execDone).
+// wizardAdvance runs the next step in the queue (called after each step's
+// stream completes).
 func (m model) wizardAdvance() (tea.Model, tea.Cmd) {
 	for len(m.wiz.queue) > 0 {
 		st := m.wiz.queue[0]
@@ -149,25 +147,53 @@ func (m model) wizardAdvance() (tea.Model, tea.Cmd) {
 			c := st
 			c.confirm = ""
 			return m.askConfirm2(st.confirm, "",
-				func(mm *model) tea.Cmd { return mm.wizStepCmd(c) }, // yes: run it; done → advance
+				func(mm *model) tea.Cmd { return mm.wizRunTo(c) }, // yes: run it; done → advance
 				func(mm *model) tea.Cmd { // no: skip this step, keep going
 					mdl, cmd := mm.wizardAdvance()
 					*mm = mdl.(model)
 					return cmd
 				})
 		}
-		return m, m.wizStepCmd(st)
+		return m.wizRun(st)
 	}
+	// flow complete — the wrap-up lands in the same transcript
 	m.wiz.active = false
-	m.wiz.done = true
-	m.scr = scWizard
+	tail := "\n── flow complete ──\n"
+	for _, l := range m.wiz.after {
+		tail += "Next → " + l + "\n"
+	}
+	(&m).appendChunk([]byte(tail))
+	if m.scr == scWizard {
+		m.scr = scMenu
+	}
 	return m, nil
 }
 
-func (m *model) wizStepCmd(st wstep) tea.Cmd {
-	// narration rides along in the echoed command via a leading printf
-	if m.mode == 1 {
-		return m.runCLI(st.withPod, st.args...)
+// wizRun streams one wizard step into the output pane, narration first.
+func (m model) wizRun(st wstep) (tea.Model, tea.Cmd) {
+	var prefix []byte
+	if len(m.out.raw) > 0 {
+		prefix = append(prefix, '\n')
 	}
-	return m.runLocal(st.args...)
+	for _, n := range st.narr {
+		prefix = append(prefix, []byte("· "+n+"\n")...)
+	}
+	verb := "jdebug " + strings.Join(st.args, " ")
+	var words []string
+	if m.mode == 1 {
+		words = append([]string{filepath.Join(m.kit, "jdebug")}, st.args...)
+		if st.withPod && m.t.Pod != "" {
+			words = append(words, m.t.Pod)
+		}
+	} else {
+		verb = "jdebug-local " + strings.Join(st.args, " ")
+		words = append([]string{"sh", filepath.Join(m.kit, "jdebug-local")}, st.args...)
+	}
+	return m.startPane("guided diagnosis — "+verb, targetEnv(m.t), prefix, true, words...)
+}
+
+func (mm *model) wizRunTo(st wstep) tea.Cmd {
+	mdl, cmd := mm.wizRun(st)
+	*mm = mdl.(model)
+	return cmd
 }

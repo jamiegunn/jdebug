@@ -69,6 +69,18 @@ exit $rc`,
 	return tea.ExecProcess(c, func(err error) tea.Msg { return execDoneMsg{err} })
 }
 
+// podTerminal opens an interactive shell inside the target pod. This is the
+// one action that genuinely needs the real tty, so it drops out of the
+// altscreen; exiting the shell (exit / Ctrl-D) lands back on the dashboard,
+// which then re-runs status automatically to re-orient you.
+func (m *model) podTerminal() tea.Cmd {
+	m.postExec = "status"
+	sh := `command -v bash >/dev/null 2>&1 && exec bash || exec sh`
+	c := exec.Command("kubectl", "-n", m.t.Namespace, "exec", "-it", m.t.Pod,
+		"-c", m.t.Container, "--", "sh", "-c", sh)
+	return tea.ExecProcess(c, func(err error) tea.Msg { return execDoneMsg{err} })
+}
+
 // targetEnv exports the current target the way the bash TUI does, so the CLI
 // children inherit it (flags still win inside the CLI).
 func targetEnv(t target) []string {
@@ -78,21 +90,6 @@ func targetEnv(t target) []string {
 		"APP_CONTAINER=" + t.Container,
 		"ACTUATOR_BASE=" + t.Actuator,
 	}
-}
-
-// runCLI runs `jdebug <args...>` (+ pinned pod when the command targets one).
-func (m *model) runCLI(withPod bool, args ...string) tea.Cmd {
-	words := append([]string{filepath.Join(m.kit, "jdebug")}, args...)
-	if withPod && m.t.Pod != "" {
-		words = append(words, m.t.Pod)
-	}
-	return runShell(targetEnv(m.t), words...)
-}
-
-// runLocal runs `sh <kit>/jdebug-local <args...>`.
-func (m *model) runLocal(args ...string) tea.Cmd {
-	words := append([]string{"sh", filepath.Join(m.kit, "jdebug-local")}, args...)
-	return runShell(targetEnv(m.t), words...)
 }
 
 // jattachScript downloads the arch-matched jattach for THIS machine into

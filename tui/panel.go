@@ -113,9 +113,11 @@ func fetchPanel(t target) tea.Cmd {
 			d.ActuatorOK = d.HeapVia == "actuator"
 		}
 		if hpa := kenum("-n", t.Namespace, "get", "hpa", "--no-headers").items; len(hpa) > 0 {
+			// columns: NAME REFERENCE TARGETS MINPODS MAXPODS REPLICAS AGE —
+			// replicas is second-to-last (the last is AGE)
 			f := strings.Fields(hpa[0])
 			if len(f) >= 6 {
-				d.HPA = f[0] + " " + f[len(f)-1] + " replicas"
+				d.HPA = f[0] + " " + f[len(f)-2] + " replicas"
 			}
 		}
 		return panelMsg(d)

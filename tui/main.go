@@ -79,11 +79,19 @@ type model struct {
 	eventsErr string
 	hist      []sample // sparkline history, one point per panel fetch
 	caps      []capEntry
+	pods      []string // PODS pane: what the selector/namespace matches
+	podsScope string
+	podsErr   string
+	podsOff   int
 	out       outState // in-app command output (scOutput)
 
 	// in-flight fetch guards: a slow cluster must not stack goroutines
 	panelBusy bool
 	logBusy   bool
+
+	logTickOn bool   // the 5s log ticker is armed (must never double-arm)
+	autoRan   bool   // the one-shot startup auto-status already fired
+	postExec  string // command to auto-run after an ExecProcess returns
 
 	quitMsg string
 }
@@ -100,14 +108,26 @@ func (m *model) logsFetch() tea.Cmd {
 }
 
 func (m model) Init() tea.Cmd {
+	// (the 5s log ticker arms on the first WindowSizeMsg — the one event
+	// every entry path shares exactly once)
 	if m.mode == 1 {
-		cmds := []tea.Cmd{fetchPanel(m.t), fetchEvents(m.t), fetchCaps(m.kit), tickCmd(), logTickCmd()}
+		cmds := []tea.Cmd{fetchPanel(m.t), fetchEvents(m.t), fetchCaps(m.kit),
+			fetchPodList(m.t), tickCmd(), autoStatusCmd()}
 		if m.t.Pod != "" {
 			cmds = append(cmds, fetchLogs(m.t))
 		}
 		return tea.Batch(cmds...)
 	}
 	return tea.Batch(fetchCaps(m.kit), tickCmd())
+}
+
+// autoStatusCmd: the dashboard's opening move — after two quiet seconds it
+// runs `status` for you, so the first screen already answers "what's
+// happening" without a keypress.
+type autoStatusMsg struct{}
+
+func autoStatusCmd() tea.Cmd {
+	return tea.Tick(2*time.Second, func(time.Time) tea.Msg { return autoStatusMsg{} })
 }
 
 func (m *model) probeRemote(force bool) probe {
@@ -130,23 +150,35 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.scr == scOutput {
 			m.rewrapOut()
 		}
+		if !m.logTickOn {
+			m.logTickOn = true
+			return m, logTickCmd()
+		}
 		return m, nil
 	case execDoneMsg:
-		if m.scr == scWizard && m.wiz.active {
-			return m.wizardAdvance()
-		}
 		if m.scr != scChooser {
 			m.scr = scMenu
 		}
-		m.out.show = false // a wizard run supersedes any held output pane
 		cmds := []tea.Cmd{m.panelFetch(), fetchCaps(m.kit)}
 		if m.mode == 1 {
-			cmds = append(cmds, fetchEvents(m.t))
+			cmds = append(cmds, fetchEvents(m.t), fetchPodList(m.t))
 			if m.showLogPane() && !m.logBusy {
 				cmds = append(cmds, m.logsFetch())
 			}
 		}
+		if m.postExec == "status" { // e.g. back from the pod terminal
+			m.postExec = ""
+			mm, cmd := m.quickCLI(false, "status")
+			return mm, tea.Batch(append(cmds, cmd)...)
+		}
 		return m, tea.Batch(cmds...)
+	case autoStatusMsg:
+		// only fire on an untouched, ready dashboard — never interrupt
+		if m.scr == scMenu && m.mode == 1 && m.remote.OK && !m.autoRan && m.out.id == 0 && !m.wiz.active {
+			m.autoRan = true
+			return m.quickCLI(false, "status")
+		}
+		return m, nil
 	case streamChunkMsg:
 		if v.id != m.out.id {
 			return m, nil // superseded stream
@@ -171,6 +203,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.mode == 1 {
 			cmds = append(cmds, fetchEvents(m.t))
 		}
+		if m.wiz.active { // a wizard step finished — chain the next one
+			mdl, cmd := m.wizardAdvance()
+			return mdl, tea.Batch(append(cmds, cmd)...)
+		}
 		return m, tea.Batch(cmds...)
 	case panelMsg:
 		m.panel = panelData(v)
@@ -182,6 +218,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case logMsg:
 		m.logs.lines = v.lines
+		m.logs.prev = v.prev
 		m.logs.err = v.err
 		m.logs.when = time.Now()
 		m.logBusy = false
@@ -193,9 +230,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case capsMsg:
 		m.caps = []capEntry(v)
 		return m, nil
+	case podsMsg:
+		m.pods = v.lines
+		m.podsScope = v.scope
+		m.podsErr = v.err
+		return m, nil
+	case tea.MouseMsg:
+		return m.handleMouse(v)
 	case tickMsg:
 		if m.scr == scMenu && m.mode == 1 && m.remote.OK {
-			cmds := []tea.Cmd{fetchEvents(m.t), fetchCaps(m.kit), tickCmd()}
+			cmds := []tea.Cmd{fetchEvents(m.t), fetchCaps(m.kit), fetchPodList(m.t), tickCmd()}
 			if !m.panelBusy {
 				cmds = append(cmds, m.panelFetch())
 			}
@@ -211,6 +255,23 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, logTickCmd()
 	case tea.KeyMsg:
 		return m.handleKey(v)
+	}
+	return m, nil
+}
+
+// handleMouse: click a pod in the PODS pane to retarget; wheel scrolls it.
+func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
+	switch {
+	case v.Action == tea.MouseActionPress && v.Button == tea.MouseButtonLeft:
+		return m.switchPod(m.podsClickTarget(v.X, v.Y))
+	case v.Button == tea.MouseButtonWheelUp:
+		if in, _ := m.podsHit(v.X, v.Y); in && m.podsOff > 0 {
+			m.podsOff--
+		}
+	case v.Button == tea.MouseButtonWheelDown:
+		if in, _ := m.podsHit(v.X, v.Y); in && m.podsOff < len(m.pods)-1 {
+			m.podsOff++
+		}
 	}
 	return m, nil
 }
@@ -371,7 +432,7 @@ func main() {
 	// inline (no altscreen): output + menus share the normal scrollback.
 	// When stdin is a pipe (tests, headless drives), read keys from it rather
 	// than demanding /dev/tty.
-	opts := []tea.ProgramOption{tea.WithAltScreen()}
+	opts := []tea.ProgramOption{tea.WithAltScreen(), tea.WithMouseCellMotion()}
 	if fi, err := os.Stdin.Stat(); err == nil && fi.Mode()&os.ModeCharDevice == 0 {
 		opts = append(opts, tea.WithInput(os.Stdin))
 	}

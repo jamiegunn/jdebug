@@ -62,6 +62,12 @@ func demoModel() model {
 		"10:30:08 INFO  [http-nio-8080-exec-5] c.e.d.DemoController : request served in 10ms",
 	})
 	m.logs.when = time.Now()
+	m.pods = []string{
+		"app-debug-demo-app-6c6c4b5769-s9jdg  Running  restarts=34",
+		"app-debug-demo-app-6c6c4b5769-x7k2p  Running  restarts=2",
+		"app-debug-demo-app-6c6c4b5769-q1r8n  Running  restarts=0",
+	}
+	m.podsScope = "selector"
 	return m
 }
 

@@ -51,17 +51,16 @@ def press(k, wait=1.0):
     os.write(fd, k.encode())
     drain(wait)
 
-drain(3)                # startup + first render (Init fetches logs/events)
-press("s", 4)           # status → streams into the bottom OUTPUT pane
+drain(4)                # startup; auto-status fires itself at the 2s mark
+press("\x1b", 1)        # esc dismisses the auto-status pane
+press("s", 4)           # quick read → streams into the bottom OUTPUT pane
 press("\x1b", 1)        # esc dismisses back to the live logs
-press("l", 4)           # the old drop-out: now streams into the pane too
+press("l", 4)           # logs stream into the pane too
 press("\x1b", 1)        # esc back
-press("w", 1)           # wizard keeps the ExecProcess drop-out
-press("2", 4)           #   flow 2: threads step runs with the pause
-press(" ", 2)           #   any key back → next step (health)
-press(" ", 2)           #   back again → flow complete
-press(" ", 1)           #   leave the done screen
-press("b", 1)           #   back to the dashboard
+press("w", 1)           # guided diagnosis…
+press("2", 8)           #   …streams BOTH steps + wrap-up into the pane
+press("\x1b", 1)        # esc back to the live logs
+press("T", 4)           # pod terminal (mock exec exits at once) → auto-status
 press("q", 1)           # quit → confirm
 press("y", 2)
 
@@ -75,12 +74,12 @@ for p in glob.glob(sandbox + "/dumps/session-*.log"):
 checks = {
     "dashboard rendered":       "guided diagnosis" in txt,
     "live log pane":            "LIVE LOGS" in txt and "OutOfMemoryError" in txt,
+    "pods pane, clickable":     "PODS" in txt and "click switches" in txt,
     "events + captures panes":  "EVENTS" in txt and "CAPTURES" in txt,
     "trends sparklines":        "TRENDS" in txt,
     "status streams into pane": "OUTPUT" in txt and "how to read this" in txt,
     "logs stream into pane":    "mock log line" in txt,
-    "wizard drop-out pause":    "any key for the menu" in txt,
-    "wizard flow completes":    "flow complete" in txt,
+    "wizard streams on-page":   "flow complete" in txt and "any key for the menu" not in txt,
     "session log transcript":   "$ " in logtxt and "status" in logtxt,
     "quit confirms":            "quit jdebug?" in txt,
     "transcript on exit":       "transcript of everything" in txt,

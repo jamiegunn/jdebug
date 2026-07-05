@@ -81,14 +81,29 @@ func (mm *model) quickToLocal(args ...string) tea.Cmd {
 }
 
 func (m model) openQuick(title string, env []string, words ...string) (tea.Model, tea.Cmd) {
+	return m.startPane(title, env, nil, false, words...)
+}
+
+// startPane starts a streamed command. keep=true appends to the pane's
+// existing transcript (wizard flows chain their steps into one story);
+// prefix bytes (narration) render above the command's output.
+func (m model) startPane(title string, env []string, prefix []byte, keep bool, words ...string) (tea.Model, tea.Cmd) {
 	if m.out.running && m.out.cancel != nil {
 		m.out.cancel() // a new command supersedes the previous stream
 	}
 	id := m.out.id + 1
 	ctx, cancel := context.WithCancel(context.Background())
 	ch := make(chan tea.Msg, 32)
-	m.out = outState{id: id, title: title, display: strings.Join(words, " "),
+	st := outState{id: id, title: title, display: strings.Join(words, " "),
 		running: true, ch: ch, cancel: cancel}
+	if keep {
+		st.raw = m.out.raw
+	}
+	m.out = st
+	if len(prefix) > 0 {
+		(&m).appendChunk(prefix)
+		m.out.running = true // appendChunk doesn't touch it, but be explicit
+	}
 	if m.mode == 1 && m.remote.OK && m.showLogPane() {
 		m.out.show = true // render in the bottom strip; menu stays live
 	} else {

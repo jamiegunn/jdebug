@@ -215,8 +215,8 @@ func TestDashboardShowsPanes(t *testing.T) {
 	m := readyModel()
 	m.width, m.height = 200, 50
 	out := m.menuView()
-	for _, want := range []string{"LIVE LOGS", "EVENTS", "CAPTURES", "TRENDS", "▲",
-		"OutOfMemoryError", "BackOff", "threads-pod-a"} {
+	for _, want := range []string{"LIVE LOGS", "EVENTS", "CAPTURES", "TRENDS", "PODS", "▲",
+		"OutOfMemoryError", "BackOff", "threads-pod-a", "click switches"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dashboard missing %q", want)
 		}
@@ -481,13 +481,46 @@ func TestNotSureRunsSafeSnapshotFirst(t *testing.T) {
 		}
 	}
 	// declining the heap step must still have produced the snapshot: picking
-	// flow 6 fires the snapshot command immediately, no question asked first
+	// flow 6 fires the snapshot command immediately, no question asked first —
+	// and the flow streams into the output pane, not off the main page
 	m := readyModel()
 	out, _ := m.Update(key("w"))
 	res, cmd := out.(model).Update(key("6"))
 	mm := res.(model)
-	if mm.scr != scWizard || !mm.wiz.active || cmd == nil {
-		t.Fatalf("flow 6 must start running the snapshot straight away, got screen %v", mm.scr)
+	if mm.scr == scWizard || !mm.wiz.active || cmd == nil || !mm.out.running {
+		t.Fatalf("flow 6 must start streaming the snapshot straight away, got screen %v running=%v", mm.scr, mm.out.running)
+	}
+	if !strings.Contains(string(mm.out.raw), "guided diagnosis") {
+		t.Fatal("the flow header must open the pane transcript")
+	}
+}
+
+func TestWizardStreamsOnDashboard(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 200, 50
+	out, _ := m.Update(key("w"))
+	res, cmd := out.(model).Update(key("2")) // slow/hung: threads then health
+	mm := res.(model)
+	if mm.scr != scMenu || !mm.out.show || cmd == nil {
+		t.Fatalf("wizard steps must stream in the dashboard pane, got screen %v show=%v", mm.scr, mm.out.show)
+	}
+	if !strings.Contains(string(mm.out.raw), "thread dump") {
+		t.Fatal("step narration must land in the transcript")
+	}
+	// first step's stream finishes → the next step chains automatically
+	res, cmd = mm.Update(streamDoneMsg{id: mm.out.id})
+	mm = res.(model)
+	if !mm.wiz.active || cmd == nil || !mm.out.running {
+		t.Fatal("finishing a step must chain the next one")
+	}
+	// second (last) step finishes → flow wrap-up lands in the transcript
+	res, _ = mm.Update(streamDoneMsg{id: mm.out.id})
+	mm = res.(model)
+	if mm.wiz.active || !strings.Contains(string(mm.out.raw), "flow complete") {
+		t.Fatalf("flow completion must close out in the same transcript, active=%v", mm.wiz.active)
+	}
+	if mm.scr != scMenu {
+		t.Fatalf("the user never leaves the dashboard, got screen %v", mm.scr)
 	}
 }
 
@@ -696,6 +729,58 @@ func TestEscAlwaysGoesBack(t *testing.T) {
 			t.Errorf("%s: esc must clear pending heap state", c.name)
 		}
 	}
+}
+
+func TestClickSwitchesPod(t *testing.T) {
+	t.Setenv("JDEBUG_CONFIG_DIR", t.TempDir()) // switching saves the target
+	m := readyModel()
+	m.width, m.height = 200, 50
+	menuW, midW, _ := m.cols()
+	x := menuW + midW + 4 + 2 // inside the right column
+	y := 3 + 2                // pods pane: title row +1 → second pod row... row 1 is first pod
+	// row y=4 is the first pod row (y0=3 title); click the second pod
+	res, cmd := m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	mm := res.(model)
+	want := "app-debug-demo-app-6c6c4b5769-x7k2p"
+	if mm.t.Pod != want {
+		t.Fatalf("clicking the second pod must retarget, got %q", mm.t.Pod)
+	}
+	if cmd == nil {
+		t.Fatal("switching pods must refetch the live panes")
+	}
+}
+
+func TestTerminalKeyIsShiftT(t *testing.T) {
+	m := readyModel()
+	out, cmd := m.Update(key("T"))
+	mm := out.(model)
+	if cmd == nil || mm.scr != scMenu || mm.postExec != "status" {
+		t.Fatalf("T must open the pod terminal and schedule the status re-run, got screen %v postExec %q", mm.scr, mm.postExec)
+	}
+	out, cmd = m.Update(key("t"))
+	if out.(model).scr != scVia || cmd != nil {
+		t.Fatal("lowercase t must still be threads (tier pick)")
+	}
+}
+
+func TestAutoStatusFiresOncePer(t *testing.T) {
+	m := readyModel()
+	res, cmd := m.Update(autoStatusMsg{})
+	mm := res.(model)
+	if !mm.autoRan || cmd == nil || !mm.out.running || !strings.Contains(mm.out.title, "status") {
+		t.Fatalf("auto-status must run status on an idle dashboard, got title %q", mm.out.title)
+	}
+	// never twice, and never over something the user already started
+	res, cmd = mm.Update(autoStatusMsg{})
+	if cmd != nil {
+		t.Fatal("auto-status must be a one-shot")
+	}
+	m2 := readyModel()
+	m2.out.id = 3 // the user already ran something
+	if _, cmd := m2.Update(autoStatusMsg{}); cmd != nil {
+		t.Fatal("auto-status must never interrupt user activity")
+	}
+	_ = res
 }
 
 func TestChooserStrayKeysDontPickAMode(t *testing.T) {

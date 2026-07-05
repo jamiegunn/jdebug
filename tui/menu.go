@@ -184,6 +184,7 @@ var remoteActions = struct {
 	advanced: []action{
 		{"j", "jcmd", "raw JVM commands — GC, profiling, native memory", "caution", ""},
 		{"v", "verbosity", "change log level live, no restart", "caution", ""},
+		{"T", "terminal", "a shell inside the pod — exit returns here", "caution", ""},
 	},
 }
 
@@ -374,9 +375,14 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 		return m.quickCLI(false, "top")
 	case "m":
 		return m.quickCLI(true, "memory")
-	case "t", "T":
+	case "t":
 		m.scr = scVia
 		return m, nil
+	case "T": // shifted on purpose, like H/M: it takes over the screen
+		if m.t.Pod == "" {
+			return m, nil
+		}
+		return m, m.podTerminal()
 	case "f", "F":
 		if m.showLogPane() {
 			m.logs.focus = true

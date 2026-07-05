@@ -62,6 +62,7 @@ interactive session on a real pty (`tests/pty-drive.py`).
 | `menu.go` | header/status line, gate panels, main menu, action key dispatch, tier/jcmd/level picks |
 | `layout.go` | size tiers, column/row math, tier-2 grid assembly, overlay budgeting |
 | `panel.go` | live TARGET panel data fetch/render + the NEXT suggestion engine |
+| `pods.go` | PODS pane: selector/namespace pod list, click-to-retarget, wheel scroll |
 | `logs.go` | live log tail: 5 s poll, severity classifier, focus mode |
 | `events.go` | kubernetes events pane for the target pod |
 | `captures.go` | dumps/ browser pane (name/size/age) |

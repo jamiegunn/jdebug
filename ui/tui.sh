@@ -832,6 +832,7 @@ menu_remote() {
     msection "ADVANCED"
     mrow j jcmd      "raw JVM commands — GC, profiling, native memory" caution
     mrow v verbosity "change log level live, no restart"              caution
+    mrow T terminal  "a shell inside the pod — exit returns here"     caution
     printf '\n'
     menu_footer "[a] analyze  [c] check setup  [?] help  [q] quit"
     mprompt
@@ -894,7 +895,15 @@ dispatch_remote() {
         h)   run "$DBG" health ${POD_PIN:+"$POD_PIN"} ;;
         o|O) run "$DBG" top ;;
         m)   run "$DBG" memory ${POD_PIN:+"$POD_PIN"} ;;
-        t|T) if ask_via; then run "$DBG" threads $VIA_FLAG ${POD_PIN:+"$POD_PIN"}; fi ;;
+        t)   if ask_via; then run "$DBG" threads $VIA_FLAG ${POD_PIN:+"$POD_PIN"}; fi ;;
+        T)   # shifted on purpose, like H/M: an interactive shell in the pod
+             local tpod; tpod="${POD_PIN:-$(resolve_pods 2>/dev/null | head -n1 || true)}"
+             if [[ -n "$tpod" ]]; then
+                 printf '  %sshell inside %s — exit/Ctrl-D returns to the menu%s\n' "$DIM" "$tpod" "$OFF"
+                 kubectl -n "$NAMESPACE" exec -it "$tpod" -c "$APP_CONTAINER" -- \
+                     sh -c 'command -v bash >/dev/null 2>&1 && exec bash || exec sh' || true
+                 run "$DBG" status
+             fi ;;
         j|J) ask_jcmd; [[ -n "$JCMD_PICK" ]] && run "$DBG" jcmd "$JCMD_PICK" ${POD_PIN:+"$POD_PIN"} ;;
         H)   confirm_disruptive H "heap dump pauses the app while it runs" || return 1
              if ask_via; then run "$DBG" heap $VIA_FLAG --confirm ${POD_PIN:+"$POD_PIN"}; fi ;;

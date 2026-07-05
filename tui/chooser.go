@@ -41,7 +41,12 @@ func (m model) chooserKey(key string) (tea.Model, tea.Cmd) {
 	// probe the chosen mode now so the menu's first frame is truthful
 	if m.mode == 1 {
 		m.remote = remoteProbe(m.t)
-		return m, tea.Batch(fetchPanel(m.t), fetchEvents(m.t), fetchCaps(m.kit))
+		cmds := []tea.Cmd{fetchPanel(m.t), fetchEvents(m.t), fetchCaps(m.kit),
+			fetchPodList(m.t), autoStatusCmd()}
+		if m.t.Pod != "" {
+			cmds = append(cmds, fetchLogs(m.t))
+		}
+		return m, tea.Batch(cmds...)
 	}
 	m.local = localProbe(m.kit, m.t)
 	return m, nil

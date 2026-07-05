@@ -20,17 +20,25 @@ config, and session-log behavior:
   on a big window (≥140×34) it becomes a grid — menu on the left, a **live
   TARGET panel with sparkline TRENDS** (memory %, CPU, restart ▲ markers)
   and a **NEXT box** of concrete key-press suggestions in the middle,
-  **EVENTS and CAPTURES** on the right, and a **live log tail** filling the
-  bottom (5 s refresh, errors red, `f` expands it full-screen with
+  **PODS, EVENTS and CAPTURES** on the right (the PODS list is clickable —
+  **click any pod to retarget everything at it**, wheel scrolls; it shows
+  the selector's matches, or the whole namespace as fallback), and a
+  **live log tail** filling the bottom (5 s refresh, errors red; when a
+  crash-looping container can't serve logs it shows the **previous
+  container's last words**, labeled as such; `f` expands it full-screen with
   scrollback). Commands **stream live into that bottom pane**, replacing
   the log tail while they run — the menu stays interactive, `esc`
   stops/dismisses, ↑↓ scrolls, and the pane title carries the ✓/✗ verdict.
-  No raw bash taking over your terminal (only the guided wizard still steps
-  out, for its narrated pauses). Every run appends the same transcript
-  block to the session log. On smaller terminals it degrades gracefully to
-  an **incident checklist**: target status and NEXT recommendations first,
-  then guided diagnosis, quick checks, captures — with a full-screen output
-  view for commands. Every action shells out to the same tested bash CLI.
+  **Guided-diagnosis flows stream there too**, narration and all — you
+  never leave the main page (confirms overlay it). The dashboard opens by
+  **running `status` for you** after two quiet seconds, and `T` drops into
+  an **interactive shell inside the pod** (the one true drop-out; exiting
+  lands you back with status re-run automatically). Every run appends the
+  same transcript block to the session log. On smaller terminals it
+  degrades gracefully to an **incident checklist**: target status and NEXT
+  recommendations first, then guided diagnosis, quick checks, captures —
+  with a full-screen output view for commands. Every action shells out to
+  the same tested bash CLI.
 - **bash (classic)** — the zero-dependency fallback; always available.
   Force it with `JDEBUG_CLASSIC=1`.
 
