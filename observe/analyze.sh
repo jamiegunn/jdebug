@@ -3,7 +3,7 @@
 # analyze.sh — first-pass analysis of captured evidence: thread dumps, heap
 # dumps, snapshot bundles, memory reports, health captures. Reads everything
 # it finds and says what stands out and which real analyzer to open next.
-# It is a quick triage pass, NOT a replacement for Eclipse MAT / fastthread.io.
+# It is a quick triage pass, NOT a replacement for Eclipse MAT / VisualVM.
 #
 # Usage:
 #   ./analyze.sh [file-or-directory]      # default: the kit's dumps/ dir
@@ -50,7 +50,7 @@ analyze_threads() {
         flag "hot frame: ${hotn}× $(awk '{print $2}' <<<"$hot") — that many RUNNABLE threads in one spot suggests a busy loop"
     fi
     [[ "$FLAGS" -eq "$before" ]] && say "nothing alarming — mostly waiting threads is normal for a pool-based app"
-    say "deeper: upload the file to https://fastthread.io"
+    say "deeper: open the file in VisualVM (free, runs locally — visualvm.github.io)"
 }
 
 analyze_hprof() {
@@ -133,7 +133,7 @@ analyze_file() {
 }
 
 TARGET="${1:-$JDEBUG_DUMPS}"
-echo "jdebug analyze — first-pass triage of captured evidence (the deep tools are MAT and fastthread.io)"
+echo "jdebug analyze — first-pass triage of captured evidence (the deep tools, Eclipse MAT and VisualVM, are free local installs)"
 
 # The default dumps dir not existing just means nothing was captured yet.
 if [[ ! -e "$TARGET" && "$TARGET" == "$JDEBUG_DUMPS" ]]; then

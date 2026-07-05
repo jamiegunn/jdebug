@@ -2,7 +2,7 @@
 #
 # snapshot.sh — one-shot diagnostic bundle for offline analysis.
 #
-# Everything an offline analysis (Eclipse MAT, VisualVM, fastthread.io) or a
+# Everything an offline analysis (Eclipse MAT, VisualVM — free local tools) or a
 # colleague needs, captured in one command while the incident is live.
 #
 # Collects into <kit>/dumps/snapshot-<ts>/ (override: $OUT_DIR) :
@@ -120,7 +120,7 @@ rm -f "$SNAP/.err"
 echo
 info "snapshot complete: $SNAP  ($PASS captured, $FAIL failed)"
 info "next steps:"
-info "  threads.txt      → fastthread.io or VisualVM (no PII in prod dumps!)"
+info "  threads.txt      → VisualVM (free, runs locally — your dumps never leave your machine)"
 info "  heap.hprof       → Eclipse MAT: ParseHeapDump.sh heap.hprof org.eclipse.mat.api:suspects"
 info "  memory-report.txt→ compare against an earlier snapshot to spot growth"
 [[ $FAIL -eq 0 ]] || exit 1

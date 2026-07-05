@@ -66,6 +66,65 @@ bye() {
     exit 0
 }
 
+# --- readiness gate -----------------------------------------------------------
+# The action menu stays hidden until the target is actually usable, so a
+# capture can never be fired at nothing or at the wrong thing.
+#   remote: cluster answering + a specific pod pinned + the container really
+#           existing in that pod
+#   local:  at least one working route to the JVM (actuator answering, or
+#           jattach staged)
+TARGET_OK="" TARGET_WHY="" TARGET_TS=-999
+target_probe() {
+    (( SECONDS - TARGET_TS < 20 )) && return
+    TARGET_TS=$SECONDS
+    TARGET_OK=""; TARGET_WHY=""
+    cluster_probe
+    if [[ -n "$CLUSTER_OK" ]]; then
+        TARGET_WHY+="   ${GN}✓${OFF} cluster reachable"$'\n'
+    else
+        TARGET_WHY+="   ${RD}✗${OFF} cluster — not reachable (press ${GN}c${OFF} for the full why + fix, or ${GN}t${OFF} to switch context)"$'\n'
+    fi
+    if [[ -z "$POD_PIN" ]]; then
+        TARGET_WHY+="   ${RD}✗${OFF} pod — none selected yet (press ${GN}t${OFF}, then ${GN}p${OFF}, and pick the exact pod)"$'\n'
+        TARGET_WHY+="   ${DIM}·${OFF} container — checked once a pod is selected"$'\n'
+    elif [[ -n "$CLUSTER_OK" ]]; then
+        local conts
+        conts="$(kubectl -n "$NAMESPACE" get pod "$POD_PIN" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' 2>/dev/null)"
+        if [[ -z "$conts" ]]; then
+            TARGET_WHY+="   ${RD}✗${OFF} pod — $POD_PIN no longer exists (press ${GN}t${OFF}, then ${GN}p${OFF}, to re-pick)"$'\n'
+        else
+            TARGET_WHY+="   ${GN}✓${OFF} pod $POD_PIN"$'\n'
+            if printf '%s\n' "$conts" | grep -qx "$APP_CONTAINER"; then
+                TARGET_WHY+="   ${GN}✓${OFF} container $APP_CONTAINER"$'\n'
+            else
+                TARGET_WHY+="   ${RD}✗${OFF} container — '$APP_CONTAINER' is not in that pod (it has: $(printf '%s' "$conts" | tr '\n' ' ')) — press ${GN}t${OFF}, then ${GN}o${OFF}"$'\n'
+            fi
+        fi
+    else
+        TARGET_WHY+="   ${DIM}·${OFF} pod + container — checked once the cluster answers"$'\n'
+    fi
+    [[ "$TARGET_WHY" != *✗* ]] && TARGET_OK=1
+}
+
+LOCAL_OK="" LOCAL_WHY="" LOCAL_TS=-999
+local_probe() {
+    (( SECONDS - LOCAL_TS < 20 )) && return
+    LOCAL_TS=$SECONDS
+    LOCAL_OK=""; LOCAL_WHY=""
+    local act="" jat=""
+    sh "$LOCAL" health >/dev/null 2>&1 && act=1
+    [[ -x "$JATTACH_BIN" ]] && jat=1
+    if [[ -n "$act" ]]; then LOCAL_WHY+="   ${GN}✓${OFF} actuator answering at $ACTUATOR_BASE"$'\n'
+    else LOCAL_WHY+="   ${RD}✗${OFF} actuator — nothing answering at $ACTUATOR_BASE (press ${GN}s${OFF} to fix the URL/port)"$'\n'; fi
+    if [[ -n "$jat" ]]; then LOCAL_WHY+="   ${GN}✓${OFF} jattach staged at $JATTACH_BIN"$'\n'
+    else LOCAL_WHY+="   ${RD}✗${OFF} jattach — not staged (press ${GN}i${OFF} to download it, ~80 KB)"$'\n'; fi
+    if [[ -n "$act" || -n "$jat" ]]; then
+        LOCAL_OK=1
+        [[ -z "$act" ]] && LOCAL_WHY+="   ${DIM}(jattach alone is enough: threads/heap/jcmd work; actuator-only views won't)${OFF}"$'\n'
+        [[ -z "$jat" ]] && LOCAL_WHY+="   ${DIM}(actuator alone is enough to start; jattach adds jcmd/JFR on top)${OFF}"$'\n'
+    fi
+}
+
 # --- colors (respect NO_COLOR / non-tty) -----------------------------------
 if [[ -t 1 && -z "${NO_COLOR:-}" ]]; then
     B=$'\033[1m'; DIM=$'\033[2m'; CY=$'\033[36m'; GN=$'\033[32m'; YL=$'\033[33m'; RD=$'\033[31m'; OFF=$'\033[0m'
@@ -325,7 +384,7 @@ retarget() {
         export NAMESPACE SELECTOR APP_CONTAINER ACTUATOR_BASE
     done
     export NAMESPACE SELECTOR APP_CONTAINER ACTUATOR_BASE
-    CLUSTER_TS=-999   # target changed — re-probe reachability for the header
+    CLUSTER_TS=-999; TARGET_TS=-999   # target changed — re-probe everything
     save_target       # remember these selections for the next session
 }
 
@@ -369,6 +428,7 @@ local_settings() {
     printf '  jattach binary    [%s]: ' "$JATTACH_BIN";   read -r v; [[ -n "$v" ]] && JATTACH_BIN="$v"
     printf '  JVM pid           [%s]: ' "${JVM_PID:-auto}"; read -r v; [[ -n "$v" ]] && export JVM_PID="$v"
     export ACTUATOR_BASE JATTACH_BIN
+    LOCAL_TS=-999   # route may have changed — re-probe
     save_target
 }
 
@@ -378,6 +438,7 @@ local_settings() {
 # tool, it never downloads anything itself. THIS process, though, runs where
 # there usually IS egress (especially bare metal), so the menu can fetch it.
 stage_jattach_local() {
+    LOCAL_TS=-999   # route is about to change — re-probe on the next menu
     if [[ -x "$JATTACH_BIN" ]]; then printf '  jattach already staged at %s\n' "$JATTACH_BIN"; return 0; fi
     local ver="${JATTACH_VERSION:-v2.2}" asset
     case "$(uname -s)-$(uname -m)" in
@@ -454,8 +515,8 @@ wiz_slow() {
     wrun threads
     wiz_say "And the app's own health checks — a DOWN dependency (db/queue/cache) explains stalls:"
     wrun health
-    wiz_say "Next → upload the threads .txt to https://fastthread.io — it flags deadlocks"
-    wiz_say "       and identical stacks automatically. (d in the menu lists your captures)"
+    wiz_say "Next → press a (analyze) — it flags deadlocks, blocked pools, and hot loops —"
+    wiz_say "       then open the .txt in VisualVM (free, local). d lists your captures."
 }
 wiz_cpu() {
     wiz_hd "High CPU / autoscaler scaling up"
@@ -496,8 +557,8 @@ wiz_all() {
     wiz_say "One bundle with threads + health + memory + JVM internals, so you (or a"
     wiz_say "colleague) can analyze offline without touching production again."
     if confirm "include a HEAP DUMP in the bundle? (⚠ pauses the app)"; then wrun snapshot --heap --confirm; else wrun snapshot; fi
-    wiz_say "Next → in the bundle: memory-report/memory.txt first, threads.txt → fastthread.io,"
-    wiz_say "       heap.hprof → Eclipse MAT. (d in the menu lists your captures)"
+    wiz_say "Next → press a (analyze) for a first pass over the whole bundle; then"
+    wiz_say "       threads.txt → VisualVM · heap.hprof → Eclipse MAT (both free, local)."
 }
 wizard() {
     while true; do
@@ -526,6 +587,16 @@ wizard() {
 # --- menus ------------------------------------------------------------------
 menu_remote() {
     header_remote
+    target_probe
+    if [[ -z "$TARGET_OK" ]]; then
+        printf '\n  %s⚠ SET UP YOUR TARGET FIRST%s — the tools appear when every line below is %s✓%s:\n\n' "$YL" "$OFF" "$GN" "$OFF"
+        printf '%s' "$TARGET_WHY"
+        printf '\n  %sPress%s %st%s %sto open the target editor%s %s(Enter works too)%s — it lists your clusters,\n' "$B" "$OFF" "$GN" "$OFF" "$B" "$OFF" "$DIM" "$OFF"
+        printf '  namespaces, pods, and containers so you pick instead of type.\n'
+        printf '\n  %sMORE%s  %sh%s help/glossary · %sc%s check setup · %sm%s mode · %sq%s quit\n' "$B" "$OFF" "$GN" "$OFF" "$GN" "$OFF" "$GN" "$OFF" "$GN" "$OFF"
+        printf '\n  %s> %s' "$B" "$OFF"
+        return
+    fi
     cat <<EOF
   ${B}${CY}▶ w${OFF}  ${B}GUIDED DIAGNOSIS${OFF} ${DIM}— describe the symptom, it runs the right captures.${OFF} ${B}Start here.${OFF}
 
@@ -552,6 +623,14 @@ EOF
 }
 menu_local() {
     header_local
+    local_probe
+    if [[ -z "$LOCAL_OK" ]]; then
+        printf '\n  %s⚠ SET UP A ROUTE TO THE JVM FIRST%s — the tools appear when at least one line is %s✓%s:\n\n' "$YL" "$OFF" "$GN" "$OFF"
+        printf '%s' "$LOCAL_WHY"
+        printf '\n  %sMORE%s  %ss%s settings (actuator URL / pid) · %si%s stage jattach · %sh%s help · %sm%s mode · %sq%s quit\n' "$B" "$OFF" "$GN" "$OFF" "$GN" "$OFF" "$GN" "$OFF" "$GN" "$OFF" "$GN" "$OFF"
+        printf '\n  %s> %s' "$B" "$OFF"
+        return
+    fi
     cat <<EOF
   ${B}${CY}▶ w${OFF}  ${B}GUIDED DIAGNOSIS${OFF} ${DIM}— describe the symptom, it runs the right captures.${OFF} ${B}Start here.${OFF}
 
@@ -573,6 +652,18 @@ EOF
 }
 
 dispatch_remote() {
+    # Not ready → only setup/help keys work; everything else explains why.
+    if [[ -z "$TARGET_OK" ]]; then
+        case "$1" in
+            ""|t|T) retarget ;;
+            h|H)    show_help ;;
+            c|C)    run "$DBG" doctor ;;
+            m|M)    choose_mode ;;
+            q|Q)    confirm "quit jdebug?" && bye; return 1 ;;
+            *)      printf '  %sfinish the target setup first — press t. The tools unlock when every check is ✓.%s\n' "$YL" "$OFF"; return 1 ;;
+        esac
+        return 0
+    fi
     case "$1" in
         w|W) wizard ;;
         1)  run "$DBG" status ;;
@@ -603,6 +694,18 @@ dispatch_remote() {
     return 0   # a FAILED action must still pause so its error stays readable
 }
 dispatch_local() {
+    # Not ready → only setup/help keys work; everything else explains why.
+    if [[ -z "$LOCAL_OK" ]]; then
+        case "$1" in
+            ""|s|S) local_settings ;;
+            i|I)    run stage_jattach_local ;;
+            h|H)    show_help ;;
+            m|M)    choose_mode ;;
+            q|Q)    confirm "quit jdebug?" && bye; return 1 ;;
+            *)      printf '  %sset up a route to the JVM first — press s (actuator URL) or i (stage jattach).%s\n' "$YL" "$OFF"; return 1 ;;
+        esac
+        return 0
+    fi
     case "$1" in
         w|W) wizard ;;
         1)  run sh "$LOCAL" health ;;
@@ -641,5 +744,5 @@ fi
 while true; do
     if [[ "$MODE" == 1 ]]; then menu_remote; read -rn1 choice || bye; printf '\n'; dispatch_remote "$choice" || continue
     else menu_local; read -rn1 choice || bye; printf '\n'; dispatch_local "$choice" || continue; fi
-    [[ "$choice" =~ ^[tTmMsSwW]$ ]] || pause
+    [[ "$choice" =~ ^[tTmMsSwW]$ || -z "$choice" ]] || pause
 done

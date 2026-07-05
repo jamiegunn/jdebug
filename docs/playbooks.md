@@ -34,12 +34,13 @@ jdebug threads     # safe, instant
 jdebug health
 ```
 
-Upload the thread dump to [fastthread.io](https://fastthread.io) — it flags
-deadlocks, blocked pools, and identical stacks automatically. Things to look
-for by hand: many threads `BLOCKED`/`WAITING` on the same lock or connection
-pool (database pool exhaustion looks like dozens of threads waiting in
-`getConnection`), and any `DOWN` component in health — a failing dependency
-makes the app look sick when it's actually the victim.
+Run `jdebug analyze` — it flags deadlocks, blocked threads, the most-contended
+locks, and hot frames automatically — then open the dump in
+[VisualVM](https://visualvm.github.io/) (free, runs locally; dumps never leave
+your machine). Things to look for by hand: many threads `BLOCKED`/`WAITING` on
+the same lock or connection pool (database pool exhaustion looks like dozens
+of threads waiting in `getConnection`), and any `DOWN` component in health —
+a failing dependency makes the app look sick when it's actually the victim.
 
 ## High CPU / autoscaler adding pods
 
@@ -90,10 +91,14 @@ analyze offline — production is touched once.
 
 ## Reading the analyzers
 
-| evidence | tool | first click |
+All recommended tools are free and run locally — evidence never has to leave
+your machine:
+
+| evidence | tool (local install) | first click |
 |---|---|---|
-| `threads/*.txt` | [fastthread.io](https://fastthread.io) or VisualVM | the deadlock / identical-stacks report |
+| anything captured | `jdebug analyze` (built in) | the ⚠ findings |
+| `threads/*.txt` | [VisualVM](https://visualvm.github.io/) | File → Load, check the thread states |
 | `heap/*.hprof` | [Eclipse MAT](https://eclipse.dev/mat/) | *Leak Suspects* report |
 | `heap/*.hprof` (two) | Eclipse MAT | *compare to another heap dump* |
-| `*.jfr` | JDK Mission Control | Method Profiling flame view |
+| `*.jfr` | [JDK Mission Control](https://openjdk.org/projects/jmc/) | Method Profiling flame view |
 | `snapshot-*/` | a text editor | `memory-report.txt`, then `threads.txt` |

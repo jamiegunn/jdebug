@@ -103,4 +103,4 @@ if [[ $captured -ne 1 ]] || ! grep -q "Full thread dump" "$LOCAL_PATH" 2>/dev/nu
     exit 1
 fi
 info "wrote $LOCAL_PATH ($(wc -l <"$LOCAL_PATH" | tr -d ' ') lines)"
-info "analyze: upload it to https://fastthread.io (flags deadlocks, blocked pools, hot loops) or open in VisualVM"
+info "analyze: open it in VisualVM (free, runs locally — visualvm.github.io) and look for deadlocks & blocked pools"

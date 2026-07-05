@@ -11,8 +11,8 @@
 #   ./actuator.sh threads [--json] [-n ns] [-l selector] [--container name] [pod]
 #   ./actuator.sh heap --confirm [-n ns] [-l selector] [--container name] [pod]
 #
-# threads  text/plain by default (jstack-style — drop into fastthread.io /
-#          VisualVM unchanged); --json for Spring's structured format.
+# threads  text/plain by default (jstack-style — opens in VisualVM
+#          unchanged); --json for Spring's structured format.
 # heap     downloads an hprof from /actuator/heapdump. DESTRUCTIVE IN
 #          PRODUCTION: the JVM freezes for the duration of the dump
 #          (seconds on small heaps, minutes on multi-GB). Requires --confirm.
@@ -94,7 +94,7 @@ case "$ACTION" in
             exit 1
         fi
         info "wrote $LOCAL_PATH ($(wc -l <"$LOCAL_PATH" | tr -d ' ') lines)"
-        info "analyze: upload it to https://fastthread.io (flags deadlocks, blocked pools, hot loops) or open in VisualVM"
+        info "analyze: open it in VisualVM (free, runs locally — visualvm.github.io) and look for deadlocks & blocked pools"
         ;;
     heap)
         OUT_DIR="${OUT_DIR:-$JDEBUG_DUMPS/heap}"

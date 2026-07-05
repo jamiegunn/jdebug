@@ -110,7 +110,7 @@ cmd_health() {
 
 cmd_threads() {
     need_http
-    # jstack-format (text/plain) to stdout — redirect to a file, or feed fastthread.io
+    # jstack-format (text/plain) to stdout — redirect to a file for VisualVM
     if HTTP_ACCEPT=text/plain http_get "$ACTUATOR_BASE/threaddump"; then return 0; fi
     err "⚠ actuator threaddump unreachable at $ACTUATOR_BASE — auto-falling back to jattach…"
     if [ -x "$JATTACH_BIN" ]; then p=$(jvm_pid) || exit 3; "$JATTACH_BIN" "$p" jcmd "Thread.print -l"
@@ -209,7 +209,7 @@ cmd_snapshot() {
         echo "bundle dir: $dir"
         out_hint "$dir"
     fi
-    echo "inside: start with memory.txt and threads.txt (threads -> https://fastthread.io)"
+    echo "inside: start with memory.txt and threads.txt (threads -> VisualVM, locally)"
 }
 
 cmd_dumps() {
@@ -231,7 +231,7 @@ cmd_dumps() {
         echo "  terminal — save it with:  jdebug-local threads > $OUT_DIR/threads.txt"
     else
         echo
-        echo "analyze: *.hprof -> Eclipse MAT ('Leak Suspects') · threads *.txt -> https://fastthread.io"
+        echo "analyze: *.hprof -> Eclipse MAT ('Leak Suspects') · threads *.txt -> VisualVM — both free, local"
     fi
 }
 
@@ -276,7 +276,7 @@ ENVIRONMENT
 
 EXAMPLES
   jdebug-local health
-  jdebug-local threads > /tmp/threads.txt        # then analyze with fastthread.io
+  jdebug-local threads > /tmp/threads.txt        # then open in VisualVM (locally)
   jdebug-local memory                            # heap<limit but OOMKilled? start here
   jdebug-local jcmd "VM.native_memory summary"   # needs NMT + jattach
   jdebug-local snapshot --heap                   # everything, zipped, in /tmp
@@ -296,7 +296,7 @@ EOF
 jdebug-local threads — thread dump (jstack format)
 
   GET $ACTUATOR_BASE/threaddump with Accept: text/plain, so the output is exactly
-  what jstack would produce — drop it into MAT/VisualVM or fastthread.io. Prints
+  what jstack would produce — opens in VisualVM (free, local). Prints
   to stdout; redirect to a file: jdebug-local threads > /tmp/threads.txt.
   Cheap and safe (no pause). Good for deadlocks, blocked pools, hot stacks.
 EOF

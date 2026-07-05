@@ -129,7 +129,7 @@ echo s > "$TMP/dumps/snapshot-20260704T000000Z/health.json"
 run_case ./jdebug dumps
 assert_has "lists thread capture" "threads/pod-a-thread.txt"
 assert_has "lists snapshot dir as one entry" "snapshot-20260704T000000Z"
-assert_has "explains fastthread for threads" "fastthread.io"
+assert_has "explains VisualVM (local) for threads" "VisualVM"
 assert_has "explains MAT for heap" "Leak Suspects"
 assert_has "PII warning present" "real user data"
 rm -rf "$TMP/dumps"
@@ -166,7 +166,8 @@ assert_rc  "analyze exits 0" 0
 assert_has "threads: state histogram" "4 threads — 1 RUNNABLE · 2 BLOCKED · 1 WAITING"
 assert_has "threads: deadlock flagged" "DEADLOCK detected"
 assert_has "threads: contention + the lock" "waiting to lock <0x12345>"
-assert_has "threads: names the deep tool" "fastthread.io"
+assert_has "threads: names a LOCAL deep tool" "VisualVM"
+assert_not "no cloud analyzers recommended" "fastthread"
 assert_has "health: DOWN component named" "failing component(s): db"
 assert_has "hprof: valid one sanity-checked" "valid hprof"
 assert_has "hprof: invalid one flagged" "NOT a valid hprof"
@@ -292,6 +293,25 @@ assert_has "resolve_one_pod flags the sick-pod trap" "restarting one"
 
 # --- TUI (single-keypress navigation: keys act instantly, no Enter) -----------------
 section "TUI"
+
+# readiness gate: with no pod pinned the tools stay hidden and the panel guides
+run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "gate: setup panel when no pod pinned" "SET UP YOUR TARGET FIRST"
+assert_not "gate: action menu hidden until ready" "GUIDED DIAGNOSIS"
+run_input '5qy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "gate: blocked action explains what to do" "finish the target setup first"
+MOCK_PODS=multi run_input 'tp2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "gate: unlocks once a pod is pinned" "GUIDED DIAGNOSIS"
+
+# a ready target for the rest of the TUI tests (pod pinned, container valid)
+mkdir -p "$TMP/config"; cat > "$TMP/config/target" <<'EOF'
+SAVED_NAMESPACE=default
+SAVED_SELECTOR=''
+SAVED_CONTAINER=app
+SAVED_ACTUATOR=http://localhost:8080/actuator
+SAVED_POD=pod-a
+EOF
+
 run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_rc  "remote menu: q + confirm quits cleanly" 0
 assert_has "quit asks for confirmation" "quit jdebug?"
@@ -311,8 +331,9 @@ MOCK_KUBECTL=x509 run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "remote header: unreachable flagged" "can't connect"
 
 # THE regression test: a FAILED command must pause with its error still visible.
-MOCK_KUBECTL=x509 run_input '1\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "failed action: error shown" "TLS certificate isn't trusted"
+# (cluster down → gated, so the allowed 'c' doctor is the failing action here)
+MOCK_KUBECTL=x509 run_input 'c\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "failed action: error shown" "cluster unreachable"
 assert_has "failed action: marked failed" "that didn't work"
 assert_has "failed action: pauses (error not wiped)" "any key for the menu"
 
@@ -336,6 +357,10 @@ assert_rc  "bare Enter does NOT quit (q still needed)" 0
 run_input 'qy' env JDEBUG_MODE=2 ./ui/tui.sh
 assert_has "local menu: wizard available" "GUIDED DIAGNOSIS"
 assert_has "local menu: stage jattach present" "stage jattach"
+
+JATTACH_BIN="$TMP/nope" MOCK_HTTP=fail run_input 'qy' env JDEBUG_MODE=2 ./ui/tui.sh
+assert_has "local gate: route panel when no actuator + no jattach" "SET UP A ROUTE TO THE JVM"
+assert_not "local gate: tools hidden until a route exists" "GUIDED DIAGNOSIS"
 
 run_input 'wbqy' env JDEBUG_MODE=2 ./ui/tui.sh
 assert_has "local wizard: mode-aware target" "this machine (localhost)"

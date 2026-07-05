@@ -8,6 +8,25 @@ nav_order: 14
 Ideas that fit the tool's principles — explain everything, safe by default,
 evidence you can't lose. Roughly ordered by leverage; none are promises.
 
+## Recently shipped
+
+- **Readiness gate** — the menu hides its tools until the cluster answers and
+  a real pod + container are selected (per mode), with a ✓/✗ checklist
+- **`jdebug analyze`** — built-in first-pass triage of every capture type
+- **`jdebug doctor`** — pre-incident checkup of host, cluster, target, actuator
+- **Remembered target** — selections persist between sessions
+  (`~/.config/jdebug/target`), with stale-pod detection
+- **Single-keypress TUI** — instant keys, in-place target editor, live
+  dropdowns (contexts, namespaces, selectors from real pod labels, containers
+  from the pod spec, pods with restart counts), RBAC-safe typed fallback
+- **Session transcript** — every command + output saved under `dumps/`
+- **Robust JVM discovery** — `libjvm` map scan catches custom launchers
+  (jwebserver, jlink images), not just processes named `java`
+- **Local-only analysis stance** — every recommended tool (VisualVM, Eclipse
+  MAT, JDK Mission Control) is a free local install; dumps never leave your
+  machine
+- **Self-tests from the UI** — `u` on the first screen runs the mocked suite
+
 ## Hardening
 
 - **Checksum-pinned jattach** — verify SHA-256 per version/arch before
@@ -57,7 +76,8 @@ evidence you can't lose. Roughly ordered by leverage; none are promises.
 
 ## Ease of use
 
-- **Profiles** — `~/.config/jdebug/profiles/payments.conf` capturing
+- **Profiles** — the remembered target (shipped) covers one app; profiles
+  generalize it: `~/.config/jdebug/profiles/payments.conf` capturing
   namespace/selector/actuator/context; `jdebug -p payments memory`; the menu
   lists profiles on the target screen.
 - **Shell completions** for bash/zsh (commands, flags, jcmd strings,

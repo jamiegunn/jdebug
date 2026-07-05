@@ -28,10 +28,13 @@ The first question is **where the JVM is**:
 2. **In-pod** — you already have a shell inside the container
 3. **Bare metal** — the JVM runs on this very machine
 
-## 3. Point it at your app
+## 3. Point it at your app — the menu insists
 
-Press `t` for the target editor — each field is one keypress, and everything
-the cluster can enumerate is a live dropdown:
+You can't fire a capture at the wrong thing: the tools stay hidden behind a
+✓/✗ checklist until the cluster answers **and** you've picked a specific pod
+and container. The panel tells you exactly which key fixes each ✗; Enter (or
+`t`) opens the target editor — each field is one keypress, and everything the
+cluster can enumerate is a live dropdown:
 
 - **c context** — your kube contexts (switching is confirmed first)
 - **n namespace** — listed from the cluster
@@ -61,11 +64,14 @@ tool to open next. Anything that could hurt the app asks first.
 
 ## 6. Find your evidence
 
-Press `d` (or run `jdebug dumps`). Every capture is listed newest-first with
-instructions per file type — thread dumps go to [fastthread.io](https://fastthread.io),
-heap dumps to Eclipse MAT's *Leak Suspects*. Your whole session (every command
-and its output) is also transcribed to `dumps/session-<timestamp>.log`, so
-nothing you saw on screen is ever lost.
+Press `d` (or run `jdebug dumps`) to list every capture newest-first with
+instructions per file type, and `a` (`jdebug analyze`) for a built-in
+first-pass triage — deadlocks, blocked pools, DOWN components, OOM risk.
+For deeper digs the recommended tools are free **local installs** —
+[VisualVM](https://visualvm.github.io/) for thread dumps, Eclipse MAT for
+heap dumps — so evidence never leaves your machine. Your whole session (every
+command and its output) is also transcribed to `dumps/session-<timestamp>.log`,
+so nothing you saw on screen is ever lost.
 
 ## The three keys to remember
 

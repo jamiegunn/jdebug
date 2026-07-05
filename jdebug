@@ -232,8 +232,8 @@ case "$cmd" in
         cat <<'HINTS'
 
   These files are already on YOUR machine. How to analyze each kind:
-    threads/*.txt     upload to https://fastthread.io — flags deadlocks, blocked pools,
-                      hot loops automatically (VisualVM opens them too)
+    threads/*.txt     open in VisualVM (free, local — visualvm.github.io);
+                      'jdebug analyze' flags deadlocks, blocked pools, hot loops
     heap/*.hprof      Eclipse MAT → File → Open Heap Dump → run "Leak Suspects"
     snapshot-*/       start with memory-report.txt and threads.txt; the jcmd-*.txt
                       files hold GC + native-memory detail

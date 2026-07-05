@@ -39,9 +39,9 @@ A heap dump is **everything the app had in memory** — which can include user
 records, session tokens, credentials in flight. Expectations:
 
 - keep dumps on machines with the same access controls as production data
-- upload thread dumps to third-party analyzers only if their content
-  (thread names, stack frames) is acceptable to share; heap dumps: analyze
-  locally with MAT/VisualVM, do not upload
+- analyze **locally only** — every tool jdebug recommends (its own `analyze`,
+  VisualVM, Eclipse MAT, JDK Mission Control) is a free local install; never
+  upload dumps to web-based analyzers
 - delete dumps when the investigation closes
 - the session log records command *output* — the same considerations apply
 

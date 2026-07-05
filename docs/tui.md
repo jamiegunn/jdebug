@@ -26,6 +26,24 @@ Navigation is single-keypress — no Enter. The only deliberate inputs are
 ask y/N) and **free-text fields** (a namespace nobody enumerated, a custom
 actuator URL). After a command's output, any key returns to the menu.
 
+## The tools stay hidden until the target is ready
+
+A capture can never be fired at nothing or at the wrong thing: the action
+menu only appears once the target is verified —
+
+- **remote:** cluster answering **and** a specific pod pinned **and** the
+  container actually present in that pod's spec
+- **in-pod / bare metal:** at least one working route to the JVM (actuator
+  answering, or jattach staged)
+
+Until then the menu shows a checklist panel with ✓/✗ per requirement and the
+exact key to press for each missing piece (Enter opens the target editor
+directly). Readiness is re-checked live — if the pinned pod dies mid-session,
+the tools lock again with an explanation instead of failing captures.
+
+The mode chooser (first screen) also offers `u` — run the kit's own test
+suite (~10 s, mocked, touches nothing of yours) to prove the install works.
+
 ## The header tells you everything
 
 Mode, kube context **with a live ✓/✗ reachability indicator**, namespace,
