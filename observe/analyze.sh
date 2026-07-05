@@ -182,8 +182,7 @@ elif [[ -d "$TARGET" ]]; then
     else
         while IFS= read -r d; do
             [[ -n "$d" ]] && analyze_session "$d"
-        done < <(find "$TARGET" -type f ! -name '.*' 2>/dev/null \
-                     -exec dirname {} \; | sort -ru)
+        done < <(find "$TARGET" -type f ! -name '.*' -exec dirname {} \; 2>/dev/null | sort -ru)
     fi
 else
     err "no such file or directory: $TARGET"

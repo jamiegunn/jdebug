@@ -147,6 +147,24 @@ ensure_dir() {
     mkdir -p "$1" || { err "cannot create directory: $1"; exit 1; }
 }
 
+# owning_deployment <pod> — the Deployment that ultimately owns a pod
+# (pod → ReplicaSet → strip the -<hash> suffix). Empty if the pod is
+# standalone or owned by something else (StatefulSet/DaemonSet/Job). Needs
+# python3 for the JSON walk. Prints nothing + returns 1 when it can't tell.
+owning_deployment() {
+    local pod="$1" js rs
+    js="$(kubectl -n "$NAMESPACE" get pod "$pod" -o json 2>/dev/null)" || return 1
+    rs="$(printf '%s' "$js" | python3 -c 'import json,sys
+for o in json.load(sys.stdin).get("metadata",{}).get("ownerReferences",[]) or []:
+    if o.get("kind")=="ReplicaSet": print(o["name"]); break' 2>/dev/null)" || return 1
+    [ -n "$rs" ] || return 1
+    # the ReplicaSet name is <deployment>-<pod-template-hash>; confirm the
+    # Deployment actually exists before returning it
+    local dep="${rs%-*}"
+    kubectl -n "$NAMESPACE" get deployment "$dep" >/dev/null 2>&1 && { printf '%s' "$dep"; return 0; }
+    return 1
+}
+
 # session_dir <pod> <ts> — the organized directory a capture writes into:
 # dumps/pods/<pod>/<ts>/ , so evidence groups by pod → session and the TUI
 # browser can navigate it (pod → date → file). A single capture drops one

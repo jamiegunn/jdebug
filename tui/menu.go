@@ -187,6 +187,8 @@ var remoteActions = struct {
 		{"j", "jcmd", "raw JVM commands — GC, profiling, native memory", "caution", ""},
 		{"v", "verbosity", "change log level live, no restart", "caution", ""},
 		{"T", "terminal", "a shell inside the pod — exit returns here", "caution", ""},
+		{"R", "re-roll", "rolling-restart the deployment — cycles every pod", "disruptive", "restarts app"},
+		{"K", "kill pod", "delete this pod (a managed one respawns)", "disruptive", "drops the pod"},
 	},
 }
 
@@ -389,6 +391,12 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.podTerminal()
+	case "R": // re-roll: shifted, disruptive — confirm with a second R
+		return m.askConfirm("re-roll the deployment? this rolling-restarts EVERY pod (in-flight requests + in-memory state on each are lost) — press R again to confirm, any other key cancels", "R",
+			func(mm *model) tea.Cmd { return mm.quickTo(true, "restart", "--confirm") })
+	case "K": // kill pod: shifted, disruptive — confirm with a second K
+		return m.askConfirm("delete this pod? a managed pod respawns under a new name; an unmanaged one is gone — press K again to confirm, any other key cancels", "K",
+			func(mm *model) tea.Cmd { return mm.quickTo(true, "kill", "--confirm") })
 	case "f", "F":
 		if m.showLogPane() {
 			m.logs.focus = true

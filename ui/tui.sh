@@ -835,6 +835,8 @@ menu_remote() {
     mrow j jcmd      "raw JVM commands — GC, profiling, native memory" caution
     mrow v verbosity "change log level live, no restart"              caution
     mrow T terminal  "a shell inside the pod — exit returns here"     caution
+    mrow R re-roll   "rolling-restart the deployment — cycles every pod" disruptive "restarts app"
+    mrow K "kill pod" "delete this pod (a managed one respawns)"       disruptive "drops the pod"
     printf '\n'
     menu_footer "[a] analyze  [c] check setup  [?] help  [q] quit"
     mprompt
@@ -909,6 +911,10 @@ dispatch_remote() {
                  run "$DBG" status
              fi ;;
         j|J) ask_jcmd; [[ -n "$JCMD_PICK" ]] && run "$DBG" jcmd "$JCMD_PICK" ${POD_PIN:+"$POD_PIN"} ;;
+        R)   confirm_disruptive R "re-roll rolling-restarts EVERY pod (in-flight requests + in-memory state lost)" || return 1
+             run "$DBG" restart --confirm ${POD_PIN:+"$POD_PIN"} ;;
+        K)   confirm_disruptive K "deleting this pod drops its in-flight requests (a managed pod respawns, an unmanaged one is gone)" || return 1
+             run "$DBG" kill --confirm ${POD_PIN:+"$POD_PIN"} ;;
         H)   confirm_disruptive H "heap dump pauses the app while it runs" || return 1
              if ask_via; then run "$DBG" heap $VIA_FLAG --confirm ${POD_PIN:+"$POD_PIN"}; fi ;;
         x|X) if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run "$DBG" snapshot --heap --confirm ${POD_PIN:+"$POD_PIN"}; else run "$DBG" snapshot ${POD_PIN:+"$POD_PIN"}; fi ;;

@@ -915,6 +915,44 @@ func TestChooserStrayKeysDontPickAMode(t *testing.T) {
 	}
 }
 
+func TestReRollNeedsSecondPress(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 200, 50
+	out := press(t, m, "R")
+	mm := out.(model)
+	if mm.scr != scConfirm || !strings.Contains(mm.confirmMsg, "R again") {
+		t.Fatalf("R must ask for a second R, got %q on %v", mm.confirmMsg, mm.scr)
+	}
+	if !strings.Contains(mm.confirmMsg, "rolling-restarts") {
+		t.Fatal("the re-roll confirm must spell out the risk")
+	}
+	// a non-R key cancels
+	if got := press(t, mm, "z").(model); got.scr != scMenu || got.out.running {
+		t.Fatal("a non-R key must cancel the re-roll")
+	}
+	// second R runs the guarded restart
+	res, cmd := mm.Update(key("R"))
+	rm := res.(model)
+	if cmd == nil || !rm.out.running || !strings.Contains(rm.out.title, "restart --confirm") {
+		t.Fatalf("R,R must run the confirmed re-roll, got title %q", rm.out.title)
+	}
+}
+
+func TestKillNeedsSecondPress(t *testing.T) {
+	m := readyModel()
+	m.width, m.height = 200, 50
+	out := press(t, m, "K")
+	mm := out.(model)
+	if mm.scr != scConfirm || !strings.Contains(mm.confirmMsg, "K again") {
+		t.Fatalf("K must ask for a second K, got %q on %v", mm.confirmMsg, mm.scr)
+	}
+	res, cmd := mm.Update(key("K"))
+	km := res.(model)
+	if cmd == nil || !km.out.running || !strings.Contains(km.out.title, "kill --confirm") {
+		t.Fatalf("K,K must run the confirmed kill, got title %q", km.out.title)
+	}
+}
+
 func TestVerbosityFlow(t *testing.T) {
 	out := press(t, readyModel(), "v")
 	mm := out.(model)

@@ -223,6 +223,27 @@ rm -rf "$AD"
 run_case ./jdebug analyze
 assert_has "empty: says capture first" "nothing to analyze"
 
+# --- lifecycle: state-changing actions, gated hard -------------------------------
+section "lifecycle (re-roll / kill)"
+run_case ./jdebug restart pod-a
+assert_rc  "restart w/o --confirm exits 64" 64
+assert_has "restart explains what happens" "rolling restart"
+assert_has "restart explains the downtime risk" "NO downtime"
+run_case ./jdebug restart pod-a --confirm
+assert_has "restart --confirm re-rolls" "successfully rolled out"
+assert_has "restart names the next move" "Next:"
+
+run_case ./jdebug kill pod-a
+assert_rc  "kill w/o --confirm exits 64" 64
+assert_has "kill explains graceful termination (SIGTERM)" "SIGTERM"
+assert_has "kill notes the managed respawn" "REPLACEMENT starts automatically"
+run_case ./jdebug kill pod-a --confirm
+assert_has "kill deletes the pod" "deleted"
+
+MOCK_RBAC=forbidden run_case ./jdebug restart pod-a --confirm
+assert_rc  "restart under RBAC denial exits 1" 1
+assert_has "restart RBAC denial explained, not masked" "your RBAC doesn't allow"
+
 # --- destructive-action gates ---------------------------------------------------
 section "confirm gates (heap pauses the JVM)"
 run_case ./capture/actuator.sh heap

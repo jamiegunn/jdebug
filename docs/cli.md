@@ -39,6 +39,8 @@ announcing each fallback. Force one tier with `--via actuator|jattach|jdk`.
 | command | does | risk |
 |---|---|---|
 | `jdebug log-level <logger> <LEVEL>` | change a logger live on **every** replica | adds log volume; warns on `ROOT` + `DEBUG/TRACE`; not persistent across restarts; lowercase levels accepted |
+| `jdebug restart [pod] --confirm` | **re-roll** the owning Deployment (`kubectl rollout restart`), then watch it | rolling restart of every pod — explains the downtime/state risk; refuses without `--confirm`; RBAC/ownership failures explained |
+| `jdebug kill [pod] --confirm` | **delete** a pod (`kubectl delete pod`) | graceful SIGTERM → grace → SIGKILL; managed pods respawn, unmanaged ones don't (it says which); refuses without `--confirm` |
 
 ## Setup & evidence
 

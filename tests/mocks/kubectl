@@ -81,6 +81,12 @@ case "$*" in
         echo 'No resources found.' ;;
     *" exec "*)
         printf '%s\n' "${MOCK_EXEC_OUT:-ok}" ;;
+    *"rollout restart"*)
+        echo 'deployment.apps/app restarted' ;;
+    *"rollout status"*)
+        echo 'deployment "app" successfully rolled out' ;;
+    *"delete pod"*)
+        echo 'pod "pod-a" deleted' ;;
     *" cp "*)
         exit 0 ;;
     *"logs"*"--previous"*)

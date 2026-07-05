@@ -18,6 +18,8 @@
 #                   metrics jvm.gc.pause — run twice to see a trend
 #     why           pod deep-dive: limits, probes, exit codes, HPA (why.sh)
 #     security      pod security posture, in plain language (security.sh)
+#     restart       re-roll the owning deployment (needs --confirm)
+#     kill          delete a pod; managed pods respawn (needs --confirm)
 #     logs          stream logs from all replicas         (tail-logs.sh)
 #                   logs --previous [pod]: the crashed container's last lines
 #     log-level     runtime logger change: log-level <logger> <LEVEL>
@@ -253,6 +255,8 @@ case "$cmd" in
     jcmd)            fwd "$D/capture/jattach.sh" jcmd ;;
     why)             fwd "$D/observe/why.sh" ;;
     security)        fwd "$D/observe/security.sh" ;;
+    restart)         fwd "$D/observe/lifecycle.sh" restart ;;
+    kill)            fwd "$D/observe/lifecycle.sh" kill ;;
     memory)          fwd "$D/observe/memory-report.sh" ;;
     snapshot)        fwd "$D/observe/snapshot.sh" ;;
 
