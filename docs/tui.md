@@ -22,13 +22,14 @@ config, and session-log behavior:
   and a **NEXT box** of concrete key-press suggestions in the middle,
   **EVENTS and CAPTURES** on the right, and a **live log tail** filling the
   bottom (5 s refresh, errors red, `f` expands it full-screen with
-  scrollback). Quick reads (status, memory, threads, analyze, …) render in
-  an **in-app scrollable pane**; long-lived or disruptive commands (log
-  stream, heap dump, snapshot, wizard) still drop to your normal screen with
-  a ✓/✗ verdict and an any-key pause, so their output stays in scrollback.
-  Both paths tee to the session log. On smaller terminals it degrades
-  gracefully to the classic menu+panel layout. Every action shells out to
-  the same tested bash CLI.
+  scrollback). Commands **stream live into that bottom pane**, replacing
+  the log tail while they run — the menu stays interactive, `esc`
+  stops/dismisses, ↑↓ scrolls, and the pane title carries the ✓/✗ verdict.
+  No raw bash taking over your terminal (only the guided wizard still steps
+  out, for its narrated pauses). Every run appends the same transcript
+  block to the session log. On smaller terminals it degrades gracefully to
+  the classic menu+panel layout with a full-screen output view. Every
+  action shells out to the same tested bash CLI.
 - **bash (classic)** — the zero-dependency fallback; always available.
   Force it with `JDEBUG_CLASSIC=1`.
 
