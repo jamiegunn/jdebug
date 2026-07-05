@@ -84,18 +84,33 @@ run() {
 }
 
 choose_mode() {
-    maybe_clear
-    box "jdebug - where is the JVM you want to debug?"
-    printf '\n'
-    printf '   %s1%s  %sRemote%s      operator machine → %skubectl exec%s into a pod  %s(needs kubectl + a context)%s\n' "$GN" "$OFF" "$B" "$OFF" "$CY" "$OFF" "$DIM" "$OFF"
-    printf '   %s2%s  %sIn-pod%s      a shell INSIDE the pod, no kubectl        %s(JRE-only image is fine)%s\n' "$GN" "$OFF" "$B" "$OFF" "$DIM" "$OFF"
-    printf '   %s3%s  %sBare metal%s  a JVM on THIS host, no Kubernetes at all\n' "$GN" "$OFF" "$B" "$OFF"
-    printf '\n  %sNot sure? If you normally type kubectl to reach the app, pick 1.%s\n' "$B" "$OFF"
-    printf '  %sModes 2 & 3 talk to localhost actuator + a local jattach + /proc (via jdebug-local).%s\n' "$DIM" "$OFF"
-    printf '  %sNote: this menu needs bash. A stock JRE/busybox pod has none — for those, run the%s\n' "$YL" "$OFF"
-    printf '  %ssingle-file  jdebug-local  CLI in the pod instead:  sh /tmp/jdebug-local help%s\n' "$YL" "$OFF"
-    printf '\n  %s> %s' "$B" "$OFF"; local m; read -rn1 m || bye; printf '\n'
-    case "$m" in 1|2|3) MODE="$m" ;; q|Q) bye ;; *) MODE=1 ;; esac
+    local m
+    while true; do
+        maybe_clear
+        box "jdebug - where is the JVM you want to debug?"
+        printf '\n'
+        printf '   %s1%s  %sRemote%s      operator machine → %skubectl exec%s into a pod  %s(needs kubectl + a context)%s\n' "$GN" "$OFF" "$B" "$OFF" "$CY" "$OFF" "$DIM" "$OFF"
+        printf '   %s2%s  %sIn-pod%s      a shell INSIDE the pod, no kubectl        %s(JRE-only image is fine)%s\n' "$GN" "$OFF" "$B" "$OFF" "$DIM" "$OFF"
+        printf '   %s3%s  %sBare metal%s  a JVM on THIS host, no Kubernetes at all\n' "$GN" "$OFF" "$B" "$OFF"
+        printf '   %su%s  %sself-test%s   run the kit'\''s own test suite %s(~10s, touches nothing of yours)%s\n' "$GN" "$OFF" "$B" "$OFF" "$DIM" "$OFF"
+        printf '\n  %sNot sure? If you normally type kubectl to reach the app, pick 1.%s\n' "$B" "$OFF"
+        printf '  %sModes 2 & 3 talk to localhost actuator + a local jattach + /proc (via jdebug-local).%s\n' "$DIM" "$OFF"
+        printf '  %sNote: this menu needs bash. A stock JRE/busybox pod has none — for those, run the%s\n' "$YL" "$OFF"
+        printf '  %ssingle-file  jdebug-local  CLI in the pod instead:  sh /tmp/jdebug-local help%s\n' "$YL" "$OFF"
+        printf '\n  %s> %s' "$B" "$OFF"; read -rn1 m || bye; printf '\n'
+        case "$m" in
+            1|2|3) MODE="$m"; return ;;
+            u|U)
+                if [[ -f "$SCRIPTS_ROOT/tests/run-tests.sh" ]]; then
+                    run bash "$SCRIPTS_ROOT/tests/run-tests.sh"
+                else
+                    printf '  %stests not found at %s/tests — run from a full checkout%s\n' "$YL" "$SCRIPTS_ROOT" "$OFF"
+                fi
+                pause ;;
+            q|Q) bye ;;
+            *) MODE=1; return ;;
+        esac
+    done
 }
 mode_label() { case "$MODE" in 1) echo "remote · kubectl → pod";; 2) echo "in-pod · localhost";; 3) echo "bare metal · localhost";; esac; }
 
@@ -153,7 +168,13 @@ choose_from() {
     CHOICE=""
     while IFS= read -r line; do [[ -n "$line" ]] && opts+=("$line"); done <<< "${4:-}"
     if [[ ${#opts[@]} -eq 0 ]]; then
-        if [[ "$free" == 1 ]]; then printf '  %s [%s]: ' "$title" "$current"; IFS= read -r CHOICE; fi
+        # nothing enumerable (RBAC may forbid listing) — free text still works
+        if [[ "$free" == 1 ]]; then
+            printf '  %s(nothing to list — no permission to enumerate? just type the value)%s\n' "$DIM" "$OFF"
+            printf '  %s [%s]: ' "$title" "$current"; IFS= read -r CHOICE
+        else
+            printf '  %s(nothing to list)%s\n' "$DIM" "$OFF"
+        fi
         return 0
     fi
     printf '\n  %s%s%s\n' "$B" "$title" "$OFF"
@@ -244,8 +265,8 @@ retarget() {
         printf '   %sc%s  context     %s%s%s\n' "$GN" "$OFF" "$GN" "$(kubectl config current-context 2>/dev/null || echo '<none>')" "$OFF"
         printf '   %sn%s  namespace   %s%s%s\n' "$GN" "$OFF" "$GN" "$NAMESPACE" "$OFF"
         printf '   %ss%s  selector    %s%s%s\n' "$GN" "$OFF" "$GN" "${SELECTOR:-<any pod>}" "$OFF"
-        printf '   %so%s  container   %s%s%s\n' "$GN" "$OFF" "$GN" "$APP_CONTAINER" "$OFF"
         printf '   %sp%s  pod         %s%s%s\n' "$GN" "$OFF" "$GN" "${POD_PIN:-<auto: first match>}" "$OFF"
+        printf '   %so%s  container   %s%s%s\n' "$GN" "$OFF" "$GN" "$APP_CONTAINER" "$OFF"
         printf '   %sa%s  actuator    %s%s%s\n' "$GN" "$OFF" "$GN" "$ACTUATOR_BASE" "$OFF"
         printf '  > '
         read -rn1 k || break; printf '\n'
@@ -273,10 +294,11 @@ retarget() {
                 if [[ "$CHOICE" == "<any pod>" ]]; then SELECTOR=""; POD_PIN=""
                 elif [[ -n "$CHOICE" ]]; then SELECTOR="$CHOICE"; POD_PIN=""; fi ;;
             o|O)
-                local firstpod conts=""
-                firstpod="$(resolve_pods 2>/dev/null | head -n1 || true)"
-                [[ -n "$firstpod" ]] && conts="$(kubectl -n "$NAMESPACE" get pod "$firstpod" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' 2>/dev/null)"
-                choose_from "Container${firstpod:+ (in $firstpod)}" "$APP_CONTAINER" 1 "$conts"
+                # containers come from the pinned pod's spec (else the first match)
+                local basepod conts=""
+                basepod="${POD_PIN:-$(resolve_pods 2>/dev/null | head -n1 || true)}"
+                [[ -n "$basepod" ]] && conts="$(kubectl -n "$NAMESPACE" get pod "$basepod" -o jsonpath='{range .spec.containers[*]}{.name}{"\n"}{end}' 2>/dev/null)"
+                choose_from "Container${basepod:+ (in $basepod)}" "$APP_CONTAINER" 1 "$conts"
                 [[ -n "$CHOICE" ]] && APP_CONTAINER="$CHOICE" ;;
             p|P) pick_pod ;;
             a|A) printf '  actuator base [%s]: ' "$ACTUATOR_BASE"; IFS= read -r v; [[ -n "$v" ]] && ACTUATOR_BASE="$v" ;;
@@ -503,7 +525,7 @@ menu_remote() {
    ${GN}8${OFF}  logs        live log stream from every replica         ${GN}safe${OFF}
    ${GN}9${OFF}  log-level   turn logging up/down without a restart     ${YL}adds log volume${OFF}
 
-  ${B}MORE${OFF}  ${GN}h${OFF} help/glossary · ${GN}c${OFF} check setup · ${GN}d${OFF} view captures · ${GN}i${OFF} stage jattach · ${GN}p${OFF} push in-pod tool · ${GN}t${OFF} target · ${GN}m${OFF} mode · ${GN}q${OFF} quit
+  ${B}MORE${OFF}  ${GN}h${OFF} help/glossary · ${GN}c${OFF} check setup · ${GN}d${OFF} captures · ${GN}a${OFF} analyze them · ${GN}i${OFF} stage jattach · ${GN}p${OFF} push in-pod tool · ${GN}t${OFF} target · ${GN}m${OFF} mode · ${GN}q${OFF} quit
   ${DIM}keys act instantly — no Enter needed${OFF}
 EOF
     printf '\n  %s> %s' "$B" "$OFF"
@@ -524,7 +546,7 @@ menu_local() {
    ${GN}6${OFF}  jcmd        advanced JVM commands (GC, JFR, native)    ${YL}needs jattach${OFF}
    ${GN}7${OFF}  snapshot    grab EVERYTHING in one offline bundle      ${GN}safe${OFF}${DIM} · heap optional${OFF}
 
-  ${B}MORE${OFF}  ${GN}h${OFF} help/glossary · ${GN}d${OFF} view captures · ${GN}i${OFF} stage jattach · ${GN}s${OFF} settings · ${GN}m${OFF} mode · ${GN}q${OFF} quit
+  ${B}MORE${OFF}  ${GN}h${OFF} help/glossary · ${GN}d${OFF} captures · ${GN}a${OFF} analyze them · ${GN}i${OFF} stage jattach · ${GN}s${OFF} settings · ${GN}m${OFF} mode · ${GN}q${OFF} quit
   ${DIM}keys act instantly — no Enter needed${OFF}
 EOF
     printf '\n  %s> %s' "$B" "$OFF"
@@ -549,6 +571,7 @@ dispatch_remote() {
         0)  if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run "$DBG" snapshot --heap --confirm ${POD_PIN:+"$POD_PIN"}; else run "$DBG" snapshot ${POD_PIN:+"$POD_PIN"}; fi ;;
         h|H) show_help ;;
         c|C) run "$DBG" doctor ;;
+        a|A) run "$DBG" analyze ;;
         d|D) run "$DBG" dumps ;;
         i|I) run "$DBG" install-jattach ${POD_PIN:+"$POD_PIN"} ;;
         p|P) run "$DBG" push-local ${POD_PIN:+"$POD_PIN"} ;;
@@ -573,6 +596,7 @@ dispatch_local() {
         7)  jattach_fallback_check
             if confirm "include a heap dump in the bundle? (PAUSES the JVM)"; then run sh "$LOCAL" snapshot --heap; else run sh "$LOCAL" snapshot; fi ;;
         h|H) show_help ;;
+        a|A) run "$SCRIPTS_ROOT/observe/analyze.sh" "${OUT_DIR:-/tmp}" ;;
         d|D) run sh "$LOCAL" dumps ;;
         i|I) run stage_jattach_local ;;
         s|S) local_settings ;;

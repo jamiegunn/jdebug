@@ -33,6 +33,8 @@
 #     memory        RSS vs JVM anatomy, reconciled        (memory-report.sh)
 #     snapshot      one-shot offline-analysis bundle      (snapshot.sh)
 #     dumps         list everything captured so far + how to analyze each
+#     analyze       first-pass read of ALL captures: deadlocks, blocked
+#                   threads, DOWN health, OOM risk, invalid dumps
 #
 #   Every capture lands under this kit's dumps/ directory (git-ignored);
 #   `jdebug dumps` shows what you have and what to open it with.
@@ -197,6 +199,8 @@ case "$cmd" in
     memory)          fwd "$D/observe/memory-report.sh" ;;
     snapshot)        fwd "$D/observe/snapshot.sh" ;;
 
+    analyze)         "$D/observe/analyze.sh" ${ARGS[@]+"${ARGS[@]}"} ;;
+
     dumps|captures)
         echo "Captured evidence — $JDEBUG_DUMPS (newest first)"
         echo
@@ -223,6 +227,8 @@ case "$cmd" in
 
   ⚠ Heap dumps contain whatever the app had in memory — possibly real user data.
     Treat them like production data; delete them when the investigation is done.
+
+  First-pass triage of everything above in one go:  jdebug analyze
 HINTS
         ;;
     logs)            fwd "$D/observe/tail-logs.sh" ;;

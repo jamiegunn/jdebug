@@ -44,6 +44,7 @@ announcing each fallback. Force one tier with `--via actuator|jattach|jdk`.
 |---|---|
 | `jdebug doctor` | pre-incident checkup: host tools, captures dir, jattach cache, cluster, target pods, actuator — ✓/!/✗ with fixes, non-zero exit on blockers |
 | `jdebug dumps` | list every capture with per-type analysis instructions |
+| `jdebug analyze [path]` | first-pass triage of every capture: thread-state histogram, deadlocks, contended locks, hot frames, DOWN health components, OOM-risk %, invalid dumps — with the right deep tool named per finding |
 | `jdebug install-jattach` | pre-stage the jattach binary in the pod |
 | `jdebug push-local` | copy the in-pod tool (`jdebug-local`) to `<pod>:/tmp` |
 | `jdebug wizard` | jump straight into guided diagnosis |

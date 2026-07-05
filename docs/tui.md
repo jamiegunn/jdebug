@@ -42,8 +42,8 @@ TARGET — press a letter to change a field · Enter/b back to the menu
  c  context     ddk3s
  n  namespace   payments
  s  selector    app=payments
- o  container   app
  p  pod         <auto: first match>
+ o  container   app
  a  actuator    http://localhost:8080/actuator
 ```
 
@@ -55,11 +55,14 @@ number, single keypress:
 - `n` — namespaces, listed from the cluster
 - `s` — selectors **built from the `app` labels actually on pods** in the
   namespace, plus an explicit *any pod* option; `t` types any label expression
-- `o` — containers read from the pod's spec
 - `p` — matching pods with phase and restart counts, so you can pin the
   sick replica instead of silently getting the first
+- `o` — containers read from the **pinned pod's** spec (pick the pod first;
+  the container list follows it)
 
-Free text remains available wherever a dropdown can't know the answer.
+Free text remains available everywhere — and when permissions don't allow
+enumerating (e.g. you can't list namespaces), the dropdown says so and drops
+straight to a typed prompt.
 
 ## Output is never lost
 

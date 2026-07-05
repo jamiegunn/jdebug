@@ -133,6 +133,51 @@ assert_has "explains MAT for heap" "Leak Suspects"
 assert_has "PII warning present" "real user data"
 rm -rf "$TMP/dumps"
 
+# --- jdebug analyze: first-pass triage of captures -------------------------------
+section "jdebug analyze"
+AD="$TMP/dumps"; mkdir -p "$AD/threads" "$AD/snapshot-20260704T000000Z"
+cat > "$AD/threads/pod-a-thread.txt" <<'EOF'
+Full thread dump OpenJDK 64-Bit Server VM
+"main" #1 prio=5
+   java.lang.Thread.State: RUNNABLE
+	at com.example.Hot.spin(Hot.java:10)
+"worker-1" #12
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.example.Db.get(Db.java:5)
+	- waiting to lock <0x12345> (a java.lang.Object)
+"worker-2" #13
+   java.lang.Thread.State: BLOCKED (on object monitor)
+	at com.example.Db.get(Db.java:5)
+	- waiting to lock <0x12345> (a java.lang.Object)
+"idle-1" #14
+   java.lang.Thread.State: WAITING (parking)
+	at jdk.internal.misc.Unsafe.park(Native Method)
+
+Found one Java-level deadlock:
+EOF
+printf 'JAVA PROFILE 1.0.2\0heapbytes' > "$AD/good.hprof"
+printf 'HTTP 404 not found' > "$AD/bad.hprof"
+printf '{"status":"DOWN","components":{"db":{"status":"DOWN"},"redis":{"status":"UP"}}}' \
+    > "$AD/snapshot-20260704T000000Z/health.json"
+
+run_case ./jdebug analyze
+assert_rc  "analyze exits 0" 0
+assert_has "threads: state histogram" "4 threads — 1 RUNNABLE · 2 BLOCKED · 1 WAITING"
+assert_has "threads: deadlock flagged" "DEADLOCK detected"
+assert_has "threads: contention + the lock" "waiting to lock <0x12345>"
+assert_has "threads: names the deep tool" "fastthread.io"
+assert_has "health: DOWN component named" "failing component(s): db"
+assert_has "hprof: valid one sanity-checked" "valid hprof"
+assert_has "hprof: invalid one flagged" "NOT a valid hprof"
+assert_has "summary counts findings" "finding(s) flagged above"
+
+run_case ./jdebug analyze "$AD/threads/pod-a-thread.txt"
+assert_has "single-file analysis works" "DEADLOCK detected"
+rm -rf "$AD"
+
+run_case ./jdebug analyze
+assert_has "empty: says capture first" "nothing to analyze"
+
 # --- destructive-action gates ---------------------------------------------------
 section "confirm gates (heap pauses the JVM)"
 run_case ./capture/actuator.sh heap
@@ -318,6 +363,16 @@ assert_has "target editor: container from pod spec" "container   sidecar"
 
 MOCK_PODS=multi run_input 'tp0bqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "target editor: pod picker on multi" "pods match. Which one?"
+
+MOCK_PODS=multi run_input 'tp2o1bqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "target editor: containers read from the PINNED pod" "Container (in pod-b)"
+
+run_input 'aqy' env JDEBUG_MODE=1 ./ui/tui.sh
+assert_has "menu: a runs analyze" "first-pass triage"
+
+run_input 'q' ./ui/tui.sh
+assert_rc  "mode chooser: q exits" 0
+assert_has "mode chooser: self-test entry" "self-test"
 
 run_input '1\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
 assert_has "quit shows transcript path" "transcript of everything from this session"
