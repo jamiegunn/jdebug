@@ -541,6 +541,8 @@ func main() {
 	renderFlag := flag.String("render", "", "print a screen with canned demo state and exit (menu|dashboard|focus|output|gate|local|help|chooser|editor|wizard)")
 	heapFlag := flag.String("analyze-heap", "", "print a class histogram for an hprof heap dump and exit")
 	deepFlag := flag.Bool("deep", false, "with -analyze-heap: also build the dominator tree for retained sizes")
+	diffA := flag.String("diff-a", "", "BEFORE hprof for a two-dump growth diff (with -diff-b)")
+	diffB := flag.String("diff-b", "", "AFTER hprof for a two-dump growth diff (with -diff-a)")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 
@@ -548,6 +550,15 @@ func main() {
 
 	if *showVersion {
 		fmt.Println("jdebug-tui " + version)
+		return
+	}
+	if *diffA != "" && *diffB != "" {
+		out, err := analyzeHprofDiff(*diffA, *diffB)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "error:", err)
+			os.Exit(1)
+		}
+		fmt.Println(out)
 		return
 	}
 	if *heapFlag != "" {

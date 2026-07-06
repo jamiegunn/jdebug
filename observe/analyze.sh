@@ -22,17 +22,52 @@ SCRIPTS_ROOT="$SCRIPT_DIR"; while [[ "$SCRIPTS_ROOT" != / && ! -f "$SCRIPTS_ROOT
 source "$SCRIPTS_ROOT/lib/common.sh"
 set +e   # greps that find nothing are data here, not failures
 
-# --deep / -d: also run the retained-size (dominator) pass on heap dumps. Pulled
-# out of the args so the rest of the arg handling (TARGET) is unchanged.
-DEEP=""
+# --deep / -d: also run the retained-size (dominator) pass on heap dumps.
+# --diff:     compare two heap dumps to see what GREW (leak hunting). Both are
+# pulled out of the args so the rest of the arg handling (TARGET) is unchanged.
+DEEP=""; DIFF=""
 _args=()
 for _a in "$@"; do
     case "$_a" in
-        --deep|-d) DEEP=1 ;;
+        --deep|-d)  DEEP=1 ;;
+        --diff)     DIFF=1 ;;
         *) _args+=("$_a") ;;
     esac
 done
 set -- ${_args[@]+"${_args[@]}"}
+
+# valid heap dumps under dumps/, newest first (by the session-dir timestamp).
+_pick_heaps() {
+    find "$JDEBUG_DUMPS" -type f -name '*.hprof' 2>/dev/null | while IFS= read -r f; do
+        head -c 12 "$f" 2>/dev/null | grep -q 'JAVA PROFILE' || continue
+        ts="$(basename "$(dirname "$f")" | grep -oE '[0-9]{8}T[0-9]{6}Z' | tail -1)"
+        printf '%s\t%s\n' "${ts:-0}" "$f"
+    done | sort -r | cut -f2-
+}
+
+if [[ -n "$DIFF" ]]; then
+    tui_bin="$SCRIPTS_ROOT/tui/jdebug-tui"
+    [[ -x "$tui_bin" ]] || { err "the heap reader isn't built — run: make -C '$SCRIPTS_ROOT' tui"; exit 1; }
+    before="${1:-}"; after="${2:-}"
+    if [[ -z "$before" || -z "$after" ]]; then
+        _h="$(_pick_heaps)"
+        after="${after:-$(printf '%s\n' "$_h"  | sed -n '1p')}"
+        before="${before:-$(printf '%s\n' "$_h" | sed -n '2p')}"
+        [[ -n "$before" && -n "$after" ]] && \
+            printf 'diffing the two newest heap dumps:\n  before  %s\n  after   %s\n\n' "$before" "$after"
+    fi
+    if [[ -z "$before" || -z "$after" ]]; then
+        err "need two heap dumps to diff. Capture two under load (jdebug heap … twice),"
+        err "then:  jdebug analyze --diff        (auto-picks the two newest)"
+        err "or:    jdebug analyze --diff <before.hprof> <after.hprof>"
+        exit 2
+    fi
+    for f in "$before" "$after"; do
+        [[ -f "$f" ]] || { err "no such heap dump: $f"; exit 2; }
+    done
+    "$tui_bin" -diff-a "$before" -diff-b "$after"
+    exit $?
+fi
 
 ANALYZED=0; FLAGS=0
 say()  { printf '    %s\n' "$*"; }
@@ -101,10 +136,13 @@ analyze_hprof() {
         [[ -n "$DEEP" ]] && hflags=(-deep -analyze-heap "$f") # add the retained-size pass
         "$tui" "${hflags[@]}" 2>/dev/null | sed 's/^/    /' \
             || say "(couldn't parse the histogram — open it in Eclipse MAT instead)"
-        [[ -z "$DEEP" ]] && say "for RETAINED size (what each object keeps alive): jdebug analyze --deep $f"
+        if [[ -z "$DEEP" ]]; then
+            say "for RETAINED size (what each object keeps alive): jdebug analyze --deep $f"
+            say "for GROWTH (leak hunting): take a 2nd dump under load, then jdebug analyze --diff"
+        fi
     else
         say "open: MAT → File → Open Heap Dump → run 'Leak Suspects'  (build the TUI for an inline histogram: make tui)"
-        say "leak hunting: take a second dump after more load, then MAT → 'compare to another heap dump'"
+        say "leak hunting: take a second dump after more load, then jdebug analyze --diff (or MAT 'compare to another heap dump')"
     fi
 }
 

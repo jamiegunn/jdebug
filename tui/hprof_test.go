@@ -92,6 +92,69 @@ func synthHprof() []byte {
 	return buf.Bytes()
 }
 
+// synthHeapBytes builds a minimal valid heap holding n byte[] arrays of arrLen
+// bytes each — enough for the diff to see a class grow between two dumps.
+func synthHeapBytes(n, arrLen int) []byte {
+	var buf bytes.Buffer
+	buf.WriteString("JAVA PROFILE 1.0.2\x00")
+	binary.Write(&buf, binary.BigEndian, uint32(8))
+	binary.Write(&buf, binary.BigEndian, uint64(0))
+	id := func(v uint64) []byte {
+		b := make([]byte, 8)
+		binary.BigEndian.PutUint64(b, v)
+		return b
+	}
+	u4 := func(v uint32) []byte {
+		b := make([]byte, 4)
+		binary.BigEndian.PutUint32(b, v)
+		return b
+	}
+	var hd bytes.Buffer
+	for i := 0; i < n; i++ {
+		hd.WriteByte(0x23)             // PRIM_ARRAY_DUMP
+		hd.Write(id(uint64(1000 + i))) // obj id
+		hd.Write(u4(0))                // stack
+		hd.Write(u4(uint32(arrLen)))   // n elements
+		hd.WriteByte(8)                // type = byte
+		hd.Write(make([]byte, arrLen)) // data
+	}
+	buf.WriteByte(0x0C)
+	buf.Write(u4(0))
+	buf.Write(u4(uint32(hd.Len())))
+	buf.Write(hd.Bytes())
+	return buf.Bytes()
+}
+
+func TestHeapDiffGrowth(t *testing.T) {
+	dir := t.TempDir()
+	before := filepath.Join(dir, "before.hprof")
+	after := filepath.Join(dir, "after.hprof")
+	// after has 5 byte[] arrays; before has 1 → byte[] grew by 4.
+	if err := os.WriteFile(before, synthHeapBytes(1, 1000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(after, synthHeapBytes(5, 1000), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	out, err := analyzeHprofDiff(before, after)
+	if err != nil {
+		t.Fatalf("diff failed: %v", err)
+	}
+	for _, want := range []string{"grew most", "byte[]", "+4", "GROWTH"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("diff output missing %q\n%s", want, out)
+		}
+	}
+	// The reverse diff (shrink) must NOT report growth of byte[].
+	rev, err := analyzeHprofDiff(after, before)
+	if err != nil {
+		t.Fatalf("reverse diff failed: %v", err)
+	}
+	if !strings.Contains(rev, "shrank most") || !strings.Contains(rev, "nothing grew") {
+		t.Errorf("reverse diff should show a shrink and no growth:\n%s", rev)
+	}
+}
+
 func TestHprofHistogram(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "heap.hprof")
