@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/x/ansi"
 )
 
 func mini(a, b int) int {
@@ -75,11 +76,14 @@ func (m model) leftW() int {
 
 // cols splits tier-2 width into menu | mid (target/trends/next) | events,
 // with two 2-char gutters. At 140: 62/38/36 · at 200: 78/46/72.
+// cols splits the tier-2 width into three EQUAL columns (menu | mid | right),
+// each ~1/3, separated by two 2-col gutters. The remainder lands in the right
+// column so menuW+midW+evW+4 == tw() exactly.
 func (m model) cols() (menuW, midW, evW int) {
-	w := m.tw()
-	menuW = 62 + mini(16, (w-140)/3)
-	midW = 38 + mini(8, (w-140)/6)
-	evW = w - menuW - midW - 4
+	inner := m.tw() - 4 // two 2-col gutters between the three columns
+	menuW = inner / 3
+	midW = inner / 3
+	evW = inner - menuW - midW
 	return
 }
 
@@ -103,12 +107,19 @@ func (m model) overlayLines() int {
 // paneTitle renders " LABEL  sub ────────── right" clipped to w.
 func paneTitle(w int, label, sub, right string) string {
 	s := " " + cDim.Render(label)
-	if sub != "" {
-		s += "  " + cFaint.Render(sub)
-	}
 	r := ""
 	if right != "" {
 		r = " " + cFaint.Render(right)
+	}
+	if sub != "" {
+		// fit the subtitle (often a pod name) to whatever's left after the
+		// label, the right hint, the gaps, and a minimum rule — so it shrinks
+		// with an ellipsis instead of overflowing the column
+		avail := w - lipgloss.Width(s) - lipgloss.Width(r) - 2 - 3 - 2
+		if avail < 6 {
+			avail = 6
+		}
+		s += "  " + cFaint.Render(ansi.Truncate(sub, avail, "…"))
 	}
 	fill := w - lipgloss.Width(s) - lipgloss.Width(r) - 2
 	if fill < 3 {
@@ -168,11 +179,11 @@ func (m model) bottomGeom() (stripY, paneH int, ok bool) {
 	return prefixLines + 1, logH, true // + 1 for the rule row between prefix and the strip
 }
 
-// rightColumn stacks PODS, WORKLOAD, CAPTURES into exactly h rows.
+// rightColumn stacks PODS and WORKLOAD into exactly h rows. (Captures moved to
+// the bottom CAPTURES tab, so the right column is no longer split three ways.)
 func (m model) rightColumn(w, h int) []string {
-	podH, workH, capH := rightHeights(h)
+	podH, workH := rightHeights(h)
 	rows := m.podsRows(w, podH)
 	rows = append(rows, m.workloadRows(w, workH)...)
-	rows = append(rows, m.capsRows(w, capH)...)
 	return rows
 }

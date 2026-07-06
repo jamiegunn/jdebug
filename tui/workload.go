@@ -13,7 +13,7 @@ import (
 
 func (m model) workloadRows(w, h int) []string {
 	d := m.panel
-	rows := []string{paneTitle(w, "WORKLOAD", podShort(m.t.Pod, 20), "pod context")}
+	rows := []string{paneTitle(w, "WORKLOAD", m.t.Pod, "pod context")}
 	line := func(k, v string) {
 		if len(rows) >= h {
 			return

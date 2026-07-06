@@ -29,10 +29,10 @@ Two consequences worth knowing:
 
 The layout scales in three tiers (`layout.go`): compact (<104 cols), the
 classic menu + 38-col TARGET LIVE sidebar (104–139), and the full grid
-(≥140×34, which now **fills the whole terminal width**) — menu | TARGET LIVE +
-TRENDS sparklines + NEXT | PODS + WORKLOAD + CAPTURES-scope. The bottom is a
-**tabbed work area** — WORK / LOGS / EVENTS / CAPTURES (click a tab or
-tab/shift-tab) — filling the remaining height. The LOGS tab polls
+(≥140×34, which now **fills the whole terminal width** in three equal columns)
+— menu | TARGET LIVE + NEXT | PODS + WORKLOAD. The bottom is a **tabbed work
+area** — WORK / LOGS / EVENTS / CAPTURES / TRENDS (click a tab or tab/shift-tab)
+— filling the remaining height. The LOGS tab polls
 `kubectl logs --tail=200` every 5 s (errors and stack traces red, warnings
 amber; `f` expands it full-screen with j/k scrollback); events and captures
 refresh on the 20 s tick; trend samples piggyback on

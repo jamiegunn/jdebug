@@ -215,27 +215,6 @@ func (m model) capsEntryAt(row int) (kind, path string) {
 	return kind, filepath.Join(m.capsDir(), ce.Name)
 }
 
-// capsHit: is (x,y) inside the CAPTURES pane, and on which content row
-// (0-based, below the title)? Mirrors the layout math the renderer uses.
-func (m model) capsHit(x, y int) (bool, int) {
-	if m.tier() != 2 || m.scr != scMenu || !m.remote.OK {
-		return false, 0
-	}
-	menuW, midW, evW := m.cols()
-	x0 := menuW + midW + 4
-	if x < x0 || x >= x0+evW {
-		return false, 0
-	}
-	body := m.remoteBody()
-	topH := strings.Count(body, "\n") + 1
-	podH, workH, capH := rightHeights(topH)
-	y0 := m.headerH() + podH + workH // real header height + PODS + WORKLOAD above
-	if y < y0+1 || y >= y0+capH {
-		return false, 0 // y0 is the title row
-	}
-	return true, y - y0 - 1
-}
-
 // capsTabHit maps a click in the bottom CAPTURES tab to a content-row index
 // (0-based below the strip), when that tab is active. Full width, so no x test.
 func (m model) capsTabHit(x, y int) (int, bool) {

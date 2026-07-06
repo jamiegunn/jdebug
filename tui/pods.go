@@ -124,17 +124,21 @@ func (m model) podsHit(x, y int) (bool, int) {
 }
 
 // right-column vertical split: PODS on top, WORKLOAD context, then CAPTURES.
-func rightHeights(topH int) (podH, workH, capH int) {
-	podH = topH * 2 / 5
-	workH = (topH - podH) / 2
-	capH = topH - podH - workH
+// rightHeights splits the right column between PODS and WORKLOAD. WORKLOAD is a
+// fixed ~7-line info block; everything else goes to the scrollable PODS list.
+func rightHeights(topH int) (podH, workH int) {
+	workH = 8
+	if workH > topH/2 {
+		workH = topH / 2
+	}
+	podH = topH - workH
 	return
 }
 
 func (m model) podsPaneH() int {
 	body := m.remoteBody()
 	topH := strings.Count(body, "\n") + 1
-	podH, _, _ := rightHeights(topH)
+	podH, _ := rightHeights(topH)
 	return podH
 }
 

@@ -386,9 +386,6 @@ func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
 		if pod := m.podsClickTarget(v.X, v.Y); pod != "" {
 			return m.switchPod(pod)
 		}
-		if in, row := m.capsHit(v.X, v.Y); in {
-			return m.capsClick(row)
-		}
 		if m.panelHit(v.X, v.Y) {
 			return m.quickCLI(true, "workload") // drill into what the panel summarizes
 		}
@@ -401,7 +398,7 @@ func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
 			if m.podsOff > 0 {
 				m.podsOff--
 			}
-		} else if in, _ := m.capsHit(v.X, v.Y); in || capsTab {
+		} else if capsTab {
 			if m.capsOff > 0 {
 				m.capsOff--
 			}
@@ -414,7 +411,7 @@ func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
 			if m.podsOff < len(m.pods)-1 {
 				m.podsOff++
 			}
-		} else if in, _ := m.capsHit(v.X, v.Y); in || capsTab {
+		} else if capsTab {
 			if m.capsOff < len(m.caps)-1 {
 				m.capsOff++
 			}

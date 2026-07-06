@@ -255,8 +255,9 @@ func TestDashboardShowsPanes(t *testing.T) {
 	out := m.menuView()
 	// TRENDS is now a bottom tab (its ▲ restart markers render only when that
 	// tab is active); the default view still shows every pane/tab label
+	// captures content now lives only in the CAPTURES tab, not the right column
 	for _, want := range []string{"LOGS", "WORKLOAD", "CAPTURES", "TRENDS", "PODS",
-		"OutOfMemoryError", "app-debug-demo-app", "config:configmap", "20260705T091500Z", "click switches"} {
+		"OutOfMemoryError", "app-debug-demo-app", "config:configmap", "click switches"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dashboard missing %q", want)
 		}
@@ -666,36 +667,38 @@ func TestClickOutsideMenuColumnIsNotARun(t *testing.T) {
 	}
 }
 
-func TestCapturesClickRowMappingWithTallHeader(t *testing.T) {
+// PODS clicks must stay row-accurate even when a tall (wrapped) header shifts
+// the right column down — the headerH() fix that once mattered for the removed
+// CAPTURES pane still governs podsHit.
+func TestPodsClickRowMappingWithTallHeader(t *testing.T) {
 	m := readyModel200()
 	m.staleP = "old-pod-that-forces-an-extra-header-row" // header grows past 3 rows
 	if got := m.headerH(); got < 4 {
 		t.Fatalf("a stale pin must add a header row (want ≥4), got %d", got)
 	}
-	// find the CAPTURES title row as actually rendered
+	// find the PODS title row as actually rendered
 	lines := strings.Split(m.View(), "\n")
 	titleRow := -1
 	for i, ln := range lines {
-		if strings.Contains(ansi.Strip(ln), "CAPTURES") {
+		if strings.Contains(ansi.Strip(ln), "PODS") {
 			titleRow = i
 			break
 		}
 	}
 	if titleRow < 0 {
-		t.Fatal("CAPTURES pane not rendered")
+		t.Fatal("PODS pane not rendered")
 	}
 	menuW, midW, _ := m.cols()
-	x := menuW + midW + 5 // a column inside the right (CAPTURES) pane
+	x := menuW + midW + 5 // a column inside the right (PODS) pane
 
-	// the title row itself is not a clickable entry
-	if in, _ := m.capsHit(x, titleRow); in {
-		t.Error("clicking the CAPTURES title row must not select an entry")
+	// podsHit reports row 0 = title; each content row maps to its own index
+	if in, row := m.podsHit(x, titleRow); !in || row != 0 {
+		t.Errorf("title row → (in=%v row=%d), want row 0", in, row)
 	}
-	// each content line maps to its own index — no off-by-one
-	for k := 0; k < 2; k++ {
-		in, row := m.capsHit(x, titleRow+1+k)
+	for k := 1; k <= 2; k++ {
+		in, row := m.podsHit(x, titleRow+k)
 		if !in || row != k {
-			t.Errorf("click on content line %d → (in=%v row=%d), want row=%d (header=%d)",
+			t.Errorf("content line %d → (in=%v row=%d), want row=%d (header=%d)",
 				k, in, row, k, m.headerH())
 		}
 	}

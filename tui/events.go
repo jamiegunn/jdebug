@@ -57,7 +57,7 @@ func fetchEvents(t target) tea.Cmd {
 
 // eventsRows renders exactly h rows at width w.
 func (m model) eventsRows(w, h int) []string {
-	rows := []string{paneTitle(w, "EVENTS", podShort(m.t.Pod, 20), "20s")}
+	rows := []string{paneTitle(w, "EVENTS", m.t.Pod, "20s")}
 	switch {
 	case m.eventsErr != "" && len(m.events) == 0:
 		rows = append(rows, " "+cFaint.Render("– events unavailable: "+m.eventsErr+" –"))
