@@ -143,13 +143,14 @@ func (m model) dashPrefix() string {
 	return m.headerRemote(m.remote.Cluster) + "\n" + top
 }
 
-// bottomStripY returns the screen row of the WORK/LOGS/EVENTS tab strip, and
-// whether the bottom work area is currently on screen. It reconstructs the same
-// "prefix" both render paths build above the rule (dashboardView for tier 2,
-// the generic menu view for tier 1); the strip sits one row below that rule.
-func (m model) bottomStripY() (int, bool) {
+// bottomGeom returns the screen row of the WORK/LOGS/EVENTS/CAPTURES tab strip,
+// the total height of the bottom work pane (strip + body), and whether it's on
+// screen. It reconstructs the same "prefix" both render paths build above the
+// rule (dashboardView for tier 2, the generic menu view for tier 1); the strip
+// sits one row below that rule, and the body fills the rows beneath it.
+func (m model) bottomGeom() (stripY, paneH int, ok bool) {
 	if m.scr != scMenu || !m.remote.OK || !m.showLogPane() || m.capsFocus || m.logs.focus {
-		return 0, false
+		return 0, 0, false
 	}
 	var prefix string
 	if m.tier() == 2 {
@@ -161,9 +162,9 @@ func (m model) bottomStripY() (int, bool) {
 	suffix := "\n" + m.footer("[a] analyze  [c] check setup  [?] help  [q] quit") + prompt()
 	logH := m.height - m.overlayLines() - prefixLines - strings.Count(suffix, "\n") - 1
 	if logH < 6 {
-		return 0, false
+		return 0, 0, false
 	}
-	return prefixLines + 1, true // + 1 for the rule row between prefix and the strip
+	return prefixLines + 1, logH, true // + 1 for the rule row between prefix and the strip
 }
 
 // rightColumn stacks PODS, WORKLOAD, CAPTURES into exactly h rows.

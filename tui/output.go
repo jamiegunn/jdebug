@@ -263,6 +263,8 @@ func (m model) bottomPane(w, h int) string {
 		body = strings.Join(m.eventsRows(w, h), "\n")
 	case tabWork:
 		body = m.workPane(w, h)
+	case tabCaptures:
+		body = strings.Join(m.capsRows(w, h), "\n") // the roomy, full-width evidence browser
 	default:
 		body = m.logPane(w, h)
 	}

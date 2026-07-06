@@ -11,7 +11,7 @@ func TestWorkTabsCycleAndContent(t *testing.T) {
 	if m.workTab != tabLogs {
 		t.Fatalf("the bottom work area must default to the LOGS tab, got %d", m.workTab)
 	}
-	// tab advances LOGS → EVENTS → WORK → LOGS, without triggering a menu action
+	// tab advances LOGS → EVENTS → CAPTURES → WORK → LOGS, without a menu action
 	ev := press(t, m, "tab").(model)
 	if ev.workTab != tabEvents {
 		t.Fatalf("tab must advance to EVENTS, got %d", ev.workTab)
@@ -19,7 +19,14 @@ func TestWorkTabsCycleAndContent(t *testing.T) {
 	if !strings.Contains(ev.menuView(), "Back-off restarting") {
 		t.Fatal("the EVENTS tab must show recent pod events")
 	}
-	wk := press(t, ev, "tab").(model)
+	cap := press(t, ev, "tab").(model)
+	if cap.workTab != tabCaptures {
+		t.Fatalf("tab must advance to CAPTURES, got %d", cap.workTab)
+	}
+	if !strings.Contains(ansiStrip(cap.workTabStrip(cap.tw())), "[CAPTURES") {
+		t.Fatal("the CAPTURES tab must be the bracketed active tab once selected")
+	}
+	wk := press(t, cap, "tab").(model)
 	if wk.workTab != tabWork {
 		t.Fatalf("tab must advance to WORK, got %d", wk.workTab)
 	}
@@ -29,7 +36,7 @@ func TestWorkTabsCycleAndContent(t *testing.T) {
 	if press(t, wk, "tab").(model).workTab != tabLogs {
 		t.Fatal("tab must wrap back to LOGS")
 	}
-	// shift-tab steps backward
+	// shift-tab steps backward: LOGS → WORK
 	if press(t, m, "shift+tab").(model).workTab != tabWork {
 		t.Fatal("shift+tab from LOGS must step back to WORK")
 	}

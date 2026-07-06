@@ -17,12 +17,20 @@ const (
 	tabWork = iota
 	tabLogs
 	tabEvents
+	tabCaptures
+	numWorkTabs
 )
 
-// workTabLabels returns the plain (unstyled) text of the three tab labels —
-// shared by the renderer and the click hit-tester so their widths always agree.
-func (m model) workTabLabels() (work, logs, ev string) {
-	work = "WORK"
+type wtab struct {
+	id    int
+	label string
+}
+
+// workTabList is the ordered set of bottom tabs with their live labels (counts
+// and status glyphs baked in). One source of truth for the strip renderer and
+// the click hit-tester so their column math can never disagree.
+func (m model) workTabList() []wtab {
+	work := "WORK"
 	if m.out.running {
 		work = "WORK ●"
 	} else if m.out.id != 0 {
@@ -34,24 +42,31 @@ func (m model) workTabLabels() (work, logs, ev string) {
 			warn++
 		}
 	}
-	ev = "EVENTS"
+	ev := "EVENTS"
 	if warn > 0 {
 		ev = fmt.Sprintf("EVENTS %dW", warn)
 	}
-	return work, "LOGS", ev
+	caps := "CAPTURES"
+	if n := len(m.caps); n > 0 {
+		caps = fmt.Sprintf("CAPTURES %d", n)
+	}
+	return []wtab{{tabWork, work}, {tabLogs, "LOGS"}, {tabEvents, ev}, {tabCaptures, caps}}
 }
 
 // workTabStrip is the one-line header replacing the individual pane titles: the
-// three tabs (active bracketed), lightweight counts, and a per-tab context hint.
+// tabs (active bracketed), lightweight counts, and a per-tab context hint.
 func (m model) workTabStrip(w int) string {
-	tab := func(id int, label string) string {
-		if m.workTab == id {
-			return cKey.Render("[" + label + "]")
+	render := func(t wtab) string {
+		if m.workTab == t.id {
+			return cKey.Render("[" + t.label + "]")
 		}
-		return cFaint.Render(" " + label + " ")
+		return cFaint.Render(" " + t.label + " ")
 	}
-	work, logs, ev := m.workTabLabels()
-	left := " " + tab(tabWork, work) + cFaint.Render("│") + tab(tabLogs, logs) + cFaint.Render("│") + tab(tabEvents, ev)
+	var parts []string
+	for _, t := range m.workTabList() {
+		parts = append(parts, render(t))
+	}
+	left := " " + strings.Join(parts, cFaint.Render("│"))
 
 	right := "click a tab · tab/shift-tab"
 	switch m.workTab {
@@ -61,6 +76,8 @@ func (m model) workTabStrip(w int) string {
 		right = "live tail · f expand · click/tab to switch"
 	case tabEvents:
 		right = "pod events · click/tab to switch"
+	case tabCaptures:
+		right = m.capsScope() + " · click opens · a analyzes"
 	}
 	fill := w - lipgloss.Width(left) - lipgloss.Width(right) - 2
 	if fill < 1 {
@@ -73,23 +90,17 @@ func (m model) workTabStrip(w int) string {
 // The tab X ranges mirror workTabStrip's layout: a leading space, then each
 // label rendered [n] or ␣n␣ (both 2 cols wider than the label), │-separated.
 func (m model) workTabHit(x, y int) (int, bool) {
-	sy, ok := m.bottomStripY()
+	sy, _, ok := m.bottomGeom()
 	if !ok || y != sy {
 		return 0, false
 	}
-	work, logs, ev := m.workTabLabels()
 	x0 := 1 // the strip's one leading space
-	for _, t := range []struct {
-		id, w int
-	}{
-		{tabWork, lipgloss.Width(work) + 2},
-		{tabLogs, lipgloss.Width(logs) + 2},
-		{tabEvents, lipgloss.Width(ev) + 2},
-	} {
-		if x >= x0 && x < x0+t.w {
+	for _, t := range m.workTabList() {
+		wdt := lipgloss.Width(t.label) + 2
+		if x >= x0 && x < x0+wdt {
 			return t.id, true
 		}
-		x0 += t.w + 1 // + the │ separator
+		x0 += wdt + 1 // + the │ separator
 	}
 	return 0, false
 }
@@ -110,5 +121,5 @@ func (m model) workPane(w, h int) string {
 
 // cycleWorkTab moves to the next/previous bottom tab.
 func (m *model) cycleWorkTab(dir int) {
-	m.workTab = (m.workTab + dir + 3) % 3
+	m.workTab = (m.workTab + dir + numWorkTabs) % numWorkTabs
 }

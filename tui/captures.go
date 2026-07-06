@@ -236,6 +236,19 @@ func (m model) capsHit(x, y int) (bool, int) {
 	return true, y - y0 - 1
 }
 
+// capsTabHit maps a click in the bottom CAPTURES tab to a content-row index
+// (0-based below the strip), when that tab is active. Full width, so no x test.
+func (m model) capsTabHit(x, y int) (int, bool) {
+	if m.workTab != tabCaptures {
+		return 0, false
+	}
+	sy, paneH, ok := m.bottomGeom()
+	if !ok || y <= sy || y >= sy+paneH {
+		return 0, false
+	}
+	return y - sy - 1, true
+}
+
 // capsClick dispatches a click at content-row index.
 func (m model) capsClick(row int) (tea.Model, tea.Cmd) {
 	kind, path := m.capsEntryAt(row)

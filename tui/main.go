@@ -353,7 +353,13 @@ func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
 	case v.Action == tea.MouseActionPress && v.Button == tea.MouseButtonLeft:
 		if id, ok := m.workTabHit(v.X, v.Y); ok {
 			m.workTab = id
+			if id == tabCaptures {
+				return m, fetchCaps(m.kit, m.capsDir()) // freshen on open
+			}
 			return m, nil
+		}
+		if row, ok := m.capsTabHit(v.X, v.Y); ok {
+			return m.capsClick(row) // click an entry in the CAPTURES tab
 		}
 		if pod := m.podsClickTarget(v.X, v.Y); pod != "" {
 			return m.switchPod(pod)
@@ -368,11 +374,12 @@ func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m.menuKey(key) // same path as pressing the key (confirms fire)
 		}
 	case v.Button == tea.MouseButtonWheelUp:
+		_, capsTab := m.capsTabHit(v.X, v.Y)
 		if in, _ := m.podsHit(v.X, v.Y); in {
 			if m.podsOff > 0 {
 				m.podsOff--
 			}
-		} else if in, _ := m.capsHit(v.X, v.Y); in {
+		} else if in, _ := m.capsHit(v.X, v.Y); in || capsTab {
 			if m.capsOff > 0 {
 				m.capsOff--
 			}
@@ -380,11 +387,12 @@ func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m.outScroll("pgup", 3), nil // 3 lines per wheel notch
 		}
 	case v.Button == tea.MouseButtonWheelDown:
+		_, capsTab := m.capsTabHit(v.X, v.Y)
 		if in, _ := m.podsHit(v.X, v.Y); in {
 			if m.podsOff < len(m.pods)-1 {
 				m.podsOff++
 			}
-		} else if in, _ := m.capsHit(v.X, v.Y); in {
+		} else if in, _ := m.capsHit(v.X, v.Y); in || capsTab {
 			if m.capsOff < len(m.caps)-1 {
 				m.capsOff++
 			}

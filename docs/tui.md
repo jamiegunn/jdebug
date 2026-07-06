@@ -20,15 +20,19 @@ config, and session-log behavior:
   on a big window (≥140×34) it becomes a grid — menu on the left, a **live
   TARGET panel with sparkline TRENDS** (memory %, CPU, restart ▲ markers)
   and a **NEXT box** of concrete key-press suggestions in the middle,
-  **PODS, EVENTS and CAPTURES** on the right (both lists are clickable —
+  **PODS, WORKLOAD and CAPTURES** on the right (the lists are clickable —
   **click any pod to retarget everything at it**, **click any capture to
-  open it** in your OS's default app, wheel scrolls; PODS shows the
+  open it**, wheel scrolls; PODS shows the
   selector's matches, or the whole namespace as fallback), and a
-  **live log tail** filling the bottom (5 s refresh, errors red; when a
-  crash-looping container can't serve logs it shows the **previous
-  container's last words**, labeled as such; `f` expands it full-screen with
-  scrollback). Commands **stream live into that bottom pane**, replacing
-  the log tail while they run — the menu stays interactive, `esc`
+  **tabbed work area** filling the bottom: **WORK** (the command you
+  launched + its output), **LOGS** (the live tail — 5 s refresh, errors red;
+  a crash-looping container that can't serve logs shows the **previous
+  container's last words**, labeled as such; `f` expands it full-screen),
+  **EVENTS** (recent pod events), and **CAPTURES** (a roomy, full-width
+  evidence browser — its header always names the current scope: *this pod*,
+  *all pods*, or the drilled-in session). **Click a tab to switch**, or
+  cycle with `tab`/`shift-tab`. Commands **stream live into the WORK tab**
+  while they run — the menu stays interactive, `esc`
   stops/dismisses, ↑↓ **or the mouse wheel** scrolls, `C` **copies the whole
   transcript to your clipboard**, and the pane title carries the ✓/✗ verdict.
   **Guided-diagnosis flows stream there too**, narration and all — you

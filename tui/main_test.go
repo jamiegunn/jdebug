@@ -695,11 +695,42 @@ func TestCapturesClickRowMappingWithTallHeader(t *testing.T) {
 	}
 }
 
+func TestCapturesTabBrowsesAndOpens(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "threads.txt"), []byte("Full thread dump\n"), 0o644)
+	m := readyModel200()
+	m.capsCwd = dir
+	m.caps = fetchCaps(m.kit, dir)().(capsMsg).entries
+	m.workTab = tabCaptures
+
+	sy, _, ok := m.bottomGeom()
+	if !ok {
+		t.Fatal("bottom pane should be on screen at tier 2")
+	}
+	// the strip row is not a content row; content rows map 0,1,2 below it
+	if _, hit := m.capsTabHit(5, sy); hit {
+		t.Error("the strip row must not be treated as a captures entry")
+	}
+	if row, hit := m.capsTabHit(5, sy+1); !hit || row != 0 {
+		t.Errorf("first content line → (row=%d hit=%v), want row 0", row, hit)
+	}
+	// the tab shows an ↑ .. row (capsCwd is below the root), then the file:
+	// clicking the file row opens it in the WORK tab
+	res, _ := m.Update(tea.MouseMsg{X: 5, Y: sy + 2, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	mm := res.(model)
+	if !strings.HasSuffix(mm.out.filePath, "threads.txt") {
+		t.Fatalf("clicking a capture in the CAPTURES tab must open it, got %q", mm.out.filePath)
+	}
+	if mm.workTab != tabWork {
+		t.Fatalf("opening a capture should surface it in the WORK tab, got %d", mm.workTab)
+	}
+}
+
 func TestWorkTabsAreClickable(t *testing.T) {
 	m := readyModel200() // 200×50 → tier 2, log pane shown
 	m.workTab = tabWork
 
-	sy, ok := m.bottomStripY()
+	sy, _, ok := m.bottomGeom()
 	if !ok {
 		t.Fatal("bottom work strip should be on screen at tier 2 with a pod set")
 	}
