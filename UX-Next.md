@@ -1,5 +1,27 @@
 # UX Next: Interstitial Consistency
 
+## Implementation status — SHIPPED
+
+- **Confirm-over-source bug** — fixed: `askConfirm2` records `confirmBase`; a
+  confirmation now renders over the screen that launched it (menu → menu, editor
+  → editor), and declining returns there.
+- **Interstitial consistency** — every full-screen/overlay interstitial now has
+  a TITLE and a visible dismiss hint (esc/back/cancel/any-key); pickers (via /
+  jcmd / level) gained titles + intent. Enforced by
+  `TestInterstitialsHaveTitleAndDismiss`.
+- **Actuator auth interstitial** — `k` opens a guided `ACTUATOR AUTH` screen
+  (formats + examples + how-to-find + jattach fallback; stores a reference only).
+- **Bottom work-area tabs** — WORK / LOGS / EVENTS tab strip; events are back
+  from the right column; tab/shift-tab switch; a launched command auto-selects
+  WORK.
+- **Remote artifact lifecycle** — the CLI records what it staged in a pod
+  (jattach / jdebug-local) with ownership; `jdebug cleanup [--confirm]` removes
+  only session-staged files (never pre-existing, never local dumps/); the TUI
+  shows a footer indicator + a `u` REMOTE ARTIFACTS screen + a quit-time mention.
+
+Remaining refinement (not blocking): extend `f`-expand to the WORK/EVENTS tabs
+(today it expands LOGS), and a per-work-item history list in the WORK tab.
+
 ## Summary
 
 The current Bubble Tea TUI supports interstitials well, but the app uses several different interstitial patterns at once. Each behavior makes sense locally, but the overall model can feel inconsistent to an operator under pressure.

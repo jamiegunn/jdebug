@@ -637,8 +637,8 @@ func (m model) localKey(key string) (tea.Model, tea.Cmd) {
 
 func (m model) viaView() string {
 	return m.menuView() + "\n" +
-		cFaint.Render("  auto tries the safest route first and announces each fallback") + "\n" +
-		"  " + cMuted.Render("[Enter] auto (recommended) · [o] actuator · [j] jattach · [d] jdk · Esc cancels") + " "
+		"  " + cTitle.Render("CAPTURE ROUTE") + cFaint.Render("  auto tries the safest route first, announcing each fallback") + "\n" +
+		"  " + cMuted.Render("[Enter] auto (recommended) · [o] actuator · [j] jattach · [d] jdk · esc cancels") + " "
 }
 
 func (m model) viaKey(key string) (tea.Model, tea.Cmd) {
@@ -687,11 +687,11 @@ var jcmdPicks = []struct{ key, cmd, why string }{
 func (m model) jcmdView() string {
 	var b strings.Builder
 	b.WriteString(m.menuView() + "\n")
-	b.WriteString(cFaint.Render("  the useful jcmd commands:") + "\n")
+	b.WriteString("  " + cTitle.Render("JCMD") + cFaint.Render("  the JVM's own diagnostic commands, via jattach:") + "\n")
 	for _, j := range jcmdPicks {
 		b.WriteString("   " + cKey.Render(j.key) + "  " + cBody.Render(fmt.Sprintf("%-44s", j.cmd)) + cMuted.Render(j.why) + "\n")
 	}
-	b.WriteString("  " + cMuted.Render("pick 1-5 · t to type any jcmd · anything else cancels") + " ")
+	b.WriteString("  " + cMuted.Render("pick 1-5 · t to type any jcmd · esc cancels") + " ")
 	return b.String()
 }
 
@@ -719,7 +719,8 @@ var levels = []string{"TRACE", "DEBUG", "INFO", "WARN", "ERROR", "OFF"}
 
 func (m model) levelView() string {
 	return m.menuView() + "\n  " +
-		cMuted.Render("level for "+m.logger+":  1 TRACE · 2 DEBUG · 3 INFO · 4 WARN · 5 ERROR · 6 OFF") + " "
+		cTitle.Render("LOG LEVEL "+m.logger) +
+		cMuted.Render(":  1 TRACE · 2 DEBUG · 3 INFO · 4 WARN · 5 ERROR · 6 OFF · esc cancels") + " "
 }
 
 func (m model) levelKey(key string) (tea.Model, tea.Cmd) {
