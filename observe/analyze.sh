@@ -57,6 +57,19 @@ analyze_hprof() {
     local f="$1"
     hd "heap dump: $f"
     if ! head -c 12 "$f" 2>/dev/null | grep -q 'JAVA PROFILE'; then
+        # an EMPTY file means the capture COMMAND produced nothing — that's almost
+        # never an actuator problem (a secured/absent actuator returns a non-empty
+        # login/error page). It means the in-pod exec itself failed.
+        if [ ! -s "$f" ]; then
+            flag "EMPTY heap capture (0 bytes) — the capture produced no output, so there is no heap here"
+            say "an empty capture means the COMMAND failed, not the heap. Usual causes:"
+            say "  · the target pod is GONE or was RENAMED — pod names change on every restart"
+            say "      → re-pick the current pod, then recapture:  jdebug status   (menu: g → p)"
+            say "  · the exec was denied (RBAC), or the connection dropped mid-capture"
+            say "  · a failed snapshot can leave a 0-byte file behind — delete it once you've recaptured"
+            say "  (a secured/absent actuator returns a LOGIN or ERROR page, which is NOT empty)"
+            return
+        fi
         flag "NOT a valid hprof (bad magic) — this file is not a heap dump, so Eclipse MAT can't open it"
         local cls; cls="$(classify_capture "$f")"
         [ -n "$cls" ] && say "$cls"

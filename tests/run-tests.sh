@@ -136,6 +136,17 @@ MOCK_ACTUATOR=badpage run_case env JDEBUG_DUMPS="$TMP/adump" ./capture/actuator.
 assert_rc  "badpage: heap capture rejected" 1
 assert_has "badpage: classified as an HTML login page" "HTML login page"
 assert_has "badpage: names the recovery route" "via jattach"
+# pod gone: a capture whose exec fails at kubectl (NotFound) must blame the POD
+# (re-pick it), NOT the actuator — and must leave no misleading 0-byte file
+MOCK_POD_GONE=1 run_case env JDEBUG_DUMPS="$TMP/gdump" ./capture/actuator.sh heap --confirm -n default pod-a
+assert_rc  "pod-gone heap: fails" 1
+assert_has "pod-gone heap: says it couldn't reach the pod" "couldn't reach the pod"
+assert_has "pod-gone heap: names the real cause (renamed pod)" "REPLACED under a new name"
+assert_not "pod-gone heap: does NOT blame the actuator" "secured (HTTP"
+run_case bash -c 'ls '"$TMP"'/gdump/pods/pod-a/*/heap-actuator.hprof 2>/dev/null | wc -l | tr -d " "'
+assert_has "pod-gone heap: leaves no 0-byte file behind" "0"
+rm -rf "$TMP/gdump"
+
 rm -rf "$TMP/adump"
 
 # classify_capture: sniff a would-be dump and name what it actually is
@@ -256,6 +267,16 @@ assert_has "hprof: invalid classified, not sent to MAT" "raw HTTP error response
 assert_has "hprof: invalid gives exact recovery route" "via jattach --confirm"
 assert_has "summary counts findings" "finding(s) flagged above"
 assert_has "analyze names the next move" "Next: chase the ⚠ findings"
+
+# an EMPTY (0-byte) heap capture means the CAPTURE failed (pod gone/RBAC), NOT
+# an actuator route problem — the guidance must not mislead toward auth/URL
+EMPTYH="$(mktemp -d)"; : > "$EMPTYH/heap-actuator.hprof"
+run_case ./jdebug analyze "$EMPTYH/heap-actuator.hprof"
+assert_has "empty hprof: flagged as empty capture" "EMPTY heap capture"
+assert_has "empty hprof: blames the capture, points at the pod" "GONE or was RENAMED"
+assert_has "empty hprof: says re-pick and recapture" "re-pick the current pod"
+assert_not "empty hprof: does NOT mislead toward actuator auth" "set auth (k in the target editor)"
+rm -rf "$EMPTYH"
 
 run_case ./jdebug analyze "$SESS/threads-jattach.txt"
 assert_has "single-file analysis works" "DEADLOCK detected"

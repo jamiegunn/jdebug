@@ -102,6 +102,10 @@ case "$*" in
     *"get hpa"*)
         echo 'No resources found.' ;;
     *" exec "*)
+        # pod gone: the exec fails at kubectl (NotFound) before the snippet runs
+        if [ "${MOCK_POD_GONE:-}" = 1 ]; then
+            echo 'Error from server (NotFound): pods "pod-a" not found' >&2; exit 1
+        fi
         # actuator failure simulation: the in-pod snippet carries the URL and,
         # for a status probe, curl's %{http_code}. Match those to script 4xx.
         case "$*" in

@@ -36,6 +36,24 @@ require_cmd kubectl
 
 # In-pod HTTP goes through pod_fetch (lib/common.sh): curl, else busybox wget.
 
+# explain_capture_fail <errfile> <url> <no-http-fallback-cmd> — a failed capture
+# has two very different causes: the pod/exec itself failed (gone, renamed, RBAC,
+# unreachable) OR the pod is fine but the actuator didn't serve. Kubernetes puts
+# the first kind on stderr; route those to explain_kubectl_error (which says
+# "re-pick the pod") instead of blaming the actuator.
+explain_capture_fail() {
+    local errfile="$1" url="$2" jhint="$3" eline
+    eline="$(head -n1 "$errfile" 2>/dev/null)"
+    case "$eline" in
+        *NotFound*|*"not found"*|*[Ff]orbidden*|*refused*|*"no such"*|*Unable*|*"context deadline"*|*"unable to upgrade"*)
+            err "the capture couldn't reach the pod (it didn't fail at the actuator):"
+            explain_kubectl_error "$eline" "the in-pod capture" ;;
+        *)
+            err "actuator fetch failed."
+            explain_actuator_fail "$url" "$jhint" ;;
+    esac
+}
+
 # explain_actuator_fail <url> <no-http-fallback-cmd> — a failed actuator fetch
 # is ambiguous (secured? absent? app wedged?). Probe the HTTP status and give
 # the ONE precise next action instead of a catch-all. Prints to stderr.
@@ -106,13 +124,15 @@ case "$ACTION" in
         fi
         info "thread dump via actuator (pod=$POD)"
         show_cmd "kubectl -n $NAMESPACE exec $POD -c $APP_CONTAINER -- sh -c '<curl-or-wget> -H Accept:$ACCEPT $ACTUATOR_BASE/threaddump' > $LOCAL_PATH"
+        CERR="$(mktemp)"
         if ! kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
-                sh -c "$(pod_fetch "$ACTUATOR_BASE/threaddump" "$ACCEPT")" > "$LOCAL_PATH"; then
-            err "actuator threaddump failed."
-            explain_actuator_fail "$ACTUATOR_BASE/threaddump" "jdebug threads --via jattach -n $NAMESPACE $POD"
+                sh -c "$(pod_fetch "$ACTUATOR_BASE/threaddump" "$ACCEPT")" > "$LOCAL_PATH" 2>"$CERR"; then
             rm -f "$LOCAL_PATH"
+            explain_capture_fail "$CERR" "$ACTUATOR_BASE/threaddump" "jdebug threads --via jattach -n $NAMESPACE $POD"
+            rm -f "$CERR"
             exit 1
         fi
+        rm -f "$CERR"
         if [[ $AS_JSON -eq 1 ]]; then MARKER='"threads"'; else MARKER="Full thread dump"; fi
         if ! grep -q "$MARKER" "$LOCAL_PATH" 2>/dev/null; then
             err "capture looks wrong (no '$MARKER' marker) — leaving it for inspection: $LOCAL_PATH"
@@ -129,13 +149,15 @@ case "$ACTION" in
         LOCAL_PATH="$OUT_DIR/heap-actuator.hprof"
         info "heap dump via actuator (pod=$POD) — this PAUSES the JVM"
         show_cmd "kubectl -n $NAMESPACE exec $POD -c $APP_CONTAINER -- sh -c '<curl-or-wget> $ACTUATOR_BASE/heapdump' > $LOCAL_PATH"
+        CERR="$(mktemp)"
         if ! kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
-                sh -c "$(pod_fetch "$ACTUATOR_BASE/heapdump")" > "$LOCAL_PATH"; then
-            err "actuator heapdump failed."
-            explain_actuator_fail "$ACTUATOR_BASE/heapdump" "jdebug heap --via jattach --confirm -n $NAMESPACE $POD"
+                sh -c "$(pod_fetch "$ACTUATOR_BASE/heapdump")" > "$LOCAL_PATH" 2>"$CERR"; then
             rm -f "$LOCAL_PATH"
+            explain_capture_fail "$CERR" "$ACTUATOR_BASE/heapdump" "jdebug heap --via jattach --confirm -n $NAMESPACE $POD"
+            rm -f "$CERR"
             exit 1
         fi
+        rm -f "$CERR"
         # hprof files start with the magic "JAVA PROFILE 1.0.x". A 200 that isn't
         # one is almost always a secured endpoint's login/error page — classify
         # it so the user fixes the ROUTE, not chases a corrupt "heap" in MAT.
