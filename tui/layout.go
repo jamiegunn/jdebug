@@ -76,13 +76,14 @@ func (m model) leftW() int {
 
 // cols splits tier-2 width into menu | mid (target/trends/next) | events,
 // with two 2-char gutters. At 140: 62/38/36 · at 200: 78/46/72.
-// cols splits the tier-2 width into three EQUAL columns (menu | mid | right),
-// each ~1/3, separated by two 2-col gutters. The remainder lands in the right
-// column so menuW+midW+evW+4 == tw() exactly.
+// cols splits the tier-2 width into three columns (menu | mid | right) separated
+// by two 2-col gutters. The menu gets a slightly larger share (36%) since its
+// rows carry the longest text; mid and right split the rest evenly. The
+// remainder lands in the right column so menuW+midW+evW+4 == tw() exactly.
 func (m model) cols() (menuW, midW, evW int) {
 	inner := m.tw() - 4 // two 2-col gutters between the three columns
-	menuW = inner / 3
-	midW = inner / 3
+	menuW = inner * 36 / 100
+	midW = inner * 32 / 100
 	evW = inner - menuW - midW
 	return
 }
