@@ -77,6 +77,14 @@ func (m model) headerRemote(reachable bool) string {
 	return b.String()
 }
 
+// headerH is the header's real height in rows. It is NOT a constant: the target
+// line gets its own row when it's too wide to fit (long pod names), and a stale
+// pin adds another. Click hit-testers must use this, never a hardcoded 3, or the
+// whole right column is off by a row and every click lands one entry too far.
+func (m model) headerH() int {
+	return strings.Count(m.headerRemote(m.remote.Cluster), "\n") + 1
+}
+
 func (m model) headerLocal(jattachOK bool) string {
 	w := m.tw()
 	title := " jvm debug kit"

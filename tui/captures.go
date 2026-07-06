@@ -228,8 +228,8 @@ func (m model) capsHit(x, y int) (bool, int) {
 	}
 	body := m.remoteBody()
 	topH := strings.Count(body, "\n") + 1
-	podH, evH, capH := rightHeights(topH)
-	y0 := 3 + podH + evH // header rows + PODS + EVENTS above
+	podH, workH, capH := rightHeights(topH)
+	y0 := m.headerH() + podH + workH // real header height + PODS + WORKLOAD above
 	if y < y0+1 || y >= y0+capH {
 		return false, 0 // y0 is the title row
 	}

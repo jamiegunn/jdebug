@@ -116,7 +116,7 @@ func (m model) podsHit(x, y int) (bool, int) {
 	if x < x0 || x >= x0+evW {
 		return false, 0
 	}
-	y0 := 3 // header is three rows
+	y0 := m.headerH() // header height varies (target line wrap / stale pin)
 	if y < y0 || y >= y0+m.podsPaneH() {
 		return false, 0
 	}

@@ -660,6 +660,41 @@ func TestClickOutsideMenuColumnIsNotARun(t *testing.T) {
 	}
 }
 
+func TestCapturesClickRowMappingWithTallHeader(t *testing.T) {
+	m := readyModel200()
+	m.staleP = "old-pod-that-forces-an-extra-header-row" // header grows past 3 rows
+	if got := m.headerH(); got < 4 {
+		t.Fatalf("a stale pin must add a header row (want ≥4), got %d", got)
+	}
+	// find the CAPTURES title row as actually rendered
+	lines := strings.Split(m.View(), "\n")
+	titleRow := -1
+	for i, ln := range lines {
+		if strings.Contains(ansi.Strip(ln), "CAPTURES") {
+			titleRow = i
+			break
+		}
+	}
+	if titleRow < 0 {
+		t.Fatal("CAPTURES pane not rendered")
+	}
+	menuW, midW, _ := m.cols()
+	x := menuW + midW + 5 // a column inside the right (CAPTURES) pane
+
+	// the title row itself is not a clickable entry
+	if in, _ := m.capsHit(x, titleRow); in {
+		t.Error("clicking the CAPTURES title row must not select an entry")
+	}
+	// each content line maps to its own index — no off-by-one
+	for k := 0; k < 2; k++ {
+		in, row := m.capsHit(x, titleRow+1+k)
+		if !in || row != k {
+			t.Errorf("click on content line %d → (in=%v row=%d), want row=%d (header=%d)",
+				k, in, row, k, m.headerH())
+		}
+	}
+}
+
 func TestWorkTabsAreClickable(t *testing.T) {
 	m := readyModel200() // 200×50 → tier 2, log pane shown
 	m.workTab = tabWork
