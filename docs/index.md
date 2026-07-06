@@ -38,14 +38,15 @@ different clusters and policies.
   (copy-paste it yourself next time), interprets its own output
   ("how to read this"), and names the next step and the right analysis tool.
 - **Safe by default.** Everything is read-only except heap dumps (which pause
-  the JVM) and log-level changes — both are labeled in the menu, and anything
-  destructive asks first, every time.
+  the JVM), log-level changes, and the two explicit state-changing actions —
+  `restart` (rolling-restart the deployment) and `kill` (delete the pod). All
+  are labeled in the menu, and anything destructive asks first, every time.
 - **Evidence you can't lose.** Captures land in one `dumps/` directory, every
   interactive session is transcribed to a log, and `jdebug dumps` lists what
   you have with per-file analysis instructions.
-- **Guided.** `jdebug wizard` asks what you're seeing — OOMKilled, slow,
-  high CPU, creeping memory, GC pauses — and runs the right capture sequence
-  for that symptom. The menu's `h` key is a full glossary.
+- **Guided.** `jdebug wizard` asks what you're seeing — down, slow, restarting,
+  memory, CPU, a recent deploy, or "not sure" — and runs the right capture
+  sequence for that symptom. The menu's `?` key is a full glossary.
 
 ## Start here
 

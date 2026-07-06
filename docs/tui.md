@@ -70,6 +70,7 @@ rules, a footer with navigation keys and a risk legend, and a live `❯` prompt:
    h   health      is a dependency — db, queue — down?                   ●
    o   top         which pod is eating CPU or memory?                    ●
    m   memory      is the app near its memory limit?                     ●
+   e   context     services, env, probes, deps — how it's wired         ●
    W   workload    the tree + limits, probes, exit codes, autoscaling    ●
    S   security    running as root? privileged? network policy?         ●
    l   logs        what did the app say? (live stream)                   ●

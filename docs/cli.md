@@ -18,11 +18,15 @@ optional trailing pod name. `jdebug -V` prints the version.
 | `jdebug security [pod]` | pod security posture: live-verified uid (root?), privilege/capabilities, read-only rootfs, host namespaces, service-account token exposure, NetworkPolicy reachability | each ⚠ names its one-line fix; unknowns are flagged, never assumed safe |
 | `jdebug topology [pod]` | the workload tree: Deployment → its ReplicaSets (current + old revisions) → pods, plus HPA and routing Services | flags old ReplicaSets still running pods (mid/stuck rollout) and the replicas-vs-HPA fight; explains what's current vs stale |
 | `jdebug workload [pod]` | `topology` + `why` in one scroll — the rollout tree, then the pod deep-dive (limits, probes, exit codes, autoscaling). This is what the TUI's `W` key runs | run `topology` or `why` alone if you only want one half |
+| `jdebug context [pod]` | how the app is wired: Services/Endpoints that expose it, env & config refs, probes, volumes, and dependencies (Valkey/Redis) | secret **values** redacted — names/keys/refs only |
 | `jdebug health` | actuator health, per subsystem + liveness/readiness | DOWN component = failing dependency |
 | `jdebug top` | `kubectl top pods` + HPA state | needs metrics-server |
 | `jdebug memory` | container RSS vs JVM heap/non-heap, reconciled per pool | needs `python3` on the host; refuses to print a misleading table if metrics fail |
 | `jdebug metrics [name]` | list JVM/process/system metric names, or one live value | re-run to trend, e.g. `jvm.gc.pause` |
 | `jdebug logs` | stream logs from all matching replicas | requires a selector; uses `stern` if installed |
+| `jdebug what-changed [pod]` | answers "did something change?" — image/imageID, restart & rollout times, events since the last restart, `--previous` logs, probe failures, HPA-vs-Deployment replicas | composed from data you already have; read-only |
+| `jdebug timeline [pod]` | merges `kubectl get events` with the session's capture timestamps into one chronological view | read-only |
+| `jdebug escalate [pod]` | builds a handoff brief from session state: target, symptom, findings, commands run, captures + paths, blocked checks, suggested next action, sensitive-evidence warning | read-only; redaction on |
 
 ## Capture — evidence files → `dumps/`
 
@@ -50,7 +54,10 @@ announcing each fallback. Force one tier with `--via actuator|jattach|jdk`.
 |---|---|
 | `jdebug doctor` | pre-incident checkup: host tools, captures dir, jattach cache, cluster, target pods, actuator — ✓/!/✗ with fixes, non-zero exit on blockers |
 | `jdebug dumps` | list every capture with per-type analysis instructions |
-| `jdebug analyze [path]` | first-pass triage of every capture: thread-state histogram, deadlocks, contended locks, hot frames, DOWN health components, OOM-risk %, invalid dumps — with the right deep tool named per finding |
+| `jdebug analyze [path]` | first-pass triage of every capture: thread-state histogram (idle NIO/epoll selectors named, not mistaken for a busy loop), deadlocks, contended locks, real hot frames, DOWN health components, OOM-risk %, invalid dumps — with the right deep tool named per finding |
+| `jdebug analyze --deep <heap>` | heap dump **retained size** (dominator tree) + **path to GC roots** — which objects keep memory alive and why. No Eclipse MAT needed |
+| `jdebug analyze --diff [before after]` | diff two heap dumps to see what **grew** (leak hunting); with no args it auto-picks the two newest valid dumps |
+| `jdebug cleanup` | prune old/empty captures and stale remote artifacts from `dumps/` |
 | `jdebug install-jattach` | pre-stage the jattach binary in the pod |
 | `jdebug push-local` | copy the in-pod tool (`jdebug-local`) to `<pod>:/tmp` |
 | `jdebug wizard` | jump straight into guided diagnosis |

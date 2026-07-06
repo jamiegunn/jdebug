@@ -1,10 +1,11 @@
 package main
 
-// worktabs.go — the bottom work area, split into three tabs so its three jobs
-// stop competing: WORK (the command you launched + its output), LOGS (the live
-// tail), EVENTS (recent pod events, back from the right column the WORKLOAD pane
-// reclaimed). tab/shift-tab switch; a launched command auto-selects WORK. The
-// active tab is marked with brackets — legible without colour.
+// worktabs.go — the bottom work area, split into four tabs so its jobs stop
+// competing: WORK (the command you launched + its output), LOGS (the live
+// tail), EVENTS (recent pod events), and CAPTURES (the roomy full-width
+// evidence browser). Click a tab or tab/shift-tab to switch; a launched
+// command auto-selects WORK. The active tab is bracketed — legible without
+// colour.
 
 import (
 	"fmt"

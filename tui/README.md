@@ -29,11 +29,13 @@ Two consequences worth knowing:
 
 The layout scales in three tiers (`layout.go`): compact (<104 cols), the
 classic menu + 38-col TARGET LIVE sidebar (104–139), and the full grid
-(≥140×34) — menu | TARGET LIVE + TRENDS sparklines + NEXT | EVENTS +
-CAPTURES, with a **live log tail** strip filling the remaining height.
-The log pane polls `kubectl logs --tail=200` every 5 s (errors and stack
-traces red, warnings amber; `f` expands it full-screen with j/k scrollback);
-events and captures refresh on the 20 s tick; trend samples piggyback on
+(≥140×34, which now **fills the whole terminal width**) — menu | TARGET LIVE +
+TRENDS sparklines + NEXT | PODS + WORKLOAD + CAPTURES-scope. The bottom is a
+**tabbed work area** — WORK / LOGS / EVENTS / CAPTURES (click a tab or
+tab/shift-tab) — filling the remaining height. The LOGS tab polls
+`kubectl logs --tail=200` every 5 s (errors and stack traces red, warnings
+amber; `f` expands it full-screen with j/k scrollback); events and captures
+refresh on the 20 s tick; trend samples piggyback on
 every panel fetch. The **NEXT box** converts live data into suggested key
 presses, so the app brings the mental model instead of demanding one.
 Every fixed-height frame is exact: overlay screens (confirm, jcmd, …)

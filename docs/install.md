@@ -100,6 +100,6 @@ Defaults come from flags, then environment, then built-ins:
 | actuator URL | `--actuator-base` | `ACTUATOR_BASE` | `http://localhost:8080/actuator` |
 | kube context | — | `KUBECONFIG` / kubectl | ambient |
 
-jdebug never rewrites your kubeconfig. In the menu, press `t` to switch
-contexts (with confirmation), set the namespace/selector, and pin a specific
-pod when several match.
+jdebug never rewrites your kubeconfig. In the menu, press `g` to open the
+target editor — switch contexts (with confirmation), set the namespace/selector,
+and pin a specific pod when several match.

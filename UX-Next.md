@@ -11,9 +11,8 @@
   `TestInterstitialsHaveTitleAndDismiss`.
 - **Actuator auth interstitial** — `k` opens a guided `ACTUATOR AUTH` screen
   (formats + examples + how-to-find + jattach fallback; stores a reference only).
-- **Bottom work-area tabs** — WORK / LOGS / EVENTS tab strip; events are back
-  from the right column; tab/shift-tab switch; a launched command auto-selects
-  WORK.
+- **Bottom work-area tabs** — WORK / LOGS / EVENTS / CAPTURES tab strip; click a
+  tab or tab/shift-tab to switch; a launched command auto-selects WORK.
 - **Remote artifact lifecycle** — the CLI records what it staged in a pod
   (jattach / jdebug-local) with ownership; `jdebug cleanup [--confirm]` removes
   only session-staged files (never pre-existing, never local dumps/); the TUI
