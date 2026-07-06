@@ -48,8 +48,9 @@ type panelData struct {
 	HeapMax     string
 	HeapVia     string // "actuator" or "jcmd" — which route answered
 	ActuatorOK  bool
-	NoMetrics   bool // kubectl top failed because metrics-server is absent
-	HeapSkipped bool // quiet mode: the JVM/actuator probe was deliberately not run
+	NoMetrics   bool            // kubectl top failed because metrics-server is absent
+	HeapSkipped bool            // quiet mode: the JVM/actuator probe was deliberately not run
+	Metrics     actuatorMetrics // actuator /metrics scrape for the TRENDS tab
 }
 
 type panelMsg panelData
@@ -123,7 +124,7 @@ func fetchPanel(t target, probeJVM bool) tea.Cmd {
 	return func() tea.Msg {
 		ctx, cancel := context.WithTimeout(context.Background(), 8*time.Second)
 		defer cancel()
-		d := panelData{When: time.Now(), MemPct: -1}
+		d := panelData{When: time.Now(), MemPct: -1, Metrics: emptyMetrics()}
 		if t.Pod != "" {
 			if raw, err := exec.CommandContext(ctx, "kubectl", "-n", t.Namespace, "get", "pod", t.Pod, "-o", "json").Output(); err == nil {
 				var pj podJSON
@@ -185,8 +186,14 @@ func fetchPanel(t target, probeJVM bool) tea.Cmd {
 			if probeJVM {
 				d.HeapUsed, d.HeapMax, d.HeapVia = jvmHeap(t)
 				d.ActuatorOK = d.HeapVia == "actuator"
+				if d.ActuatorOK { // only the actuator serves /metrics — skip when it's down
+					d.Metrics = jvmMetrics(t)
+				} else {
+					d.Metrics = emptyMetrics()
+				}
 			} else {
 				d.HeapSkipped = true // carried heap shown; not re-probed while quiet
+				d.Metrics = emptyMetrics()
 			}
 		}
 		parseHPA(ctx, t.Namespace, &d)

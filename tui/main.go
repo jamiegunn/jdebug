@@ -80,34 +80,38 @@ type model struct {
 	logger   string
 
 	// live panes (dashboard v3)
-	panel        panelData
-	logs         logState
-	events       []eventLine
-	eventsErr    string
-	hist         []sample // sparkline history, one point per panel fetch
-	caps         []capEntry
-	capsCwd      string // CAPTURES browser: explicit browse dir ("" = pod default)
-	capsOff      int
-	capsWhen     time.Time  // when the captures list was last refreshed
-	capsFocus    bool       // the full-screen keyboard captures browser (d) is open
-	capsSel      int        // selected row in the focus browser
-	capsFilter   string     // focus-browser filter: all|heaps|threads|logs|snapshots
-	capsFlat     []capEntry // flat recursive capture list for the focus browser
-	pods         []string   // PODS pane: what the selector/namespace matches
-	podsScope    string
-	podsErr      string
-	podsOff      int
-	detailAnchor string // transparency cards: key shown first ("" = all)
-	detailOff    int
-	out          outState   // in-app command output (scOutput)
-	artifacts    []artifact // files jdebug staged inside the pod (remote-artifacts.tsv)
-	lastCapture  string     // path a capture just wrote → `a` analyzes exactly it
+	panel     panelData
+	logs      logState
+	events    []eventLine
+	eventsErr string
+	hist      []sample // sparkline history, one point per panel fetch
+	// previous cumulative actuator counters, to turn GC/HTTP totals into rates
+	prevGCCount, prevGCTime     float64
+	prevHTTPCount, prevHTTPTime float64
+	prevMetricsAt               time.Time
+	caps                        []capEntry
+	capsCwd                     string // CAPTURES browser: explicit browse dir ("" = pod default)
+	capsOff                     int
+	capsWhen                    time.Time  // when the captures list was last refreshed
+	capsFocus                   bool       // the full-screen keyboard captures browser (d) is open
+	capsSel                     int        // selected row in the focus browser
+	capsFilter                  string     // focus-browser filter: all|heaps|threads|logs|snapshots
+	capsFlat                    []capEntry // flat recursive capture list for the focus browser
+	pods                        []string   // PODS pane: what the selector/namespace matches
+	podsScope                   string
+	podsErr                     string
+	podsOff                     int
+	detailAnchor                string // transparency cards: key shown first ("" = all)
+	detailOff                   int
+	out                         outState   // in-app command output (scOutput)
+	artifacts                   []artifact // files jdebug staged inside the pod (remote-artifacts.tsv)
+	lastCapture                 string     // path a capture just wrote → `a` analyzes exactly it
 
 	// in-flight fetch guards: a slow cluster must not stack goroutines
 	panelBusy bool
 	logBusy   bool
 
-	workTab   int    // bottom work area: tabWork | tabLogs | tabEvents
+	workTab   int    // bottom work area: tabWork|tabLogs|tabEvents|tabCaptures|tabTrends
 	bgMode    int    // background refresh: bgLive | bgQuiet | bgPaused
 	logTickOn bool   // the 5s log ticker is armed (must never double-arm)
 	autoRan   bool   // the one-shot startup auto-status already fired
@@ -275,12 +279,26 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.panel = nd
 		m.panelBusy = false
 		if m.mode == 1 && v.Phase != "" {
+			am := v.Metrics
+			dt := 0.0
+			if !m.prevMetricsAt.IsZero() {
+				dt = v.When.Sub(m.prevMetricsAt).Seconds()
+			}
+			f := deriveMetrics(am, m.prevGCCount, m.prevGCTime, m.prevHTTPCount, m.prevHTTPTime, dt)
+			if am.GCCount >= 0 { // remember cumulative counters for the next delta
+				m.prevGCCount, m.prevGCTime = am.GCCount, am.GCTimeSec
+			}
+			if am.HTTPCount >= 0 {
+				m.prevHTTPCount, m.prevHTTPTime = am.HTTPCount, am.HTTPTimeSec
+			}
+			if am.GCCount >= 0 || am.HTTPCount >= 0 {
+				m.prevMetricsAt = v.When
+			}
 			m.hist = pushSample(m.hist, sample{When: v.When, MemPct: v.MemPct,
 				CPUMilli: cpuMilli(v.CPUUse), Restarts: v.Restarts, HeapPct: pct(v.HeapUsed, v.HeapMax),
-				// actuator-sourced metrics are filled in by the metrics scrape;
-				// unknown until then (-1 keeps their rows hidden, never "0")
-				Threads: -1, GCPauseMs: -1, GCPerMin: -1, HTTPRps: -1, HTTPMs: -1,
-				DBActive: -1, DBIdle: -1, DBPending: -1})
+				Threads: f.Threads, GCPauseMs: f.GCPauseMs, GCPerMin: f.GCPerMin,
+				HTTPRps: f.HTTPRps, HTTPMs: f.HTTPMs,
+				DBActive: f.DBActive, DBIdle: f.DBIdle, DBPending: f.DBPending})
 		}
 		return m, nil
 	case logMsg:
@@ -606,7 +624,8 @@ func main() {
 	}
 	initSessionLog(kit)
 
-	m := model{kit: kit, t: loadTarget(), width: 100, workTab: tabLogs}
+	m := model{kit: kit, t: loadTarget(), width: 100, workTab: tabLogs,
+		prevGCCount: -1, prevHTTPCount: -1}
 	switch os.Getenv("JDEBUG_MODE") {
 	case "1":
 		m.mode = 1
