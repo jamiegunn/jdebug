@@ -60,7 +60,7 @@ press("\x1b", 1)        # esc back
 press("w", 1)           # guided diagnosis…
 press("2", 8)           #   …streams BOTH steps + wrap-up into the pane
 press("\x1b", 1)        # esc back to the live logs
-press("y", 4)           # pod deep-dive (why) streams into the pane
+press("y", 4)           # workload deep-dive (y is an alias for W) streams into the pane
 press("\x1b", 1)        # esc back
 press("S", 4)           # security posture streams into the pane
 press("\x1b", 1)        # esc back

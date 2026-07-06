@@ -19,6 +19,7 @@
 #     why           pod deep-dive: limits, probes, exit codes, HPA (why.sh)
 #     security      pod security posture, in plain language (security.sh)
 #     topology      deployment → replicasets → pods + HPA/services (topology.sh)
+#     workload      topology + why in one scroll — what the TUI's W key runs
 #     context       app wiring: services, env, probes, volumes, deps (context.sh)
 #     escalate      paste-ready handoff brief for asking for help (escalate.sh)
 #     timeline      pod events + your captures, in time order (timeline.sh)
@@ -262,6 +263,11 @@ case "$cmd" in
     why)             fwd "$D/observe/why.sh" ;;
     security)        fwd "$D/observe/security.sh" ;;
     topology)        fwd "$D/observe/topology.sh" ;;
+    # workload = the whole picture in one scroll: the topology tree (what owns
+    # the pod, rollout state, HPA, services) THEN the why deep-dive (limits,
+    # probes, exit codes, autoscaling). `why` and `topology` remain on their own
+    # for anyone who wants just one half.
+    workload)        fwd "$D/observe/topology.sh"; echo; fwd "$D/observe/why.sh" ;;
     context|wiring)  fwd "$D/observe/context.sh" ;;
     escalate|handoff) fwd "$D/observe/escalate.sh" ;;
     timeline)        fwd "$D/observe/timeline.sh" ;;

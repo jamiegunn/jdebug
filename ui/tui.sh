@@ -958,8 +958,7 @@ menu_remote() {
     mrow h health  "is a dependency — db, queue — down?"    safe
     mrow o top     "which pod is eating CPU or memory?"     safe
     mrow m memory  "is the app near its memory limit?"      safe
-    mrow y why     "pod deep-dive — limits, probes, exit codes, autoscaling" safe
-    mrow W workload "deployment → replicasets → pods, HPA, services"        safe
+    mrow W workload "the tree + limits, probes, exit codes, autoscaling"    safe
     mrow e context  "services, env, probes, deps (Valkey/Redis) — how it's wired" safe
     mrow S security "running as root? privileged? network policy?"          safe
     mrow l logs    "what did the app say? (live stream)"    safe
@@ -1036,8 +1035,8 @@ dispatch_remote() {
     case "$1" in
         w)   wizard; SKIP_PAUSE=1 ;;
         s)   run "$DBG" status ;;
-        y|Y) run "$DBG" why ${POD_PIN:+"$POD_PIN"} ;;
-        W)   run "$DBG" topology ${POD_PIN:+"$POD_PIN"} ;;
+        y|Y) run "$DBG" workload ${POD_PIN:+"$POD_PIN"} ;;  # y kept as an alias for W
+        W)   run "$DBG" workload ${POD_PIN:+"$POD_PIN"} ;;
         e)   run "$DBG" context ${POD_PIN:+"$POD_PIN"} ;;
         E)   run "$DBG" escalate ${POD_PIN:+"$POD_PIN"} ;;
         S)   run "$DBG" security ${POD_PIN:+"$POD_PIN"} ;;

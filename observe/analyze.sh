@@ -89,14 +89,25 @@ analyze_threads() {
         flag "$blk thread(s) BLOCKED — lock contention. Most-contended locks:"
         grep -o 'waiting to lock <[^>]*> ([^)]*)' "$f" | sort | uniq -c | sort -rn | head -3 | sed 's/^ */      /'
     fi
-    # many RUNNABLE threads on the same top frame = a busy loop / hot spot
-    local hot hotn
-    hot=$(awk '/Thread.State: RUNNABLE/{getline; if ($1=="at") print $2}' "$f" | sort | uniq -c | sort -rn | head -1)
-    hotn=$(awk '{print $1}' <<<"$hot")
-    if [[ -n "$hot" && "${hotn:-0}" -ge 3 ]]; then
-        flag "hot frame: ${hotn}× $(awk '{print $2}' <<<"$hot") — that many RUNNABLE threads in one spot suggests a busy loop"
+    # Which frame each RUNNABLE thread is actually on. CRUCIAL: the JVM reports
+    # NIO event-loop / selector / socket-accept threads as RUNNABLE even though
+    # they are parked in the kernel (epoll/kqueue) waiting for I/O — they are
+    # IDLE, not burning CPU. Counting those as a "busy loop" is a false alarm,
+    # so we split idle-native frames out and never flag them as a hot spot.
+    local topframes idle_re hot hotn hotf idlen
+    idle_re='EPoll|KQueue|/Net\.|SelectorImpl|NioEventLoop|socketAccept|socketRead0|PlainSocketImpl|FileDispatcherImpl|SocketDispatcher|accept0|poll0|Poller'
+    topframes=$(awk '/Thread.State: RUNNABLE/{getline; if($1=="at"){fr=$2; sub(/^[^\/]*@[^\/]*\//,"",fr); c[fr]++}} END{for(k in c) printf "%d\t%s\n", c[k], k}' "$f" | sort -rn)
+    # a REAL hot spot = the most common RUNNABLE frame that is NOT idle I/O
+    hot=$(printf '%s\n' "$topframes" | grep -Ev "$idle_re" | head -1)
+    hotn=$(awk -F'\t' 'NR==1{print $1}' <<<"$hot")
+    hotf=$(awk -F'\t' 'NR==1{print $2}' <<<"$hot")
+    if [[ -n "$hotf" && "${hotn:-0}" -ge 3 ]]; then
+        flag "hot frame: ${hotn}× ${hotf} — that many threads truly running the same code is a real hot spot; profile it"
     fi
-    [[ "$FLAGS" -eq "$before" ]] && say "nothing alarming — mostly waiting threads is normal for a pool-based app"
+    # idle selectors reported as RUNNABLE — name them so they're not mistaken for load
+    idlen=$(printf '%s\n' "$topframes" | grep -E "$idle_re" | awk -F'\t' '{s+=$1} END{print s+0}')
+    [[ "${idlen:-0}" -gt 0 ]] && say "${idlen} RUNNABLE thread(s) are event-loop/selector threads parked in native I/O (epoll/kqueue) — idle, not load"
+    [[ "$FLAGS" -eq "$before" ]] && say "nothing alarming — mostly waiting/idle threads is normal for a pool-based app"
     say "deeper: open the file in VisualVM (free, runs locally — visualvm.github.io)"
 }
 

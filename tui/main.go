@@ -358,7 +358,7 @@ func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m.capsClick(row)
 		}
 		if m.panelHit(v.X, v.Y) {
-			return m.quickCLI(true, "why") // drill into what the panel summarizes
+			return m.quickCLI(true, "workload") // drill into what the panel summarizes
 		}
 		if key, ok := m.menuRowClick(v.X, v.Y); ok {
 			return m.menuKey(key) // same path as pressing the key (confirms fire)

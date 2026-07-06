@@ -245,8 +245,7 @@ var remoteActions = struct {
 		{"h", "health", "is a dependency — db, queue — down?", "safe", ""},
 		{"o", "top", "which pod is eating CPU or memory?", "safe", ""},
 		{"m", "memory", "is the app near its memory limit?", "safe", ""},
-		{"y", "why", "limits, probes, exit codes, autoscaling", "safe", ""},
-		{"W", "workload", "deployment → replicasets → pods", "safe", ""},
+		{"W", "workload", "the tree + limits, probes, exit codes, autoscaling", "safe", ""},
 		{"e", "context", "services, env, probes, deps — how it's wired", "safe", ""},
 		{"S", "security", "root? privileged? network policy?", "safe", ""},
 		{"l", "logs", "what did the app say? (live stream)", "safe", ""},
@@ -478,10 +477,8 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 		return m.openWizard()
 	case "s":
 		return m.quickCLI(false, "status")
-	case "y", "Y":
-		return m.quickCLI(true, "why")
-	case "W":
-		return m.quickCLI(true, "topology")
+	case "y", "Y", "W": // y kept as an alias — its old "why" view now lives inside workload
+		return m.quickCLI(true, "workload")
 	case "e":
 		return m.quickCLI(true, "context")
 	case "E": // one-key handoff brief for asking a senior for help

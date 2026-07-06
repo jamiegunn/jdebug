@@ -270,6 +270,26 @@ assert_has "analyze names the next move" "Next: chase the ⚠ findings"
 # the shallow heap pass advertises the opt-in retained-size (dominator) pass
 assert_has "hprof: advertises the deep retained pass" "jdebug analyze --deep"
 
+# idle NIO selector threads are RUNNABLE-but-parked — must NOT be called a busy loop
+IDLE="$AD/pods/pod-idle/20260704T030000Z"; mkdir -p "$IDLE"
+cat > "$IDLE/threads.txt" <<'EOF'
+Full thread dump OpenJDK 64-Bit Server VM
+"reactor-http-epoll-1" #20
+   java.lang.Thread.State: RUNNABLE
+	at java.base@21.0.11/sun.nio.ch.EPoll.wait(Native Method)
+"reactor-http-epoll-2" #21
+   java.lang.Thread.State: RUNNABLE
+	at java.base@21.0.11/sun.nio.ch.EPoll.wait(Native Method)
+"reactor-http-epoll-3" #22
+   java.lang.Thread.State: RUNNABLE
+	at java.base@21.0.11/sun.nio.ch.EPoll.wait(Native Method)
+EOF
+run_case ./jdebug analyze "$IDLE/threads.txt"
+assert_rc  "analyze idle threads exits 0" 0
+assert_not "idle selectors are NOT called a busy loop"   "busy loop"
+assert_not "idle selectors are NOT flagged as a hot frame" "hot frame"
+assert_has "idle selectors explained as parked I/O"       "parked in native I/O"
+
 # --deep is a FLAG, not a path — it must be filtered from the target, not opened
 run_case ./jdebug analyze --deep "$AD/pods/pod-a/20260704T010000Z"
 assert_rc  "analyze --deep: flag parsed (exit 0)" 0
@@ -320,6 +340,13 @@ assert_has "topology flags an old RS still running pods" "OLD revision still run
 assert_has "topology detects the replicas-vs-HPA fight" "they FIGHT"
 assert_has "topology lists the routing Service" "Services routing here: app"
 assert_has "topology ends with a verdict" "Bottom line:"
+
+# workload = topology + why collapsed into one view ([W] in both frontends)
+run_case ./jdebug workload pod-a
+assert_rc  "workload exits 0" 0
+assert_has "workload includes the topology tree" "Deployment app  (revision 3)"
+assert_has "workload includes the why deep-dive" "requests = the scheduler's promise"
+assert_has "workload includes probes from why" "traffic arrives the MOMENT"
 
 # --- runtime context / app wiring ---------------------------------------------
 section "context (app wiring: services, env, probes, deps)"
@@ -749,7 +776,7 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         assert_has "tui: menu sections" "QUICK CHECKS"
         assert_has "tui: start-here section" "START HERE"
         assert_has "tui: advanced tools demoted" "ADVANCED"
-        assert_has "tui: pod deep-dive on key y" "y   why"
+        assert_has "tui: workload deep-dive on key W (why collapsed in)" "W   workload"
         assert_has "tui: security on shifted S" "S   security"
         assert_has "tui: terminal on shifted T" "T   terminal"
         assert_has "tui: heap inline risk" "pauses app"

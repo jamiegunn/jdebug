@@ -181,7 +181,7 @@ func TestMenuParityStrings(t *testing.T) {
 	out := v.menuView()
 	for _, want := range []string{"START HERE", "QUICK CHECKS", "CAPTURE EVIDENCE", "ADVANCED",
 		"guided diagnosis", "pauses app", "safe / caution / disruptive", "❯", "[?] help",
-		"why", "workload", "security", "terminal", "re-roll", "kill pod"} {
+		"workload", "security", "terminal", "re-roll", "kill pod"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("menu missing %q", want)
 		}
@@ -660,7 +660,7 @@ func TestClickOutsideMenuColumnIsNotARun(t *testing.T) {
 	}
 }
 
-func TestPanelClickDrillsIntoWhy(t *testing.T) {
+func TestPanelClickDrillsIntoWorkload(t *testing.T) {
 	m := readyModel()
 	m.width, m.height = 200, 50
 	menuW, _, _ := m.cols()
@@ -668,8 +668,8 @@ func TestPanelClickDrillsIntoWhy(t *testing.T) {
 	y := 5             // a panel row
 	res, cmd := m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	mm := res.(model)
-	if cmd == nil || !mm.out.running || !strings.Contains(mm.out.title, "why") {
-		t.Fatalf("clicking the TARGET panel must run the deep-dive, got title %q", mm.out.title)
+	if cmd == nil || !mm.out.running || !strings.Contains(mm.out.title, "workload") {
+		t.Fatalf("clicking the TARGET panel must run the workload deep-dive, got title %q", mm.out.title)
 	}
 }
 
