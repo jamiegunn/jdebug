@@ -151,13 +151,7 @@ func (m model) editorKey(key string) (tea.Model, tea.Cmd) {
 		m.scr = scInput
 		return m, nil
 	case "k", "K":
-		m.editor.note = "auth is a REFERENCE to the pod's own env vars — the secret stays in the pod. " +
-			"Usual source: a Kubernetes Secret mounted as env (verify with the k8s exec: T, then `env | grep -i actuator`). " +
-			"none · empty to clear"
-		m.input = inputBox{title: "actuator auth ref — bearer:ENV_VAR  or  basic:USER_VAR:PASS_VAR  [" + authDisplay(m.t.ActuatorAuth) + "]:", then: inputActuatorAuth}
-		m.prev = scEditor
-		m.scr = scInput
-		return m, nil
+		return m.openAuth() // the guided ACTUATOR AUTH screen
 	case "b", "B", "enter", "esc":
 		saveTarget(m.t)
 		m.remote.When = zeroTime() // force re-probe

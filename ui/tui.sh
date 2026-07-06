@@ -667,9 +667,16 @@ retarget() {
             p|P) pick_pod ;;
             a|A) printf '  actuator base [%s]: ' "$ACTUATOR_BASE"; IFS= read -r v; [[ -n "$v" ]] && ACTUATOR_BASE="$v" ;;
             k|K)
-                printf '  %sauth is a REFERENCE to the pod'\''s own env vars — the secret stays in the pod.%s\n' "$DIM" "$OFF"
-                printf '  %susual source: a Kubernetes Secret mounted as env (verify: T, then env | grep -i actuator).%s\n' "$DIM" "$OFF"
-                printf '  bearer:ENV_VAR  or  basic:USER_VAR:PASS_VAR  ("none" to clear) [%s]: ' "${ACTUATOR_AUTH:-none}"
+                printf '\n  %sACTUATOR AUTH%s — jdebug stores a REFERENCE, not the secret.\n' "$B" "$OFF"
+                printf '  The token/password already exists in the pod as an env var; jdebug asks the pod\n'
+                printf '  to expand it at call time (secret never touches jdebug config).\n\n'
+                printf '    bearer token:  %sbearer:MANAGEMENT_TOKEN%s        sends: Authorization: Bearer $MANAGEMENT_TOKEN\n' "$GN" "$OFF"
+                printf '    basic auth:    %sbasic:ACTUATOR_USER:ACTUATOR_PASSWORD%s\n' "$GN" "$OFF"
+                printf '    clear:         %snone%s\n\n' "$GN" "$OFF"
+                printf '  %sfind the env var NAMES (never paste secret values):%s\n' "$DIM" "$OFF"
+                printf '    W workload -> Environment / Secret references · T -> env | grep -Ei %sactuator|management|token|password%s\n' "'" "'"
+                printf '  %sno credentials? capture JVM evidence without HTTP: threads t->jattach · heap H->jattach · j jcmd%s\n\n' "$DIM" "$OFF"
+                printf '  auth ref (env var NAME(s), "none" to clear) [%s]: ' "${ACTUATOR_AUTH:-none}"
                 IFS= read -r v
                 if [[ "$v" == none ]]; then ACTUATOR_AUTH=""
                 elif [[ -n "$v" ]]; then ACTUATOR_AUTH="$v"; fi

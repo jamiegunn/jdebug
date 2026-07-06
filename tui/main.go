@@ -40,6 +40,7 @@ const (
 	scDetail
 	scBlocked
 	scRunbook
+	scAuth
 )
 
 type model struct {
@@ -417,6 +418,8 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		m.scr = scMenu
 		return m, nil
+	case scAuth:
+		return m.authKey(key)
 	}
 	return m, nil
 }
@@ -453,6 +456,8 @@ func (m model) View() string {
 		return m.blockedView()
 	case scRunbook:
 		return m.runbookView()
+	case scAuth:
+		return m.authView()
 	}
 	return ""
 }

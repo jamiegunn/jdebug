@@ -697,6 +697,10 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         assert_has "tui: glossary parity" "one running copy of the app"
         run_case ./tui/jdebug-tui -render chooser
         assert_has "tui: chooser self-test entry" "self-test"
+        run_case ./tui/jdebug-tui -render auth
+        assert_has "tui: actuator-auth screen names both formats" "bearer:MANAGEMENT_TOKEN"
+        assert_has "tui: actuator-auth screen stores a reference" "REFERENCE, not the secret"
+        assert_has "tui: actuator-auth screen offers a jattach fallback" "without HTTP"
         run_case ./tui/jdebug-tui -render dashboard
         assert_has "tui: dashboard log pane" "LIVE LOGS"
         assert_has "tui: dashboard workload pane" "WORKLOAD"

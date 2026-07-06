@@ -137,6 +137,9 @@ func renderDemo(what string) string {
 			{Name: "20260705T091500Z/tail-logs.txt", Path: "/x", Pod: pod, Size: 40 << 10, Mod: time.Now().Add(-2 * time.Hour)},
 		}
 		return m.capsFocusView()
+	case "auth":
+		m.scr = scAuth
+		return m.authView()
 	case "runbook":
 		// the demo panel is crash-looping + OOM + at-max + mem-pressure → several cards
 		m.scr = scRunbook
@@ -164,5 +167,5 @@ func renderDemo(what string) string {
 		m.scr = scWizard
 		return m.wizardView()
 	}
-	return "unknown screen: " + what + " (menu|dashboard|compact|focus|output|runpane|gate|local|help|chooser|editor|wizard|blocked|runbook|capsfocus)"
+	return "unknown screen: " + what + " (menu|dashboard|compact|focus|output|runpane|gate|local|help|chooser|editor|wizard|blocked|runbook|capsfocus|auth)"
 }

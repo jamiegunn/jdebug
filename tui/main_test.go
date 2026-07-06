@@ -537,16 +537,17 @@ func TestActuatorAuthIsAReferenceNotASecret(t *testing.T) {
 	if !found {
 		t.Fatal("targetEnv must export ACTUATOR_AUTH for the pod-side fetch")
 	}
-	// 'k' in the editor opens the auth reference input, explaining the source
+	// 'k' in the editor opens the guided auth screen (covered in depth by
+	// TestActuatorAuthInterstitial); here just confirm it explains the reference
 	m := readyModel()
 	m.scr = scEditor
 	out := press(t, m, "k")
 	mm := out.(model)
-	if mm.scr != scInput || !strings.Contains(mm.input.title, "bearer:") {
-		t.Fatalf("k must open the auth-reference input, got screen %v", mm.scr)
+	if mm.scr != scAuth {
+		t.Fatalf("k must open the guided auth screen, got screen %v", mm.scr)
 	}
-	if !strings.Contains(mm.editor.note, "stays in the pod") {
-		t.Fatal("the auth prompt must explain the secret stays in the pod")
+	if !strings.Contains(ansiStrip(mm.authView()), "REFERENCE, not the secret") {
+		t.Fatal("the auth screen must explain jdebug stores a reference, not the secret")
 	}
 }
 
