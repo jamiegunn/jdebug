@@ -101,6 +101,7 @@ type model struct {
 	detailOff    int
 	out          outState   // in-app command output (scOutput)
 	artifacts    []artifact // files jdebug staged inside the pod (remote-artifacts.tsv)
+	lastCapture  string     // path a capture just wrote → `a` analyzes exactly it
 
 	// in-flight fetch guards: a slow cluster must not stack goroutines
 	panelBusy bool
@@ -251,7 +252,12 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			m.out.errStr = firstLine(v.err.Error())
 		}
 		appendSessionLog(m.out.display, m.out.raw, v.err)
-		cmds := []tea.Cmd{m.panelFetch(m.bgMode == bgLive), fetchCaps(m.kit, m.capsDir())}
+		if v.err == nil { // a successful capture → remember what it wrote so `a` is contextual
+			if p := lastCapturePath(m.out.raw); p != "" {
+				m.lastCapture = p
+			}
+		}
+		cmds := []tea.Cmd{m.panelFetch(m.bgMode == bgLive), fetchCaps(m.kit, m.capsDir()), fetchArtifacts(m.kit)}
 		if m.mode == 1 {
 			cmds = append(cmds, fetchEvents(m.t))
 		}

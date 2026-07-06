@@ -12,6 +12,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 	"time"
@@ -328,13 +329,34 @@ func isBinary(b []byte) bool {
 	return false
 }
 
-// analyzeContext — `a` analyzes whatever is in view: the open file if one is
-// loaded, otherwise the whole dumps tree.
-func (m model) analyzeContext() (tea.Model, tea.Cmd) {
-	if m.out.filePath != "" {
-		return m.quickCLI(false, "analyze", m.out.filePath)
+var snapDoneRe = regexp.MustCompile(`snapshot complete: (\S+)`)
+var wroteRe = regexp.MustCompile(`(?m)\bwrote (\S+)`)
+
+// lastCapturePath pulls the path a capture just wrote out of its output, so `a`
+// can analyze EXACTLY what you captured — the heap you dumped, the threads you
+// took. A snapshot yields its bundle dir; a single capture yields the file.
+func lastCapturePath(raw []byte) string {
+	s := ansi.Strip(string(raw))
+	if m := snapDoneRe.FindStringSubmatch(s); m != nil {
+		return m[1]
 	}
-	return m.quickCLI(false, "analyze")
+	if ms := wroteRe.FindAllStringSubmatch(s, -1); len(ms) > 0 {
+		return ms[len(ms)-1][1] // the last thing written
+	}
+	return ""
+}
+
+// analyzeContext — `a` analyzes what's in front of you: the capture you're
+// viewing, else the one you just took, else the newest session.
+func (m model) analyzeContext() (tea.Model, tea.Cmd) {
+	switch {
+	case m.out.filePath != "":
+		return m.quickCLI(false, "analyze", m.out.filePath)
+	case m.lastCapture != "":
+		return m.quickCLI(false, "analyze", m.lastCapture)
+	default:
+		return m.quickCLI(false, "analyze")
+	}
 }
 
 // capsScope names what the browser is currently showing, so a junior always

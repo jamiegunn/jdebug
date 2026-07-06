@@ -100,3 +100,47 @@ func TestCapsFocusKeys(t *testing.T) {
 		t.Fatal("esc must close the focus browser")
 	}
 }
+
+func TestLastCapturePath(t *testing.T) {
+	cases := map[string]string{
+		"[21:15:21] wrote /d/pods/p/ts/heap-actuator.hprof ( 49M)": "/d/pods/p/ts/heap-actuator.hprof",
+		"info: wrote /d/threads-jattach.txt (523 lines)":           "/d/threads-jattach.txt",
+		"snapshot complete: /d/pods/p/ts  (7 captured, 0 failed)":  "/d/pods/p/ts",
+		"nothing was written here":                                 "",
+	}
+	for in, want := range cases {
+		if got := lastCapturePath([]byte(in)); got != want {
+			t.Errorf("lastCapturePath(%q) = %q, want %q", in, got, want)
+		}
+	}
+}
+
+func TestAnalyzeIsContextual(t *testing.T) {
+	// after a heap capture, `a` analyzes exactly that heap
+	m := readyModel()
+	m.lastCapture = "/d/pods/p/ts/heap-actuator.hprof"
+	if d := m.mustAnalyze(t); !strings.Contains(d, "heap-actuator.hprof") {
+		t.Fatalf("a must analyze the last capture, got %q", d)
+	}
+	// then a thread dump → `a` analyzes the threads, not the heap
+	m.lastCapture = "/d/pods/p/ts/threads-jattach.txt"
+	if d := m.mustAnalyze(t); !strings.Contains(d, "threads-jattach.txt") {
+		t.Fatalf("a must follow the latest capture, got %q", d)
+	}
+	// viewing a file takes precedence over the last capture
+	m.out.filePath = "/d/pods/p/ts/why.txt"
+	if d := m.mustAnalyze(t); !strings.Contains(d, "why.txt") {
+		t.Fatalf("a must analyze the file being viewed first, got %q", d)
+	}
+	// nothing captured or viewed → bare analyze (newest session)
+	m2 := readyModel()
+	if d := m2.mustAnalyze(t); strings.Contains(d, ".hprof") || strings.Contains(d, ".txt") {
+		t.Fatalf("with no capture/view, a runs a bare analyze, got %q", d)
+	}
+}
+
+func (m model) mustAnalyze(t *testing.T) string {
+	t.Helper()
+	out, _ := m.analyzeContext()
+	return out.(model).out.display
+}
