@@ -24,10 +24,16 @@ import (
 // rather than risk an OOM on the operator's laptop.
 const maxDeepObjects = 8_000_000
 
+type finfo struct {
+	name string
+	typ  byte
+}
+
 type classLayout struct {
 	superID uint64
-	fields  []byte // own instance-field type codes, in HPROF order
-	chain   []byte // own + all superclass field types (computed once)
+	fnameID []uint64 // own instance-field name ids (parallel to ftype)
+	ftype   []byte   // own instance-field type codes, in HPROF order
+	chain   []finfo  // own + all superclass fields (names resolved after pass 1)
 }
 
 type heapGraph struct {
@@ -40,11 +46,11 @@ type heapGraph struct {
 
 // --- build -------------------------------------------------------------------
 
-func buildHeapGraph(path string) (*heapGraph, error) {
+func buildHeapGraph(path string) (*heapGraph, *deepParser, error) {
 	// pass 1: classes, nodes (shallow + name), roots
 	f, err := os.Open(path)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	defer f.Close()
 	p := &deepParser{
@@ -55,10 +61,10 @@ func buildHeapGraph(path string) (*heapGraph, error) {
 	p.g = &heapGraph{names: []string{"<GC roots>"}, shallow: []int64{0}, name: []int32{0}}
 	p.nameIdx["<GC roots>"] = 0
 	if err := p.scan(path, 1); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if len(p.g.shallow) > maxDeepObjects {
-		return nil, fmt.Errorf("heap too large for the in-memory deep pass (%s objects) — use Eclipse MAT", humanCount(int64(len(p.g.shallow))))
+		return nil, nil, fmt.Errorf("heap too large for the in-memory deep pass (%s objects) — use Eclipse MAT", humanCount(int64(len(p.g.shallow))))
 	}
 	// finalize field chains (own + supers) for instance parsing
 	for id, cl := range p.layouts {
@@ -68,7 +74,7 @@ func buildHeapGraph(path string) (*heapGraph, error) {
 	p.g.succ = make([][]int32, len(p.g.shallow))
 	p.g.pred = make([][]int32, len(p.g.shallow))
 	if err := p.scan(path, 2); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	// resolve GC-root ids → nodes and wire them as edges from the synthetic
 	// root (node 0), de-duped
@@ -79,16 +85,23 @@ func buildHeapGraph(path string) (*heapGraph, error) {
 			p.addEdge(0, ix)
 		}
 	}
-	return p.g, nil
+	return p.g, p, nil
 }
 
-func (p *deepParser) fieldChain(classID uint64, guard map[uint64]bool) []byte {
+func (p *deepParser) fieldChain(classID uint64, guard map[uint64]bool) []finfo {
 	cl := p.layouts[classID]
 	if cl == nil || guard[classID] {
 		return nil
 	}
 	guard[classID] = true
-	out := append([]byte(nil), cl.fields...)
+	out := make([]finfo, 0, len(cl.ftype))
+	for i, t := range cl.ftype {
+		name := ""
+		if s, ok := p.strs[cl.fnameID[i]]; ok {
+			name = s
+		}
+		out = append(out, finfo{name: name, typ: t})
+	}
 	if cl.superID != 0 {
 		out = append(out, p.fieldChain(cl.superID, guard)...)
 	}
@@ -104,6 +117,9 @@ type deepParser struct {
 	classNameID map[uint64]uint64
 	nameIdx     map[string]int32
 	rootRaw     []uint64 // GC-root object ids, resolved to nodes after pass 1
+	// pass 3 (path-label recovery): which edges we need field names for
+	wantFrom map[int32]map[int32]bool
+	labels   map[[2]int32]string
 }
 
 func (p *deepParser) nameIndex(n string) int32 {
@@ -251,9 +267,18 @@ func (p *deepParser) walk(r *bufio.Reader, length int64, pass int) error {
 				if err := skip(int(nb)); err != nil {
 					return err
 				}
-			} else {
+			} else if pass == 2 {
 				from := p.idOf[oid]
 				if err := p.parseBody(r, cid, int(nb), from, &rem); err != nil {
+					return err
+				}
+			} else { // pass 3: recover field-name labels for wanted edges
+				from := p.idOf[oid]
+				if p.wantFrom[from] != nil {
+					if err := p.parseBodyLabeled(r, cid, int(nb), from, &rem); err != nil {
+						return err
+					}
+				} else if err := skip(int(nb)); err != nil {
 					return err
 				}
 			}
@@ -282,7 +307,7 @@ func (p *deepParser) walk(r *bufio.Reader, length int64, pass int) error {
 				if err := skip(int(n) * id); err != nil {
 					return err
 				}
-			} else {
+			} else if pass == 2 {
 				from := p.idOf[oid]
 				for i := uint32(0); i < n; i++ {
 					ref, e := rID()
@@ -291,6 +316,26 @@ func (p *deepParser) walk(r *bufio.Reader, length int64, pass int) error {
 					}
 					if to, ok := p.idOf[ref]; ok && ref != 0 {
 						p.addEdge(from, to)
+					}
+				}
+			} else { // pass 3: label wanted array element edges
+				from := p.idOf[oid]
+				tos := p.wantFrom[from]
+				if tos == nil {
+					if err := skip(int(n) * id); err != nil {
+						return err
+					}
+				} else {
+					for i := uint32(0); i < n; i++ {
+						ref, e := rID()
+						if e != nil {
+							return e
+						}
+						if to, ok := p.idOf[ref]; ok && tos[to] {
+							if _, seen := p.labels[[2]int32{from, to}]; !seen {
+								p.labels[[2]int32{from, to}] = "[]"
+							}
+						}
 					}
 				}
 			}
@@ -349,16 +394,16 @@ func (p *deepParser) walk(r *bufio.Reader, length int64, pass int) error {
 // object reference field.
 func (p *deepParser) parseBody(r *bufio.Reader, classID uint64, nbytes int, from int32, rem *int64) error {
 	cl := p.layouts[classID]
-	var chain []byte
+	var chain []finfo
 	if cl != nil {
 		chain = cl.chain
 	}
 	read := 0
-	for _, t := range chain {
+	for _, fd := range chain {
 		if read >= nbytes {
 			break
 		}
-		if t == 2 { // object reference
+		if fd.typ == 2 { // object reference
 			ref, err := readIDN(r, p.idSize)
 			if err != nil {
 				return err
@@ -368,7 +413,7 @@ func (p *deepParser) parseBody(r *bufio.Reader, classID uint64, nbytes int, from
 				p.addEdge(from, to)
 			}
 		} else {
-			s := basicTypeSize(t, p.idSize)
+			s := basicTypeSize(fd.typ, p.idSize)
 			if _, err := discard(r, s); err != nil {
 				return err
 			}
@@ -382,6 +427,72 @@ func (p *deepParser) parseBody(r *bufio.Reader, classID uint64, nbytes int, from
 	}
 	*rem -= int64(nbytes)
 	return nil
+}
+
+// parseBodyLabeled (pass 3) walks an instance's fields and records, for each
+// reference that lands on a wanted child, the FIELD NAME that points to it —
+// so a path-to-GC-roots can read "kept via field <name>".
+func (p *deepParser) parseBodyLabeled(r *bufio.Reader, classID uint64, nbytes int, from int32, rem *int64) error {
+	cl := p.layouts[classID]
+	var chain []finfo
+	if cl != nil {
+		chain = cl.chain
+	}
+	tos := p.wantFrom[from]
+	read := 0
+	for _, fd := range chain {
+		if read >= nbytes {
+			break
+		}
+		if fd.typ == 2 {
+			ref, err := readIDN(r, p.idSize)
+			if err != nil {
+				return err
+			}
+			read += p.idSize
+			if to, ok := p.idOf[ref]; ok && ref != 0 && tos[to] {
+				key := [2]int32{from, to}
+				if _, seen := p.labels[key]; !seen {
+					p.labels[key] = fd.name
+				}
+			}
+		} else {
+			s := basicTypeSize(fd.typ, p.idSize)
+			if _, err := discard(r, s); err != nil {
+				return err
+			}
+			read += s
+		}
+	}
+	if read < nbytes {
+		if _, err := discard(r, nbytes-read); err != nil {
+			return err
+		}
+	}
+	*rem -= int64(nbytes)
+	return nil
+}
+
+// recoverPathLabels re-reads the file once to fill in field-name labels for the
+// given set of (from,to) node edges — a tiny set (the edges on a few paths).
+func (p *deepParser) recoverPathLabels(path string, want map[[2]int32]bool) map[[2]int32]string {
+	p.wantFrom = map[int32]map[int32]bool{}
+	for e := range want {
+		if e[0] == 0 { // root edges are labelled "GC root" without a re-read
+			continue
+		}
+		m := p.wantFrom[e[0]]
+		if m == nil {
+			m = map[int32]bool{}
+			p.wantFrom[e[0]] = m
+		}
+		m[e[1]] = true
+	}
+	p.labels = map[[2]int32]string{}
+	if len(p.wantFrom) > 0 {
+		p.scan(path, 3)
+	}
+	return p.labels
 }
 
 func (p *deepParser) classDump(r *bufio.Reader, rem *int64, pass int) error {
@@ -455,20 +566,24 @@ func (p *deepParser) classDump(r *bufio.Reader, rem *int64, pass int) error {
 	if err != nil {
 		return err
 	}
-	fields := make([]byte, 0, inf)
+	nameIDs := make([]uint64, 0, inf)
+	types := make([]byte, 0, inf)
 	for i := 0; i < inf; i++ {
-		if err := skip(id); err != nil { // field name id
+		nid, err := readIDN(r, id) // field name id (kept, so edges can be labelled)
+		if err != nil {
 			return err
 		}
+		*rem -= int64(id)
 		t, err := r.ReadByte()
 		if err != nil {
 			return err
 		}
 		*rem--
-		fields = append(fields, t)
+		nameIDs = append(nameIDs, nid)
+		types = append(types, t)
 	}
 	if pass == 1 {
-		p.layouts[cid] = &classLayout{superID: superID, fields: fields}
+		p.layouts[cid] = &classLayout{superID: superID, fnameID: nameIDs, ftype: types}
 	}
 	return nil
 }
@@ -570,10 +685,50 @@ func (g *heapGraph) retainedSizes(idom, order []int32) []int64 {
 	return ret
 }
 
+// bfsParents returns, for each node, its parent on a SHORTEST path from the GC
+// root (node 0) — the basis for "path to GC roots". -1 = unreachable.
+func (g *heapGraph) bfsParents() []int32 {
+	parent := make([]int32, len(g.shallow))
+	for i := range parent {
+		parent[i] = -1
+	}
+	parent[0] = 0
+	q := []int32{0}
+	for len(q) > 0 {
+		v := q[0]
+		q = q[1:]
+		for _, w := range g.succ[v] {
+			if parent[w] == -1 {
+				parent[w] = v
+				q = append(q, w)
+			}
+		}
+	}
+	return parent
+}
+
+// pathFromRoot returns the node sequence root(0) … target (nil if unreachable).
+func pathFromRoot(target int32, parent []int32) []int32 {
+	if parent[target] == -1 {
+		return nil
+	}
+	var rev []int32
+	for v := target; ; v = parent[v] {
+		rev = append(rev, v)
+		if v == 0 {
+			break
+		}
+	}
+	for i, j := 0, len(rev)-1; i < j; i, j = i+1, j-1 {
+		rev[i], rev[j] = rev[j], rev[i]
+	}
+	return rev
+}
+
 // --- render ------------------------------------------------------------------
 
 func analyzeHprofDeep(path string) (string, error) {
-	g, err := buildHeapGraph(path)
+	g, p, err := buildHeapGraph(path)
 	if err != nil {
 		return "", err
 	}
@@ -610,10 +765,83 @@ func analyzeHprofDeep(path string) (string, error) {
 		fmt.Fprintf(&b, "  %9s (%4.1f%%)  %9s  %s\n", fmtSize(rw.ret), pct, fmtSize(g.shallow[rw.ix]), g.names[g.name[rw.ix]])
 	}
 
+	// path to GC roots — WHY the top holders are kept alive (with field names)
+	if pathBlock := g.renderPaths(p, path, top, reachable); pathBlock != "" {
+		b.WriteString("\n" + pathBlock)
+	}
+
 	b.WriteString("\n" + deepVerdict(rows, g, ret, reachable) + "\n")
-	b.WriteString("this IS the retained-size view MAT gives; for reference chains (WHY each is kept),\n")
-	b.WriteString("open the dump in Eclipse MAT → right-click the holder → 'Path to GC Roots'.")
+	b.WriteString("that's retained size AND the reference chains MAT is for — no external tool needed.\n")
+	b.WriteString("(Eclipse MAT still adds OQL and side-by-side dump diffs.)")
 	return b.String(), nil
+}
+
+// renderPaths shows, for the biggest few retained holders, the shortest chain of
+// references from a GC root — the "why is this alive?" that names a leak.
+func (g *heapGraph) renderPaths(p *deepParser, path string, top []retRow, reachable int64) string {
+	parent := g.bfsParents()
+	// pick up to 3 distinct, meaningful holders that retain a real share
+	var picks []int32
+	seenName := map[string]bool{}
+	for _, rw := range top {
+		if reachable > 0 && float64(rw.ret)*100/float64(reachable) < 2 {
+			break
+		}
+		nm := g.names[g.name[rw.ix]]
+		if seenName[nm] || pathFromRoot(rw.ix, parent) == nil {
+			continue
+		}
+		seenName[nm] = true
+		picks = append(picks, rw.ix)
+		if len(picks) == 3 {
+			break
+		}
+	}
+	if len(picks) == 0 {
+		return ""
+	}
+	// collect the edges we need field-name labels for, then recover them
+	want := map[[2]int32]bool{}
+	paths := map[int32][]int32{}
+	for _, t := range picks {
+		pth := pathFromRoot(t, parent)
+		paths[t] = pth
+		for i := 0; i+1 < len(pth); i++ {
+			want[[2]int32{pth[i], pth[i+1]}] = true
+		}
+	}
+	labels := p.recoverPathLabels(path, want)
+
+	var b strings.Builder
+	b.WriteString("why the biggest holders are kept alive (shortest path from a GC root):\n")
+	for _, t := range picks {
+		pth := paths[t]
+		if len(pth) > 14 { // keep very deep chains readable
+			pth = append(append([]int32{}, pth[:7]...), pth[len(pth)-6:]...)
+		}
+		for i, node := range pth {
+			name := "<GC roots>"
+			if node != 0 {
+				name = g.names[g.name[node]]
+			}
+			if i == 0 {
+				b.WriteString("  " + name + "\n")
+				continue
+			}
+			via := labels[[2]int32{pth[i-1], node}]
+			if pth[i-1] == 0 {
+				via = "GC root"
+			}
+			if via == "" {
+				via = "→"
+			} else {
+				via = "→ " + via
+			}
+			fmt.Fprintf(&b, "  %s%s %s\n", strings.Repeat("  ", i), via, name)
+		}
+		b.WriteString("\n")
+	}
+	return strings.TrimRight(b.String(), "\n") + "\n"
 }
 
 type retRow struct {

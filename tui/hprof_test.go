@@ -331,7 +331,7 @@ func TestDeepRetainedEndToEnd(t *testing.T) {
 	if err := os.WriteFile(path, synthDeepHprof(), 0o644); err != nil {
 		t.Fatal(err)
 	}
-	g, err := buildHeapGraph(path)
+	g, _, err := buildHeapGraph(path)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -356,5 +356,36 @@ func TestDeepRetainedEndToEnd(t *testing.T) {
 	}
 	if idom[arr] != holder {
 		t.Fatalf("the byte[] must be dominated by Holder, got idom %d", idom[arr])
+	}
+}
+
+func TestPathToGCRoots(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deep.hprof")
+	if err := os.WriteFile(path, synthDeepHprof(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g, p, err := buildHeapGraph(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var arr int32 = -1
+	for i := range g.shallow {
+		if g.names[g.name[i]] == "byte[]" {
+			arr = int32(i)
+		}
+	}
+	if arr < 0 {
+		t.Fatal("no byte[] node")
+	}
+	// shortest path from a GC root: root → Holder → byte[]
+	path2 := pathFromRoot(arr, g.bfsParents())
+	if len(path2) != 3 || path2[0] != 0 || g.names[g.name[path2[1]]] != "Holder" {
+		t.Fatalf("expected root→Holder→byte[], got %v", path2)
+	}
+	// the field-name label on the Holder→byte[] edge must be recovered
+	labels := p.recoverPathLabels(path, map[[2]int32]bool{{path2[1], path2[2]}: true})
+	if labels[[2]int32{path2[1], path2[2]}] == "" {
+		t.Fatal("expected a field-name label on the Holder→byte[] edge")
 	}
 }
