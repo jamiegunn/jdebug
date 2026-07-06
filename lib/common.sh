@@ -237,6 +237,24 @@ session_dir() {
     printf '%s/pods/%s/%s' "$JDEBUG_DUMPS" "$1" "$2"
 }
 
+# artifacts_manifest — the file that records what jdebug staged INSIDE a pod
+# (jattach, jdebug-local, …), so the TUI can show a remote-artifacts indicator
+# and offer cleanup on quit. One tab-separated row per artifact.
+artifacts_manifest() { printf '%s/remote-artifacts.tsv' "$JDEBUG_DUMPS"; }
+
+# record_artifact <owned:0|1> <path> [note] — note a file jdebug touched inside
+# the current pod. owned=1 = jdebug STAGED it this run (offer to remove it);
+# owned=0 = it was already there (never remove). De-duped by pod+path.
+record_artifact() {
+    local owned="$1" path="$2" note="${3:-}" mf key
+    mf="$(artifacts_manifest)"
+    mkdir -p "$JDEBUG_DUMPS" 2>/dev/null || return 0
+    key="$(printf '\t%s\t%s\t%s\t' "${POD:-}" "${APP_CONTAINER:-}" "$path")"
+    if [ -f "$mf" ] && grep -qF "$key" "$mf" 2>/dev/null; then return 0; fi
+    printf '%s\t%s\t%s\t%s\t%s\t%s\n' \
+        "$owned" "${NAMESPACE:-}" "${POD:-}" "${APP_CONTAINER:-}" "$path" "$note" >> "$mf"
+}
+
 # check_cluster — is the kube context actually answering? If not, translate the
 # usual kubectl failure modes into plain language and a likely fix, instead of
 # letting every later kubectl call spew TLS stack traces and memcache spam.

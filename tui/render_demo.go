@@ -142,6 +142,14 @@ func renderDemo(what string) string {
 	case "auth":
 		m.scr = scAuth
 		return m.authView()
+	case "cleanup":
+		m.scr = scCleanup
+		m.artifacts = []artifact{
+			{owned: true, pod: "app-debug-demo-app-6c6c4b5769-s9jdg", path: "/tmp/jattach", note: "jattach staged by jdebug"},
+			{owned: true, pod: "app-debug-demo-app-6c6c4b5769-s9jdg", path: "/tmp/jdebug-local", note: "in-pod tool"},
+			{owned: false, pod: "app-debug-demo-app-6c6c4b5769-s9jdg", path: "/tmp/jattach", note: "was already present"},
+		}
+		return m.cleanupView()
 	case "runbook":
 		// the demo panel is crash-looping + OOM + at-max + mem-pressure → several cards
 		m.scr = scRunbook
@@ -169,5 +177,5 @@ func renderDemo(what string) string {
 		m.scr = scWizard
 		return m.wizardView()
 	}
-	return "unknown screen: " + what + " (menu|dashboard|compact|focus|output|runpane|gate|local|help|chooser|editor|wizard|blocked|runbook|capsfocus|auth)"
+	return "unknown screen: " + what + " (menu|dashboard|compact|focus|output|runpane|gate|local|help|chooser|editor|wizard|blocked|runbook|capsfocus|auth|cleanup)"
 }

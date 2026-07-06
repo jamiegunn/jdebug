@@ -93,6 +93,7 @@ install_jattach() {
     if kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
             test -x "$JATTACH_REMOTE_PATH" 2>/dev/null; then
         info "jattach already present at $JATTACH_REMOTE_PATH (in $POD)"
+        record_artifact 0 "$JATTACH_REMOTE_PATH" "jattach (already in the pod)"
         return
     fi
 
@@ -105,6 +106,7 @@ install_jattach() {
         info "installing jattach from local file: $LOCAL_BINARY"
         kubectl -n "$NAMESPACE" cp "$LOCAL_BINARY" "$POD:$JATTACH_REMOTE_PATH" -c "$APP_CONTAINER"
         kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- chmod +x "$JATTACH_REMOTE_PATH"
+        record_artifact 1 "$JATTACH_REMOTE_PATH" "jattach"
         return
     fi
 
@@ -144,6 +146,7 @@ install_jattach() {
     info "kubectl cp $cache_file $POD:$JATTACH_REMOTE_PATH"
     kubectl -n "$NAMESPACE" cp "$cache_file" "$POD:$JATTACH_REMOTE_PATH" -c "$APP_CONTAINER"
     kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- chmod +x "$JATTACH_REMOTE_PATH"
+    record_artifact 1 "$JATTACH_REMOTE_PATH" "jattach"
 
     # Sanity check: jattach with no args prints "Usage: jattach <pid>..." to
     # stderr and exits non-zero. We capture both streams and only fail if

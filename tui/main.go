@@ -41,6 +41,7 @@ const (
 	scBlocked
 	scRunbook
 	scAuth
+	scCleanup
 )
 
 type model struct {
@@ -98,7 +99,8 @@ type model struct {
 	podsOff      int
 	detailAnchor string // transparency cards: key shown first ("" = all)
 	detailOff    int
-	out          outState // in-app command output (scOutput)
+	out          outState   // in-app command output (scOutput)
+	artifacts    []artifact // files jdebug staged inside the pod (remote-artifacts.tsv)
 
 	// in-flight fetch guards: a slow cluster must not stack goroutines
 	panelBusy bool
@@ -162,7 +164,7 @@ func (m model) Init() tea.Cmd {
 	// every entry path shares exactly once)
 	if m.mode == 1 {
 		cmds := []tea.Cmd{fetchPanel(m.t, true), fetchEvents(m.t), fetchCaps(m.kit, m.capsDir()),
-			fetchPodList(m.t), tickCmd(), autoStatusCmd()}
+			fetchPodList(m.t), fetchArtifacts(m.kit), tickCmd(), autoStatusCmd()}
 		if m.t.Pod != "" {
 			cmds = append(cmds, fetchLogs(m.t))
 		}
@@ -209,7 +211,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if m.scr != scChooser {
 			m.scr = scMenu
 		}
-		cmds := []tea.Cmd{m.panelFetch(m.bgMode == bgLive), fetchCaps(m.kit, m.capsDir())}
+		cmds := []tea.Cmd{m.panelFetch(m.bgMode == bgLive), fetchCaps(m.kit, m.capsDir()), fetchArtifacts(m.kit)}
 		if m.mode == 1 {
 			cmds = append(cmds, fetchEvents(m.t), fetchPodList(m.t))
 			if m.showLogPane() && !m.logBusy {
@@ -291,6 +293,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 				m.capsOff = 0
 			}
 		}
+		return m, nil
+	case artifactsMsg:
+		m.artifacts = v.list
 		return m, nil
 	case capsFlatMsg:
 		m.capsFlat = v.entries
@@ -421,6 +426,8 @@ func (m model) handleKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m, nil
 	case scAuth:
 		return m.authKey(key)
+	case scCleanup:
+		return m.cleanupKey(key)
 	}
 	return m, nil
 }
@@ -459,6 +466,8 @@ func (m model) View() string {
 		return m.runbookView()
 	case scAuth:
 		return m.authView()
+	case scCleanup:
+		return m.cleanupView()
 	}
 	return ""
 }

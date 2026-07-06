@@ -217,6 +217,9 @@ func (m model) footer(nav string) string {
 	if w >= 140 {
 		lead = "press a key or click a row · "
 	}
+	if n := m.ownedArtifacts(); n > 0 { // the staged-in-pod indicator takes priority
+		lead = fmt.Sprintf("⚠ %d file(s) staged in the pod · u cleanup · ", n)
+	}
 	legendPlain := "●●● safe / caution / disruptive"
 	pad := w - 1 - 5 - lipgloss.Width(lead) - lipgloss.Width(nav) - lipgloss.Width(legendPlain) - 1
 	if pad < 2 {
@@ -540,6 +543,10 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 		m.prev = m.scr
 		m.scr = scRunbook
 		return m, nil
+	case "u", "U": // remote artifacts jdebug staged in the pod + cleanup
+		m.prev = m.scr
+		m.scr = scCleanup
+		return m, fetchArtifacts(m.kit)
 	case "r": // refresh the dashboard now (works even while quiet/paused)
 		return m, m.refreshNow()
 	case "z", "Z": // cycle background refresh: live → quiet → paused → live
@@ -561,7 +568,11 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 		m.scr = scChooser
 		return m, nil
 	case "q", "Q", "ctrl+c":
-		return m.askConfirm("quit jdebug? [y/N]", "", func(mm *model) tea.Cmd {
+		qmsg := "quit jdebug? [y/N]"
+		if n := m.ownedArtifacts(); n > 0 {
+			qmsg = fmt.Sprintf("quit? jdebug left %d file(s) staged in the pod — press u to review/clean them first, or y to quit and leave them [y/N]", n)
+		}
+		return m.askConfirm(qmsg, "", func(mm *model) tea.Cmd {
 			mm.quitMsg = cFaint.Render("transcript of everything from this session: " + sessionLog)
 			return tea.Quit
 		})

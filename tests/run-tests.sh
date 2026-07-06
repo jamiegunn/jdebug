@@ -316,6 +316,24 @@ assert_rc  "escalate: empty state still works" 0
 assert_has "escalate: notes nothing sensitive yet" "nothing sensitive to warn about"
 rm -rf "$ESC"
 
+# --- remote artifacts: record + cleanup (never removes pre-existing) -----------
+section "cleanup (remote artifacts jdebug staged in the pod)"
+ART="$TMP/art"; rm -rf "$ART"
+run_case env JDEBUG_DUMPS="$ART" bash -c 'source lib/common.sh; NAMESPACE=default POD=pod-a APP_CONTAINER=app record_artifact 1 /tmp/jattach jattach; NAMESPACE=default POD=pod-a APP_CONTAINER=app record_artifact 0 /tmp/keepme preexisting'
+run_case env JDEBUG_DUMPS="$ART" ./jdebug cleanup
+assert_rc  "cleanup lists exits 0" 0
+assert_has "cleanup: lists the staged file" "/tmp/jattach"
+assert_has "cleanup: marks the staged one" "staged by jdebug"
+assert_has "cleanup: keeps pre-existing" "will NOT be removed"
+assert_has "cleanup: names local dumps as safe" "local dumps/"
+run_case env JDEBUG_DUMPS="$ART" ./jdebug cleanup --confirm
+assert_rc  "cleanup --confirm exits 0" 0
+assert_has "cleanup: removes the staged file" "removed /tmp/jattach"
+assert_has "cleanup: pre-existing survives" "keepme"
+run_case grep -c "jattach" "$ART/remote-artifacts.tsv"
+assert_has "cleanup: staged entry gone from manifest" "0"
+rm -rf "$ART"
+
 # --- incident timeline: events + captures in time order -----------------------
 section "timeline (events merged with captures, chronological)"
 TL="$TMP/tl"; rm -rf "$TL"; mkdir -p "$TL/pods/pod-a/20260705T140900Z"
@@ -697,6 +715,10 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         assert_has "tui: glossary parity" "one running copy of the app"
         run_case ./tui/jdebug-tui -render chooser
         assert_has "tui: chooser self-test entry" "self-test"
+        run_case ./tui/jdebug-tui -render cleanup
+        assert_has "tui: remote-artifacts screen lists staged files" "/tmp/jattach"
+        assert_has "tui: remote-artifacts screen keeps pre-existing" "pre-existing"
+        assert_has "tui: remote-artifacts screen protects local dumps" "local dumps/"
         run_case ./tui/jdebug-tui -render auth
         assert_has "tui: actuator-auth screen names both formats" "bearer:MANAGEMENT_TOKEN"
         assert_has "tui: actuator-auth screen stores a reference" "REFERENCE, not the secret"

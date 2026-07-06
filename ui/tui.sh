@@ -473,6 +473,7 @@ show_help() {
     ${GN}g${OFF} target editor · ${GN}M${OFF} switch mode · ${GN}d${OFF} browse captures
     ${GN}b${OFF} what's blocked right now + how to unblock it (RBAC, metrics, actuator…)
     ${GN}n${OFF} runbook — what your live warnings mean + the safe/risky fix + what to tell next
+    ${GN}u${OFF} remote artifacts — what jdebug staged inside the pod + cleanup (jdebug cleanup --confirm)
     ${GN}E${OFF} escalation summary — a paste-ready handoff for asking a senior for help
 
   ${B}THE SAFETY RULES${OFF}
@@ -1069,6 +1070,7 @@ dispatch_remote() {
         '?') show_help ;;
         b|B) show_blocked ;;
         n|N) show_runbook ;;
+        u|U) run "$DBG" cleanup ;;
         c|C) run "$DBG" doctor ;;
         a|A) run "$DBG" analyze ;;
         d|D) run "$DBG" dumps ;;

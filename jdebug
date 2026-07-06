@@ -23,6 +23,7 @@
 #     escalate      paste-ready handoff brief for asking for help (escalate.sh)
 #     timeline      pod events + your captures, in time order (timeline.sh)
 #     what-changed  image/rollout/restart/scale after a deploy (what-changed.sh)
+#     cleanup       remove files jdebug staged in the pod (--confirm) (cleanup.sh)
 #     restart       re-roll the owning deployment (needs --confirm)
 #     kill          delete a pod; managed pods respawn (needs --confirm)
 #     logs          stream logs from all replicas         (tail-logs.sh)
@@ -265,6 +266,7 @@ case "$cmd" in
     escalate|handoff) fwd "$D/observe/escalate.sh" ;;
     timeline)        fwd "$D/observe/timeline.sh" ;;
     what-changed|changed) fwd "$D/observe/what-changed.sh" ;;
+    cleanup)         fwd "$D/observe/cleanup.sh" ;;
     restart)         fwd "$D/observe/lifecycle.sh" restart ;;
     kill)            fwd "$D/observe/lifecycle.sh" kill ;;
     memory)          fwd "$D/observe/memory-report.sh" ;;
@@ -327,9 +329,12 @@ HINTS
         triage_parse
         POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
         show_cmd kubectl -n "$NAMESPACE" cp "$D/jdebug-local" "$POD:/tmp/jdebug-local" -c "$APP_CONTAINER"
-        kubectl -n "$NAMESPACE" cp "$D/jdebug-local" "$POD:/tmp/jdebug-local" -c "$APP_CONTAINER" \
-            && info "staged jdebug-local at $POD:/tmp/jdebug-local — now: kubectl -n $NAMESPACE exec -it $POD -c $APP_CONTAINER -- sh /tmp/jdebug-local help" \
-            || err "cp failed (no tar in the pod? paste the script into the shell instead)"
+        if kubectl -n "$NAMESPACE" cp "$D/jdebug-local" "$POD:/tmp/jdebug-local" -c "$APP_CONTAINER"; then
+            info "staged jdebug-local at $POD:/tmp/jdebug-local — now: kubectl -n $NAMESPACE exec -it $POD -c $APP_CONTAINER -- sh /tmp/jdebug-local help"
+            record_artifact 1 "/tmp/jdebug-local" "in-pod tool (jdebug-local)"
+        else
+            err "cp failed (no tar in the pod? paste the script into the shell instead)"
+        fi
         ;;
 
     doctor|checkup)
