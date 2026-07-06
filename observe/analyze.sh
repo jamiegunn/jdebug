@@ -160,7 +160,7 @@ analyze_session() {
     printf '\n━━ %s: %s\n' "$kind" "$d"
     while IFS= read -r f; do
         analyze_file "$f" || true
-    done < <(find "$d" -maxdepth 1 -type f ! -name '.*' 2>/dev/null | sort)
+    done < <(find "$d" -maxdepth 1 -type f ! -name '.*' ! -name 'session-*.log' ! -name 'remote-artifacts.tsv' 2>/dev/null | sort)
 }
 
 analyze_file() {
@@ -182,6 +182,7 @@ analyze_file() {
 }
 
 TARGET="${1:-$JDEBUG_DUMPS}"
+EXPLICIT=""; [[ $# -ge 1 ]] && EXPLICIT=1   # was a target passed, or the default?
 echo "jdebug analyze — first-pass triage of captured evidence (the deep tools, Eclipse MAT and VisualVM, are free local installs)"
 
 # The default dumps dir not existing just means nothing was captured yet.
@@ -191,18 +192,45 @@ if [[ ! -e "$TARGET" && "$TARGET" == "$JDEBUG_DUMPS" ]]; then
     exit 0
 fi
 
+# list_sessions <root> — every capture-session dir under <root> (a dir that
+# directly holds a real capture file), newest first by its timestamp name.
+# session-*.log (transcripts) and remote-artifacts.tsv are NOT captures.
+list_sessions() {
+    find "$1" -type f ! -name '.*' ! -name 'session-*.log' ! -name 'remote-artifacts.tsv' -exec dirname {} \; 2>/dev/null | sort -u |
+    while IFS= read -r d; do
+        local ts; ts="$(basename "$d" | grep -oE '[0-9]{8}T[0-9]{6}Z' | tail -1)"
+        printf '%s\t%s\n' "${ts:-00000000T000000Z}" "$d"
+    done | sort -r
+}
+
 if [[ -f "$TARGET" ]]; then
     analyze_file "$TARGET" || { err "don't know how to analyze: $TARGET"; exit 64; }
 elif [[ -d "$TARGET" ]]; then
-    # a session dir directly holds capture files → analyze it as one group;
-    # otherwise walk the tree and analyze every session dir under it (newest
-    # first). "session dir" = any directory that directly contains a file.
-    if find "$TARGET" -maxdepth 1 -type f ! -name '.*' 2>/dev/null | grep -q .; then
+    if find "$TARGET" -maxdepth 1 -type f ! -name '.*' ! -name 'session-*.log' ! -name 'remote-artifacts.tsv' 2>/dev/null | grep -q .; then
+        # the target IS a session dir (directly holds captures) → analyze it
         analyze_session "$TARGET"
+    elif [[ -z "$EXPLICIT" ]]; then
+        # `jdebug analyze` with no args: analyze the NEWEST session only, so the
+        # thing you just captured isn't buried under every historical dump. Point
+        # at the rest rather than replaying all of them.
+        sessions="$(list_sessions "$TARGET")"
+        if [[ -z "$sessions" ]]; then
+            echo
+            echo "nothing to analyze yet — capture something (threads, heap, snapshot), then re-run."
+        else
+            newest="$(printf '%s\n' "$sessions" | head -1 | cut -f2-)"
+            total="$(printf '%s\n' "$sessions" | grep -c .)"
+            analyze_session "$newest"
+            if [[ "$total" -gt 1 ]]; then
+                printf '\n  ↩ showing the newest of %d capture sessions.\n' "$total"
+                printf '    a specific one: jdebug analyze <dir>   ·   every one: jdebug analyze %s/pods\n' "$JDEBUG_DUMPS"
+            fi
+        fi
     else
-        while IFS= read -r d; do
-            [[ -n "$d" ]] && analyze_session "$d"
-        done < <(find "$TARGET" -type f ! -name '.*' -exec dirname {} \; 2>/dev/null | sort -ru)
+        # an explicit dir → walk and analyze every session under it (newest first)
+        while IFS= read -r line; do
+            [[ -n "$line" ]] && analyze_session "$(printf '%s' "$line" | cut -f2-)"
+        done < <(list_sessions "$TARGET")
     fi
 else
     err "no such file or directory: $TARGET"

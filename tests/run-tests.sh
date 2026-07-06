@@ -253,7 +253,7 @@ printf 'HTTP 404 not found' > "$SESS/bad.hprof"
 printf '{"status":"DOWN","components":{"db":{"status":"DOWN"},"redis":{"status":"UP"}}}' \
     > "$BUNDLE/health.json"
 
-run_case ./jdebug analyze
+run_case ./jdebug analyze "$AD/pods"   # explicit tree → walk every session
 assert_rc  "analyze exits 0" 0
 assert_has "threads: state histogram" "4 threads — 1 RUNNABLE · 2 BLOCKED · 1 WAITING"
 assert_has "threads: deadlock flagged" "DEADLOCK detected"
@@ -277,6 +277,24 @@ assert_has "empty hprof: blames the capture, points at the pod" "GONE or was REN
 assert_has "empty hprof: says re-pick and recapture" "re-pick the current pod"
 assert_not "empty hprof: does NOT mislead toward actuator auth" "set auth (k in the target editor)"
 rm -rf "$EMPTYH"
+
+# analyze with NO args: lead with the newest session, never mistake a session
+# transcript (session-*.log) or remote-artifacts.tsv for a capture
+AD2="$(mktemp -d)"
+mkdir -p "$AD2/pods/pod-a/20260101T000000Z" "$AD2/pods/pod-a/20260102T000000Z"
+printf 'JAVA PROFILE 1.0.2\0heap' > "$AD2/pods/pod-a/20260102T000000Z/heap-actuator.hprof"   # newest
+printf 'Full thread dump\n"main"\n'   > "$AD2/pods/pod-a/20260101T000000Z/threads.txt"        # older
+printf '\n$ jdebug threads\nFull thread dump (transcript)\n' > "$AD2/session-20260101-000000.log"
+: > "$AD2/remote-artifacts.tsv"
+run_case env JDEBUG_DUMPS="$AD2" ./jdebug analyze
+assert_rc  "analyze default exits 0" 0
+assert_has "analyze default: leads with the NEWEST session" "20260102T000000Z"
+assert_has "analyze default: points at the older sessions" "showing the newest of"
+assert_not "analyze default: ignores session-*.log transcripts" "session-20260101"
+assert_not "analyze default: does not replay older sessions" "20260101T000000Z/threads"
+run_case env JDEBUG_DUMPS="$AD2" ./jdebug analyze "$AD2/pods/pod-a/20260101T000000Z"
+assert_has "analyze <dir>: analyzes exactly the requested session" "20260101T000000Z"
+rm -rf "$AD2"
 
 run_case ./jdebug analyze "$SESS/threads-jattach.txt"
 assert_has "single-file analysis works" "DEADLOCK detected"
