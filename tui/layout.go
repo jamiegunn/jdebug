@@ -25,19 +25,20 @@ func mini(a, b int) int {
 	return b
 }
 
-// tw is the rendering width: never squeeze below 78; remote mode may spread
-// to 208 (a 15" laptop full-screen is ~200), local stays at the classic 132.
+// tw is the rendering width: never squeeze below 78. Remote/incident mode
+// (mode 1) fills the WHOLE terminal — no cap — so wide monitors get every
+// column and long values (pod names, actuator URLs) stop truncating. Local
+// mode keeps the classic 132 so plain command output stays readable.
 func (m model) tw() int {
 	w := m.width
 	if w < 78 {
 		w = 78
 	}
-	max := 132
 	if m.mode == 1 {
-		max = 208
+		return w // fill the screen
 	}
-	if w > max {
-		w = max
+	if w > 132 {
+		w = 132
 	}
 	return w
 }

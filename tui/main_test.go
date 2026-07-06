@@ -203,12 +203,16 @@ func TestLayoutTiers(t *testing.T) {
 		{120, 40, 1, true},  // sidebar + log strip
 		{140, 34, 2, true},  // smallest grid
 		{200, 50, 2, true},  // 15" laptop full screen
+		{320, 60, 2, true},  // ultrawide — must fill, not cap
 	}
 	for _, c := range cases {
 		m := readyModel()
 		m.width, m.height = c.w, c.h
 		if got := m.tier(); got != c.tier {
 			t.Errorf("%dx%d: tier = %d, want %d", c.w, c.h, got, c.tier)
+		}
+		if m.mode == 1 && m.tw() != c.w { // remote mode fills the terminal, never caps
+			t.Errorf("%dx%d: remote mode must fill width, tw=%d want %d", c.w, c.h, m.tw(), c.w)
 		}
 		if got := m.showLogPane(); got != c.strip {
 			t.Errorf("%dx%d: showLogPane = %v, want %v", c.w, c.h, got, c.strip)
