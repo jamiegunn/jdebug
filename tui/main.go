@@ -61,6 +61,7 @@ type model struct {
 	confirmKey  string // "" = y/N style; else same-key confirm
 	confirmThen func(m *model) tea.Cmd
 	confirmElse func(m *model) tea.Cmd // optional: runs when declined
+	confirmBase screen                 // the screen a confirm renders OVER (its source)
 
 	// picker / input state (editor dropdowns, jcmd free text, logger name)
 	pick   picker
@@ -429,7 +430,7 @@ func (m model) View() string {
 	case scHelp:
 		return m.helpView()
 	case scConfirm:
-		return m.menuView() + "\n  " + cWarn.Render(m.confirmMsg) + " "
+		return m.baseView() + "\n  " + cWarn.Render(m.confirmMsg) + " "
 	case scVia:
 		return m.viaView()
 	case scJcmd:
@@ -468,8 +469,28 @@ func (m model) askConfirm2(msg, sameKey string, then, els func(*model) tea.Cmd) 
 	m.confirmThen = then
 	m.confirmElse = els
 	m.prev = m.scr
+	m.confirmBase = m.scr // a confirm renders over the screen that launched it
 	m.scr = scConfirm
 	return m, nil
+}
+
+// baseView renders the screen a confirmation sits on top of, so a confirm never
+// visually yanks the operator back to the menu when it was launched elsewhere.
+func (m model) baseView() string {
+	switch m.confirmBase {
+	case scEditor:
+		return m.editorView()
+	case scDetail:
+		return m.detailView()
+	case scWizard:
+		return m.wizardView()
+	case scBlocked:
+		return m.blockedView()
+	case scRunbook:
+		return m.runbookView()
+	default:
+		return m.menuView()
+	}
 }
 
 func (m model) confirmKeyPress(key string) (tea.Model, tea.Cmd) {

@@ -61,6 +61,34 @@ func TestGateBlocksActions(t *testing.T) {
 	}
 }
 
+func TestConfirmRendersOverSourceScreen(t *testing.T) {
+	// a confirm launched from the menu renders over the menu
+	m := readyModel()
+	out, _ := m.askConfirm("re-roll? [y/N]", "", func(*model) tea.Cmd { return nil })
+	mm := out.(model)
+	if mm.confirmBase != scMenu {
+		t.Fatalf("confirm from menu must record scMenu as its base, got %v", mm.confirmBase)
+	}
+	if v := ansiStrip(mm.View()); !strings.Contains(v, "re-roll?") || !strings.Contains(v, "QUICK CHECKS") {
+		t.Fatalf("menu confirm must render over the menu:\n%s", v)
+	}
+	// a confirm launched from the editor renders over the EDITOR, not the menu
+	e := readyModel()
+	e.scr = scEditor
+	out2, _ := e.askConfirm("switch context? [y/N]", "", func(*model) tea.Cmd { return nil })
+	ee := out2.(model)
+	ve := ansiStrip(ee.View())
+	if !strings.Contains(ve, "switch context?") || !strings.Contains(ve, "actuator") {
+		t.Fatalf("editor confirm must render over the editor:\n%s", ve)
+	}
+	if strings.Contains(ve, "QUICK CHECKS") {
+		t.Fatal("editor confirm must NOT yank the operator back to the menu")
+	}
+	if back, _ := ee.confirmKeyPress("n"); back.(model).scr != scEditor {
+		t.Fatal("declining an editor confirm must return to the editor")
+	}
+}
+
 func TestHeapNeedsSecondPress(t *testing.T) {
 	m := readyModel()
 	out := press(t, m, "H")
