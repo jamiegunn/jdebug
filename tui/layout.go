@@ -120,22 +120,50 @@ func paneTitle(w int, label, sub, right string) string {
 // overlay the current screen appends), so the altscreen never scrolls.
 func (m model) dashboardView() string {
 	w := m.tw()
-	menuW, midW, evW := m.cols()
-
-	body := m.remoteBody()
-	topH := strings.Count(body, "\n") + 1
-	left := lipgloss.NewStyle().Width(menuW).Render(body)
-	mid := lipgloss.NewStyle().Width(midW).Render(m.panelView(midW, topH, true))
-	right := lipgloss.NewStyle().Width(evW).Render(strings.Join(m.rightColumn(evW, topH), "\n"))
-	top := lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", mid, "  ", right)
-
-	prefix := m.headerRemote(m.remote.Cluster) + "\n" + top
+	prefix := m.dashPrefix()
 	suffix := "\n" + m.footer("[a] analyze  [c] check setup  [?] help  [q] quit") + prompt()
 	logH := m.height - m.overlayLines() - (strings.Count(prefix, "\n") + 1) - strings.Count(suffix, "\n") - 1
 	if m.showLogPane() && logH >= 6 {
 		return prefix + "\n" + rule(w) + "\n" + m.bottomPane(w, logH) + suffix
 	}
 	return prefix + suffix
+}
+
+// dashPrefix is everything the tier-2 dashboard draws above the bottom rule:
+// the header over the three top columns. Shared with bottomStripY so the click
+// math and the render can never disagree about where the work strip lands.
+func (m model) dashPrefix() string {
+	menuW, midW, evW := m.cols()
+	body := m.remoteBody()
+	topH := strings.Count(body, "\n") + 1
+	left := lipgloss.NewStyle().Width(menuW).Render(body)
+	mid := lipgloss.NewStyle().Width(midW).Render(m.panelView(midW, topH, true))
+	right := lipgloss.NewStyle().Width(evW).Render(strings.Join(m.rightColumn(evW, topH), "\n"))
+	top := lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", mid, "  ", right)
+	return m.headerRemote(m.remote.Cluster) + "\n" + top
+}
+
+// bottomStripY returns the screen row of the WORK/LOGS/EVENTS tab strip, and
+// whether the bottom work area is currently on screen. It reconstructs the same
+// "prefix" both render paths build above the rule (dashboardView for tier 2,
+// the generic menu view for tier 1); the strip sits one row below that rule.
+func (m model) bottomStripY() (int, bool) {
+	if m.scr != scMenu || !m.remote.OK || !m.showLogPane() || m.capsFocus || m.logs.focus {
+		return 0, false
+	}
+	var prefix string
+	if m.tier() == 2 {
+		prefix = m.dashPrefix()
+	} else {
+		prefix = m.headerRemote(m.remote.Cluster) + "\n" + m.withPanel(m.remoteBody())
+	}
+	prefixLines := strings.Count(prefix, "\n") + 1
+	suffix := "\n" + m.footer("[a] analyze  [c] check setup  [?] help  [q] quit") + prompt()
+	logH := m.height - m.overlayLines() - prefixLines - strings.Count(suffix, "\n") - 1
+	if logH < 6 {
+		return 0, false
+	}
+	return prefixLines + 1, true // + 1 for the rule row between prefix and the strip
 }
 
 // rightColumn stacks PODS, WORKLOAD, CAPTURES into exactly h rows.

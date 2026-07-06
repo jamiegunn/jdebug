@@ -351,6 +351,10 @@ func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m.openDetail(key)
 		}
 	case v.Action == tea.MouseActionPress && v.Button == tea.MouseButtonLeft:
+		if id, ok := m.workTabHit(v.X, v.Y); ok {
+			m.workTab = id
+			return m, nil
+		}
 		if pod := m.podsClickTarget(v.X, v.Y); pod != "" {
 			return m.switchPod(pod)
 		}

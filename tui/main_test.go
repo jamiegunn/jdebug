@@ -660,6 +660,43 @@ func TestClickOutsideMenuColumnIsNotARun(t *testing.T) {
 	}
 }
 
+func TestWorkTabsAreClickable(t *testing.T) {
+	m := readyModel200() // 200×50 → tier 2, log pane shown
+	m.workTab = tabWork
+
+	sy, ok := m.bottomStripY()
+	if !ok {
+		t.Fatal("bottom work strip should be on screen at tier 2 with a pod set")
+	}
+	// the computed strip row must actually be the rendered strip row
+	lines := strings.Split(m.View(), "\n")
+	if sy >= len(lines) {
+		t.Fatalf("strip row %d past the frame (%d lines)", sy, len(lines))
+	}
+	strip := ansi.Strip(lines[sy])
+	if !strings.Contains(strip, "LOGS") || !strings.Contains(strip, "EVENTS") {
+		t.Fatalf("row %d is not the tab strip: %q", sy, strip)
+	}
+
+	// clicking the LOGS / EVENTS labels selects those tabs
+	for _, tc := range []struct {
+		label string
+		want  int
+	}{{"LOGS", tabLogs}, {"EVENTS", tabEvents}, {"WORK", tabWork}} {
+		col := lipgloss.Width(strip[:strings.Index(strip, tc.label)]) // byte idx → display col
+		if id, hit := m.workTabHit(col, sy); !hit || id != tc.want {
+			t.Errorf("click on %s: got (id=%d hit=%v), want id=%d", tc.label, id, hit, tc.want)
+		}
+	}
+
+	// end-to-end: a real left-click on EVENTS switches the active tab
+	evCol := lipgloss.Width(strip[:strings.Index(strip, "EVENTS")])
+	res, _ := m.Update(tea.MouseMsg{X: evCol, Y: sy, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
+	if mm := res.(model); mm.workTab != tabEvents {
+		t.Fatalf("clicking EVENTS must select it, workTab=%d", mm.workTab)
+	}
+}
+
 func TestPanelClickDrillsIntoWorkload(t *testing.T) {
 	m := readyModel()
 	m.width, m.height = 200, 50
