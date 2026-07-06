@@ -717,10 +717,6 @@ func (m model) panelView(w, h int, trends bool) string {
 		rows = append(rows, line("jattach", jat, !m.local.Jattach))
 	}
 	rows = append(rows, "")
-	if trends && m.mode == 1 {
-		rows = append(rows, m.trendsRows(w)...)
-		rows = append(rows, "")
-	}
 	nextHdr := " " + cDim.Render("NEXT")
 	if m.incMode != "" {
 		nextHdr += " " + cKey.Render("· "+m.incMode)

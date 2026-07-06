@@ -19,6 +19,7 @@ const (
 	tabLogs
 	tabEvents
 	tabCaptures
+	tabTrends
 	numWorkTabs
 )
 
@@ -51,7 +52,7 @@ func (m model) workTabList() []wtab {
 	if n := len(m.caps); n > 0 {
 		caps = fmt.Sprintf("CAPTURES %d", n)
 	}
-	return []wtab{{tabWork, work}, {tabLogs, "LOGS"}, {tabEvents, ev}, {tabCaptures, caps}}
+	return []wtab{{tabWork, work}, {tabLogs, "LOGS"}, {tabEvents, ev}, {tabCaptures, caps}, {tabTrends, "TRENDS"}}
 }
 
 // workTabStrip is the one-line header replacing the individual pane titles: the
@@ -79,6 +80,8 @@ func (m model) workTabStrip(w int) string {
 		right = "pod events · click/tab to switch"
 	case tabCaptures:
 		right = m.capsScope() + " · click opens · a analyzes"
+	case tabTrends:
+		right = "point-in-time · 1 sample / 20s · gaps = no data"
 	}
 	fill := w - lipgloss.Width(left) - lipgloss.Width(right) - 2
 	if fill < 1 {

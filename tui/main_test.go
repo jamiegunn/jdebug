@@ -253,7 +253,9 @@ func TestDashboardShowsPanes(t *testing.T) {
 	m := readyModel()
 	m.width, m.height = 200, 50
 	out := m.menuView()
-	for _, want := range []string{"LOGS", "WORKLOAD", "CAPTURES", "TRENDS", "PODS", "▲",
+	// TRENDS is now a bottom tab (its ▲ restart markers render only when that
+	// tab is active); the default view still shows every pane/tab label
+	for _, want := range []string{"LOGS", "WORKLOAD", "CAPTURES", "TRENDS", "PODS",
 		"OutOfMemoryError", "app-debug-demo-app", "config:configmap", "20260705T091500Z", "click switches"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dashboard missing %q", want)
@@ -933,12 +935,28 @@ func TestRefreshKeyReturnsCommand(t *testing.T) {
 	}
 }
 
-func TestTrendsLegend(t *testing.T) {
+func TestMetricsTabShowsHeapAndRestarts(t *testing.T) {
+	m := demoModel() // demo history has heap%, restarts, and the actuator metrics
+	got := ansiStrip(strings.Join(m.metricsTabRows(120, 12), "\n"))
+	// the JVM heap row is the headline addition; restarts still render as ▲
+	for _, want := range []string{"heap", "mem", "cpu", "restarts", "▲", "gc", "threads", "http", "db pool"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("metrics tab missing %q row:\n%s", want, got)
+		}
+	}
+}
+
+// with no actuator data the extra rows must stay hidden (never a wall of "–")
+func TestMetricsTabHidesEmptyRows(t *testing.T) {
 	m := readyModel()
-	rows := strings.Join(m.trendsRows(46), "\n")
-	got := ansiStrip(rows)
-	if !strings.Contains(got, "mem=%limit") || !strings.Contains(got, "▲=restart") {
-		t.Fatalf("trends must carry a self-explanatory legend:\n%s", got)
+	m.hist = []sample{{When: time.Now(), MemPct: 50, CPUMilli: 100, Restarts: 0, HeapPct: 40,
+		Threads: -1, GCPauseMs: -1, HTTPRps: -1, DBActive: -1}}
+	got := ansiStrip(strings.Join(m.metricsTabRows(120, 12), "\n"))
+	if strings.Contains(got, "threads") || strings.Contains(got, "db pool") {
+		t.Fatalf("actuator rows must stay hidden without data:\n%s", got)
+	}
+	if !strings.Contains(got, "heap") {
+		t.Fatalf("core rows must always show:\n%s", got)
 	}
 }
 

@@ -265,6 +265,8 @@ func (m model) bottomPane(w, h int) string {
 		body = m.workPane(w, h)
 	case tabCaptures:
 		body = strings.Join(m.capsRows(w, h), "\n") // the roomy, full-width evidence browser
+	case tabTrends:
+		body = strings.Join(m.metricsTabRows(w, h), "\n") // full-width metric sparklines
 	default:
 		body = m.logPane(w, h)
 	}

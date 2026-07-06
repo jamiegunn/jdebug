@@ -801,7 +801,11 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         assert_has "tui: dashboard events tab (warn count)" "EVENTS"
         assert_has "tui: dashboard workload pane" "WORKLOAD"
         assert_has "tui: dashboard captures pane" "CAPTURES"
-        assert_has "tui: dashboard trends" "TRENDS"
+        assert_has "tui: dashboard trends tab" "TRENDS"
+        # the TRENDS tab (full-width metrics): heap headline + restart markers
+        run_case ./tui/jdebug-tui -render trends
+        assert_has "tui: trends tab shows JVM heap" "heap"
+        assert_has "tui: trends tab shows GC metric" "gc"
         assert_has "tui: restart marker" "▲"
         # captures focus browser (Go 'd' opens this; bash 'd' keeps the text listing)
         run_case ./tui/jdebug-tui -render capsfocus

@@ -34,7 +34,9 @@ func demoModel() model {
 	// live-pane demo data: a memory ramp with one restart, a stack trace in
 	// the logs, a back-off event, three captures.
 	for i := 0; i < 20; i++ {
-		s := sample{When: time.Now(), MemPct: 60 + i*2, CPUMilli: 120 + i*7, Restarts: 33}
+		s := sample{When: time.Now(), MemPct: 60 + i*2, CPUMilli: 120 + i*7, Restarts: 33,
+			HeapPct: 45 + i*2, Threads: 120 + i, GCPauseMs: 8 + i/3, GCPerMin: 3 + i/6,
+			HTTPRps: 40 + i, HTTPMs: 180 + i*3, DBActive: 6 + i/4, DBIdle: 4, DBPending: 0}
 		if i >= 12 {
 			s.Restarts = 34
 		}
@@ -108,6 +110,12 @@ func renderDemo(what string) string {
 			raw: []byte("how to read this: STATUS should be Running; RESTARTS counts crashes\n\nNAME    READY   STATUS    RESTARTS   AGE\npod-a   1/1     Running   34         2d\n\nrecent events:\n5m  Warning  BackOff  pod/pod-a  Back-off restarting failed container")}
 		m.rewrapOut()
 		return m.outputView()
+	case "trends":
+		// the dashboard with the bottom TRENDS tab active (full-width metrics)
+		m.scr = scMenu
+		m.width, m.height = 200, 50
+		m.workTab = tabTrends
+		return m.menuView()
 	case "runpane":
 		// the dashboard with a finished command held in the bottom WORK tab
 		m.scr = scMenu

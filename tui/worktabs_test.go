@@ -11,7 +11,7 @@ func TestWorkTabsCycleAndContent(t *testing.T) {
 	if m.workTab != tabLogs {
 		t.Fatalf("the bottom work area must default to the LOGS tab, got %d", m.workTab)
 	}
-	// tab advances LOGS → EVENTS → CAPTURES → WORK → LOGS, without a menu action
+	// tab cycles LOGS → EVENTS → CAPTURES → TRENDS → WORK → LOGS, no menu action
 	ev := press(t, m, "tab").(model)
 	if ev.workTab != tabEvents {
 		t.Fatalf("tab must advance to EVENTS, got %d", ev.workTab)
@@ -26,7 +26,14 @@ func TestWorkTabsCycleAndContent(t *testing.T) {
 	if !strings.Contains(ansiStrip(cap.workTabStrip(cap.tw())), "[CAPTURES") {
 		t.Fatal("the CAPTURES tab must be the bracketed active tab once selected")
 	}
-	wk := press(t, cap, "tab").(model)
+	tr := press(t, cap, "tab").(model)
+	if tr.workTab != tabTrends {
+		t.Fatalf("tab must advance to TRENDS, got %d", tr.workTab)
+	}
+	if !strings.Contains(tr.menuView(), "heap") {
+		t.Fatal("the TRENDS tab must show the metric rows (heap, mem, cpu…)")
+	}
+	wk := press(t, tr, "tab").(model)
 	if wk.workTab != tabWork {
 		t.Fatalf("tab must advance to WORK, got %d", wk.workTab)
 	}

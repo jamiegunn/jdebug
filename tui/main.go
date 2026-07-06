@@ -276,7 +276,11 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.panelBusy = false
 		if m.mode == 1 && v.Phase != "" {
 			m.hist = pushSample(m.hist, sample{When: v.When, MemPct: v.MemPct,
-				CPUMilli: cpuMilli(v.CPUUse), Restarts: v.Restarts})
+				CPUMilli: cpuMilli(v.CPUUse), Restarts: v.Restarts, HeapPct: pct(v.HeapUsed, v.HeapMax),
+				// actuator-sourced metrics are filled in by the metrics scrape;
+				// unknown until then (-1 keeps their rows hidden, never "0")
+				Threads: -1, GCPauseMs: -1, GCPerMin: -1, HTTPRps: -1, HTTPMs: -1,
+				DBActive: -1, DBIdle: -1, DBPending: -1})
 		}
 		return m, nil
 	case logMsg:
