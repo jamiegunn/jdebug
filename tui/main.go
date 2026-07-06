@@ -104,6 +104,7 @@ type model struct {
 	panelBusy bool
 	logBusy   bool
 
+	workTab   int    // bottom work area: tabWork | tabLogs | tabEvents
 	bgMode    int    // background refresh: bgLive | bgQuiet | bgPaused
 	logTickOn bool   // the 5s log ticker is armed (must never double-arm)
 	autoRan   bool   // the one-shot startup auto-status already fired
@@ -554,7 +555,7 @@ func main() {
 	}
 	initSessionLog(kit)
 
-	m := model{kit: kit, t: loadTarget(), width: 100}
+	m := model{kit: kit, t: loadTarget(), width: 100, workTab: tabLogs}
 	switch os.Getenv("JDEBUG_MODE") {
 	case "1":
 		m.mode = 1

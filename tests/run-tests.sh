@@ -702,7 +702,8 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         assert_has "tui: actuator-auth screen stores a reference" "REFERENCE, not the secret"
         assert_has "tui: actuator-auth screen offers a jattach fallback" "without HTTP"
         run_case ./tui/jdebug-tui -render dashboard
-        assert_has "tui: dashboard log pane" "LIVE LOGS"
+        assert_has "tui: dashboard work-area tabs" "LOGS"
+        assert_has "tui: dashboard events tab (warn count)" "EVENTS"
         assert_has "tui: dashboard workload pane" "WORKLOAD"
         assert_has "tui: dashboard captures pane" "CAPTURES"
         assert_has "tui: dashboard trends" "TRENDS"
@@ -717,7 +718,7 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         run_case ./tui/jdebug-tui -render output
         assert_has "tui: in-app output pane" "scroll"
         run_case ./tui/jdebug-tui -render runpane
-        assert_has "tui: output replaces the log strip" "OUTPUT"
+        assert_has "tui: a held command shows in the WORK tab" "WORK"
         assert_has "tui: strip verdict + way back" "esc back to logs"
         run_case ./tui/jdebug-tui -render wizard
         assert_has "tui: crash-loop flow offered" "CrashLoopBackOff"

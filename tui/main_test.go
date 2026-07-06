@@ -249,7 +249,7 @@ func TestDashboardShowsPanes(t *testing.T) {
 	m := readyModel()
 	m.width, m.height = 200, 50
 	out := m.menuView()
-	for _, want := range []string{"LIVE LOGS", "WORKLOAD", "CAPTURES", "TRENDS", "PODS", "▲",
+	for _, want := range []string{"LOGS", "WORKLOAD", "CAPTURES", "TRENDS", "PODS", "▲",
 		"OutOfMemoryError", "app-debug-demo-app", "config:configmap", "20260705T091500Z", "click switches"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("dashboard missing %q", want)
@@ -261,11 +261,20 @@ func TestDashboardDoesNotSpendMainPaneOnEvents(t *testing.T) {
 	m := readyModel()
 	m.width, m.height = 200, 50
 	out := m.menuView()
-	if strings.Contains(out, "EVENTS") {
-		t.Fatal("main dashboard should reserve the right column for workload context, not recent events")
+	// events now live in a bottom WORK/LOGS/EVENTS tab, not the right column:
+	// the EVENTS *tab* is fine, but event *content* must not show until selected
+	if strings.Contains(out, "Back-off restarting") {
+		t.Fatal("recent-event content must not render until the EVENTS tab is selected")
 	}
 	if !strings.Contains(out, "WORKLOAD") || !strings.Contains(out, "volumes") {
 		t.Fatal("main dashboard must show workload context in the right column")
+	}
+	// selecting the EVENTS tab shows the events
+	e := readyModel()
+	e.width, e.height = 200, 50
+	e.workTab = tabEvents
+	if !strings.Contains(e.menuView(), "Back-off restarting") {
+		t.Fatal("the EVENTS tab must show recent pod events")
 	}
 }
 
@@ -301,8 +310,11 @@ func TestCommandsStreamIntoStrip(t *testing.T) {
 		if mm.scr != scMenu || !mm.out.show || !mm.out.running || cmd == nil {
 			t.Fatalf("%q must stream into the bottom strip with the menu live, got screen %v show=%v", k, mm.scr, mm.out.show)
 		}
-		if !strings.Contains(mm.menuView(), "OUTPUT") {
-			t.Fatalf("%q: strip must switch from LIVE LOGS to OUTPUT", k)
+		if mm.workTab != tabWork {
+			t.Fatalf("%q: a launched command must auto-select the WORK tab", k)
+		}
+		if !strings.Contains(mm.menuView(), "WORK ●") {
+			t.Fatalf("%q: the WORK tab must be active and show the running command", k)
 		}
 	}
 }
@@ -338,6 +350,7 @@ func TestEscStopsThenDismisses(t *testing.T) {
 	stopped := false
 	m.out = outState{id: 7, title: "jdebug logs", running: true, show: true,
 		cancel: func() { stopped = true }}
+	m.workTab = tabWork // esc acts on the output while the WORK tab is active
 	m.scr = scMenu
 	out := press(t, m, "esc")
 	mm := out.(model)
@@ -350,11 +363,12 @@ func TestEscStopsThenDismisses(t *testing.T) {
 		t.Fatalf("cancel must read as stopped, got %q", mm.out.errStr)
 	}
 	out = press(t, mm, "esc")
-	if out.(model).out.show {
+	fin := out.(model)
+	if fin.out.show {
 		t.Fatal("second esc must dismiss back to the live logs")
 	}
-	if !strings.Contains(out.(model).menuView(), "LIVE LOGS") {
-		t.Fatal("dismissing must restore the log tail")
+	if fin.workTab != tabLogs {
+		t.Fatal("dismissing must restore the LOGS tab")
 	}
 }
 

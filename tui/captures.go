@@ -310,6 +310,7 @@ func (m model) viewFile(path string) (tea.Model, tea.Cmd) {
 		done: true, ok: true, raw: []byte(body)}
 	if m.mode == 1 && m.remote.OK && m.showLogPane() {
 		m.out.show = true
+		m.workTab = tabWork // viewing a file lands in the WORK tab
 	} else {
 		m.prev = scMenu
 		m.scr = scOutput

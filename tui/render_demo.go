@@ -18,6 +18,7 @@ func demoModel() model {
 			Actuator: "http://localhost:8080/actuator", Pod: "app-debug-demo-app-6c6c4b5769-s9jdg"},
 	}
 	ctxOverride = "ddk3s"
+	m.workTab = tabLogs
 	m.remote = probe{OK: true, Cluster: true, When: time.Now().Add(time.Hour)}
 	m.panel = panelData{When: time.Now(), Phase: "Running", Waiting: "CrashLoopBackOff",
 		Restarts: 34, LastReason: "OOMKilled",
@@ -108,10 +109,11 @@ func renderDemo(what string) string {
 		m.rewrapOut()
 		return m.outputView()
 	case "runpane":
-		// the dashboard with a finished command held in the bottom strip
+		// the dashboard with a finished command held in the bottom WORK tab
 		m.scr = scMenu
 		m.width, m.height = 200, 50
-		m.out = outState{title: "jdebug status", done: true, ok: true, show: true,
+		m.workTab = tabWork
+		m.out = outState{id: 1, title: "jdebug status", done: true, ok: true, show: true,
 			raw: []byte("how to read this: STATUS should be Running; RESTARTS counts crashes\n\nNAME    READY   STATUS    RESTARTS   AGE\npod-a   1/1     Running   34         2d")}
 		m.rewrapOut()
 		return m.menuView()

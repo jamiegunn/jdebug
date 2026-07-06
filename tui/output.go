@@ -133,7 +133,8 @@ func (m model) startPane(title string, env []string, prefix []byte, keep bool, w
 		m.out.running = true // appendChunk doesn't touch it, but be explicit
 	}
 	if m.mode == 1 && m.remote.OK && m.showLogPane() {
-		m.out.show = true // render in the bottom strip; menu stays live
+		m.out.show = true   // render in the bottom strip; menu stays live
+		m.workTab = tabWork // a launched command auto-selects the WORK tab
 	} else {
 		m.prev = scMenu
 		m.scr = scOutput
@@ -250,13 +251,27 @@ func (m model) outPane(w, h int) string {
 	return strings.Join(rows[:h], "\n")
 }
 
-// bottomPane: the dashboard's bottom strip — command output while a run is
-// live or held, the log tail otherwise.
+// bottomPane: the dashboard's bottom work area — a WORK/LOGS/EVENTS tab strip
+// over the active tab's content (its own pane title swapped for the strip).
 func (m model) bottomPane(w, h int) string {
-	if m.out.show {
-		return m.outPane(w, h)
+	if h < 2 {
+		h = 2
 	}
-	return m.logPane(w, h)
+	var body string
+	switch m.workTab {
+	case tabEvents:
+		body = strings.Join(m.eventsRows(w, h), "\n")
+	case tabWork:
+		body = m.workPane(w, h)
+	default:
+		body = m.logPane(w, h)
+	}
+	lines := strings.Split(body, "\n")
+	if len(lines) == 0 {
+		lines = []string{""}
+	}
+	lines[0] = m.workTabStrip(w) // the tab strip replaces the pane's own title row
+	return strings.Join(lines, "\n")
 }
 
 // outVisible: content rows the full-screen scOutput frame can show.
@@ -379,6 +394,7 @@ func (m model) menuOutKey(key string) (tea.Model, tea.Cmd, bool) {
 			return m, nil, true
 		}
 		m.out.show = false
+		m.workTab = tabLogs // dismissed the output → back to the live log tail
 		return m, tea.Batch(m.panelFetch(m.bgMode == bgLive), fetchCaps(m.kit, m.capsDir())), true
 	case "C":
 		return m.copyTranscript(), nil, true

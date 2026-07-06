@@ -392,7 +392,17 @@ func (m model) menuKey(key string) (tea.Model, tea.Cmd) {
 	if m.logs.focus {
 		return m.logFocusKey(key)
 	}
-	if m.out.show {
+	// tab/shift-tab switch the bottom work area (WORK / LOGS / EVENTS)
+	if m.showLogPane() && (key == "tab" || key == "shift+tab") {
+		dir := 1
+		if key == "shift+tab" {
+			dir = -1
+		}
+		(&m).cycleWorkTab(dir)
+		return m, nil
+	}
+	// output-pane keys (stop/copy/scroll) apply while the WORK tab is active
+	if m.workTab == tabWork && m.out.id != 0 {
 		if mm, cmd, handled := m.menuOutKey(key); handled {
 			return mm, cmd
 		}

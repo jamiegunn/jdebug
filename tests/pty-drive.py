@@ -77,11 +77,11 @@ for p in glob.glob(sandbox + "/dumps/session-*.log"):
 
 checks = {
     "dashboard rendered":       "guided diagnosis" in txt,
-    "live log pane":            "LIVE LOGS" in txt and "OutOfMemoryError" in txt,
+    "live log pane":            "LOGS" in txt and "OutOfMemoryError" in txt,
     "pods pane, clickable":     "PODS" in txt and "click switches" in txt,
     "workload + captures panes": "WORKLOAD" in txt and "CAPTURES" in txt,
     "trends sparklines":        "TRENDS" in txt,
-    "status streams into pane": "OUTPUT" in txt and "how to read this" in txt,
+    "status streams into pane": "WORK" in txt and "how to read this" in txt,
     "why: pod deep-dive runs":  "pod deep-dive" in txt or "requests = the scheduler" in txt,
     "security: posture runs":   "security posture" in txt,
     "logs stream into pane":    "mock log line" in txt,
