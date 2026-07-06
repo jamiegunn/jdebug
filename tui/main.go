@@ -540,6 +540,7 @@ func (m model) confirmKeyPress(key string) (tea.Model, tea.Cmd) {
 func main() {
 	renderFlag := flag.String("render", "", "print a screen with canned demo state and exit (menu|dashboard|focus|output|gate|local|help|chooser|editor|wizard)")
 	heapFlag := flag.String("analyze-heap", "", "print a class histogram for an hprof heap dump and exit")
+	deepFlag := flag.Bool("deep", false, "with -analyze-heap: also build the dominator tree for retained sizes")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 
@@ -556,6 +557,14 @@ func main() {
 			os.Exit(1)
 		}
 		fmt.Println(renderHistogram(h, 15))
+		if *deepFlag {
+			deep, derr := analyzeHprofDeep(*heapFlag)
+			if derr != nil {
+				fmt.Println("\n(retained-size pass skipped: " + derr.Error() + ")")
+			} else {
+				fmt.Println("\n" + deep)
+			}
+		}
 		return
 	}
 	if *renderFlag != "" {

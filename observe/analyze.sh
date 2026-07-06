@@ -22,6 +22,18 @@ SCRIPTS_ROOT="$SCRIPT_DIR"; while [[ "$SCRIPTS_ROOT" != / && ! -f "$SCRIPTS_ROOT
 source "$SCRIPTS_ROOT/lib/common.sh"
 set +e   # greps that find nothing are data here, not failures
 
+# --deep / -d: also run the retained-size (dominator) pass on heap dumps. Pulled
+# out of the args so the rest of the arg handling (TARGET) is unchanged.
+DEEP=""
+_args=()
+for _a in "$@"; do
+    case "$_a" in
+        --deep|-d) DEEP=1 ;;
+        *) _args+=("$_a") ;;
+    esac
+done
+set -- ${_args[@]+"${_args[@]}"}
+
 ANALYZED=0; FLAGS=0
 say()  { printf '    %s\n' "$*"; }
 flag() { printf '    ⚠ %s\n' "$*"; FLAGS=$((FLAGS+1)); }
@@ -85,8 +97,11 @@ analyze_hprof() {
     # "what's eating the heap?" without opening a desktop tool
     local tui="$SCRIPTS_ROOT/tui/jdebug-tui"
     if [[ -x "$tui" ]]; then
-        "$tui" -analyze-heap "$f" 2>/dev/null | sed 's/^/    /' \
+        local hflags=(-analyze-heap "$f")
+        [[ -n "$DEEP" ]] && hflags=(-deep -analyze-heap "$f") # add the retained-size pass
+        "$tui" "${hflags[@]}" 2>/dev/null | sed 's/^/    /' \
             || say "(couldn't parse the histogram — open it in Eclipse MAT instead)"
+        [[ -z "$DEEP" ]] && say "for RETAINED size (what each object keeps alive): jdebug analyze --deep $f"
     else
         say "open: MAT → File → Open Heap Dump → run 'Leak Suspects'  (build the TUI for an inline histogram: make tui)"
         say "leak hunting: take a second dump after more load, then MAT → 'compare to another heap dump'"

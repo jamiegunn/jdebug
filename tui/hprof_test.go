@@ -235,3 +235,126 @@ func TestIsFrameworkClass(t *testing.T) {
 		}
 	}
 }
+
+// TestDominatorsAndRetained checks the CHK dominator + retained-size math on a
+// hand-built graph: root→1, root→2, 1→3, 2→3, 3→4.
+func TestDominatorsAndRetained(t *testing.T) {
+	g := &heapGraph{
+		shallow: []int64{0, 10, 20, 30, 40, 99}, // node 5 is unreachable garbage
+		name:    []int32{0, 0, 0, 0, 0, 0}, names: []string{"x"},
+		succ: [][]int32{{1, 2}, {3}, {3}, {4}, {}, {}},
+		pred: [][]int32{{}, {0}, {0}, {1, 2}, {3}, {}},
+	}
+	idom, _, order := g.dominators()
+	for v, w := range map[int32]int32{1: 0, 2: 0, 3: 0, 4: 3} {
+		if idom[v] != w {
+			t.Errorf("idom[%d] = %d, want %d", v, idom[v], w)
+		}
+	}
+	if idom[5] != -1 {
+		t.Errorf("unreachable node must have idom -1, got %d", idom[5])
+	}
+	ret := g.retainedSizes(idom, order)
+	if ret[3] != 70 { // 3 dominates 4: 30 + 40
+		t.Errorf("retained[3] = %d, want 70", ret[3])
+	}
+	if ret[1] != 10 { // 1 does NOT dominate 3 (reachable via 2 too)
+		t.Errorf("retained[1] = %d, want 10", ret[1])
+	}
+	if ret[0] != 100 { // root retains everything reachable
+		t.Errorf("retained[root] = %d, want 100", ret[0])
+	}
+}
+
+// synthDeepHprof: a rooted instance holding a byte[], to exercise the whole deep
+// pipeline (class layout → ref field → dominators → retained size).
+func synthDeepHprof() []byte {
+	var b bytes.Buffer
+	b.WriteString("JAVA PROFILE 1.0.2\x00")
+	binary.Write(&b, binary.BigEndian, uint32(8))
+	binary.Write(&b, binary.BigEndian, uint64(0))
+	id := func(v uint64) []byte { x := make([]byte, 8); binary.BigEndian.PutUint64(x, v); return x }
+	u4 := func(v uint32) []byte { x := make([]byte, 4); binary.BigEndian.PutUint32(x, v); return x }
+	u2 := func(v uint16) []byte { x := make([]byte, 2); binary.BigEndian.PutUint16(x, v); return x }
+	rec := func(tag byte, body []byte) {
+		b.WriteByte(tag)
+		b.Write(u4(0))
+		b.Write(u4(uint32(len(body))))
+		b.Write(body)
+	}
+	rec(0x01, append(id(1), []byte("Holder")...)) // STRING id=1
+	var lc bytes.Buffer                           // LOAD_CLASS: serial, classObj=100, stack, name=1
+	lc.Write(u4(1))
+	lc.Write(id(100))
+	lc.Write(u4(0))
+	lc.Write(id(1))
+	rec(0x02, lc.Bytes())
+
+	var hd bytes.Buffer
+	// CLASS_DUMP for Holder(100): 1 instance field of type object(2)
+	hd.WriteByte(0x20)
+	hd.Write(id(100))
+	hd.Write(u4(0))
+	for i := 0; i < 6; i++ {
+		hd.Write(id(0)) // super, loader, signers, protdomain, res1, res2
+	}
+	hd.Write(u4(8)) // instance size
+	hd.Write(u2(0)) // constant pool
+	hd.Write(u2(0)) // static fields
+	hd.Write(u2(1)) // instance fields
+	hd.Write(id(1)) // field name id
+	hd.WriteByte(2) // type = object
+	// PRIM_ARRAY byte[] id=300, 1000 bytes — the retained payload
+	hd.WriteByte(0x23)
+	hd.Write(id(300))
+	hd.Write(u4(0))
+	hd.Write(u4(1000))
+	hd.WriteByte(8)
+	hd.Write(make([]byte, 1000))
+	// INSTANCE Holder id=200, field → 300
+	hd.WriteByte(0x21)
+	hd.Write(id(200))
+	hd.Write(u4(0))
+	hd.Write(id(100))
+	hd.Write(u4(8))
+	hd.Write(id(300))
+	// ROOT_UNKNOWN → Holder(200)
+	hd.WriteByte(0xFF)
+	hd.Write(id(200))
+	rec(0x0C, hd.Bytes())
+	return b.Bytes()
+}
+
+func TestDeepRetainedEndToEnd(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "deep.hprof")
+	if err := os.WriteFile(path, synthDeepHprof(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	g, err := buildHeapGraph(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	idom, _, order := g.dominators()
+	ret := g.retainedSizes(idom, order)
+	var holder, arr int32 = -1, -1
+	for i := range g.shallow {
+		switch g.names[g.name[i]] {
+		case "Holder":
+			holder = int32(i)
+		case "byte[]":
+			arr = int32(i)
+		}
+	}
+	if holder < 0 || arr < 0 {
+		t.Fatalf("expected Holder + byte[] nodes, got names %v", g.names)
+	}
+	// Holder is rooted and holds the byte[] → it retains itself + the array
+	if ret[holder] != g.shallow[holder]+g.shallow[arr] {
+		t.Fatalf("Holder retained = %d, want %d (self %d + array %d)",
+			ret[holder], g.shallow[holder]+g.shallow[arr], g.shallow[holder], g.shallow[arr])
+	}
+	if idom[arr] != holder {
+		t.Fatalf("the byte[] must be dominated by Holder, got idom %d", idom[arr])
+	}
+}

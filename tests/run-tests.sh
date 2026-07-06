@@ -267,6 +267,13 @@ assert_has "hprof: invalid classified, not sent to MAT" "raw HTTP error response
 assert_has "hprof: invalid gives exact recovery route" "via jattach --confirm"
 assert_has "summary counts findings" "finding(s) flagged above"
 assert_has "analyze names the next move" "Next: chase the ⚠ findings"
+# the shallow heap pass advertises the opt-in retained-size (dominator) pass
+assert_has "hprof: advertises the deep retained pass" "jdebug analyze --deep"
+
+# --deep is a FLAG, not a path — it must be filtered from the target, not opened
+run_case ./jdebug analyze --deep "$AD/pods/pod-a/20260704T010000Z"
+assert_rc  "analyze --deep: flag parsed (exit 0)" 0
+assert_not "analyze --deep: not mistaken for a file" "no such file or directory: --deep"
 
 # an EMPTY (0-byte) heap capture means the CAPTURE failed (pod gone/RBAC), NOT
 # an actuator route problem — the guidance must not mislead toward auth/URL

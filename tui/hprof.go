@@ -574,8 +574,8 @@ func renderHistogram(h *heapHistogram, top int) string {
 	}
 
 	b.WriteString("\n" + heapVerdict(h) + "\n")
-	b.WriteString("shallow-size first pass. For RETAINED size (what actually keeps these alive) and\n")
-	b.WriteString("paths-to-GC-roots, open it in Eclipse MAT → 'Leak Suspects' (free, local).")
+	b.WriteString("shallow-size first pass. For RETAINED size (what each object actually KEEPS alive):\n")
+	b.WriteString("run  jdebug analyze --deep <heap>  — or Eclipse MAT for reference chains (paths to GC roots).")
 	return b.String()
 }
 
