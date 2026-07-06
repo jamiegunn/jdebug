@@ -191,3 +191,47 @@ func TestClassifyHead(t *testing.T) {
 		}
 	}
 }
+
+func TestHistogramRichSections(t *testing.T) {
+	// a heap where ONE object dominates → biggest-objects + "ONE object dominates"
+	h := &heapHistogram{
+		totalBytes: 100 << 20, totalObjs: 1000,
+		classes: []classStat{
+			{"byte[]", 100, 40 << 20},
+			{"com.example.Cache", 50, 5 << 20},
+			{"java.lang.String", 200, 3 << 20},
+		},
+		biggest:  []objSize{{"byte[]", 40 << 20, "40M elems"}},
+		dupWaste: 20 << 20, dupGroups: 5000,
+	}
+	out := renderHistogram(h, 15)
+	for _, want := range []string{
+		"biggest single objects", "40M elems",
+		"duplicate small char[]/byte[]",
+		"your app's classes", "com.example.Cache",
+		"verdict:", "ONE object dominates",
+		"RETAINED size", // still points at MAT for the deep stuff
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("rich histogram missing %q:\n%s", want, out)
+		}
+	}
+	// a framework-only heap → the "no app classes" note + baseline verdict
+	h2 := &heapHistogram{totalBytes: 10 << 20, classes: []classStat{{"java.lang.String", 100, 2 << 20}}}
+	if out2 := renderHistogram(h2, 15); !strings.Contains(out2, "no application classes stand out") {
+		t.Errorf("framework-only heap must note no app classes:\n%s", out2)
+	}
+}
+
+func TestIsFrameworkClass(t *testing.T) {
+	for _, n := range []string{"java.lang.String", "org.springframework.X", "byte[]", "jdk.internal.Y"} {
+		if !isFrameworkClass(n) {
+			t.Errorf("%q should be framework/JDK", n)
+		}
+	}
+	for _, n := range []string{"com.example.Foo", "io.lettuce.core.Bar", "oracle.jdbc.Driver"} {
+		if isFrameworkClass(n) {
+			t.Errorf("%q should count as an app/dependency class", n)
+		}
+	}
+}

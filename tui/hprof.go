@@ -1,11 +1,13 @@
 package main
 
-// hprof.go — a focused JVM heap-dump reader: enough of the HPROF binary
-// format to produce a class histogram (which classes hold the most memory),
-// the single most useful first-pass leak signal. Not a replacement for
-// Eclipse MAT's dominator tree — a fast local "what's eating the heap?" with
-// no dependencies. Exposed as `jdebug-tui -analyze-heap <file>` so both the
-// CLI's analyze and the in-app `a` can call it.
+// hprof.go — a focused JVM heap-dump reader, dependency-free. In one streaming
+// pass it produces more than a class histogram: the biggest INDIVIDUAL objects
+// (a class total can hide one giant object vs many small — different bugs), a
+// duplicate small char[]/byte[] estimate (≈ wasted duplicate Strings), your
+// app's classes split from JDK/framework baseline, and a data-driven verdict.
+// It still can't do RETAINED size / dominators / paths-to-GC-roots — those need
+// the full object graph and are what Eclipse MAT is for, which it points at.
+// Exposed as `jdebug-tui -analyze-heap <file>` for the CLI's analyze and `a`.
 //
 // Format: header ("JAVA PROFILE 1.0.x\0", u4 id-size, u8 time), then tagged
 // records. We use STRING (0x01, names), LOAD_CLASS (0x02, classObjId→name),
@@ -28,10 +30,21 @@ type classStat struct {
 	bytes int64
 }
 
+// objSize is one individual object, tracked so we can surface the single
+// biggest allocations — which the per-class histogram sums away.
+type objSize struct {
+	name  string
+	bytes int64
+	extra string // e.g. "1.0M elems"
+}
+
 type heapHistogram struct {
 	classes    []classStat
+	biggest    []objSize // the largest individual objects (newest analysis)
 	totalBytes int64
 	totalObjs  int64
+	dupWaste   int64 // bytes wasted on duplicated small char[]/byte[] (≈ strings)
+	dupGroups  int64 // how many distinct values are duplicated
 	truncated  bool
 }
 
@@ -44,14 +57,70 @@ var primArrayName = map[byte]string{
 // can't hang the UI; class-dominant leaks show up well within it.
 const analyzeHprofLimit = 400 << 20
 
+type dupStat struct {
+	count int64
+	size  int64
+}
+
 type hprofParser struct {
 	idSize      int
 	strs        map[uint64]string
 	classNameOf map[uint64]uint64
 	byClass     map[uint64]*classStat
 	arrays      map[string]*classStat
+	biggest     []objSize           // top-N individual objects by shallow size
+	dup         map[uint64]*dupStat // content hash → occurrences (dup-string detect)
 	consumed    int64
 	truncated   bool
+}
+
+const (
+	biggestN = 12   // how many "biggest single object" rows to keep
+	dupCap   = 4096 // only hash small char[]/byte[] for duplicate detection
+)
+
+// noteObj keeps a running top-N of the largest individual objects, sorted
+// ascending so biggest[0] is the smallest of the kept set (cheap to evict).
+func (p *hprofParser) noteObj(name string, bytes int64, extra string) {
+	if len(p.biggest) < biggestN {
+		p.biggest = append(p.biggest, objSize{name, bytes, extra})
+		if len(p.biggest) == biggestN {
+			sort.Slice(p.biggest, func(i, j int) bool { return p.biggest[i].bytes < p.biggest[j].bytes })
+		}
+		return
+	}
+	if bytes <= p.biggest[0].bytes {
+		return
+	}
+	p.biggest[0] = objSize{name, bytes, extra}
+	sort.Slice(p.biggest, func(i, j int) bool { return p.biggest[i].bytes < p.biggest[j].bytes })
+}
+
+// noteDup records a small array's content by hash so duplicated values (the
+// classic duplicate-String waste) can be estimated without a graph.
+func (p *hprofParser) noteDup(content []byte, size int64) {
+	h := uint64(1469598103934665603)
+	for _, b := range content {
+		h ^= uint64(b)
+		h *= 1099511628211
+	}
+	h ^= uint64(size) // fold length in to cut collisions across sizes
+	ds := p.dup[h]
+	if ds == nil {
+		ds = &dupStat{size: size}
+		p.dup[h] = ds
+	}
+	ds.count++
+}
+
+// className resolves a class-object id to a readable name (fallback "").
+func (p *hprofParser) className(classObjId uint64) string {
+	if sid, ok := p.classNameOf[classObjId]; ok {
+		if n, ok := p.strs[sid]; ok {
+			return javaClassName(n)
+		}
+	}
+	return ""
 }
 
 func analyzeHprof(path string) (*heapHistogram, error) {
@@ -80,6 +149,7 @@ func analyzeHprof(path string) (*heapHistogram, error) {
 		classNameOf: map[uint64]uint64{},
 		byClass:     map[uint64]*classStat{},
 		arrays:      map[string]*classStat{},
+		dup:         map[uint64]*dupStat{},
 	}
 
 	for {
@@ -185,7 +255,36 @@ func (p *hprofParser) result() *heapHistogram {
 		add(cs)
 	}
 	sort.Slice(h.classes, func(i, j int) bool { return h.classes[i].bytes > h.classes[j].bytes })
+
+	// biggest individual objects, largest first
+	h.biggest = append(h.biggest, p.biggest...)
+	sort.Slice(h.biggest, func(i, j int) bool { return h.biggest[i].bytes > h.biggest[j].bytes })
+
+	// duplicate small char[]/byte[] → wasted bytes ≈ (occurrences-1) * size
+	for _, ds := range p.dup {
+		if ds.count > 1 {
+			h.dupWaste += (ds.count - 1) * ds.size
+			h.dupGroups++
+		}
+	}
 	return h
+}
+
+// isFrameworkClass reports whether a class name is JDK/runtime/framework noise
+// (so "your app's classes" can be surfaced separately from Spring/JDK baseline).
+func isFrameworkClass(n string) bool {
+	for _, pre := range []string{
+		"java.", "javax.", "jakarta.", "jdk.", "sun.", "com.sun.", "kotlin.", "scala.",
+		"org.springframework.", "org.apache.", "org.aspectj.", "org.hibernate.",
+		"org.slf4j.", "ch.qos.", "io.micrometer.", "io.netty.", "com.fasterxml.",
+		"[", "byte[]", "char[]", "int[]", "long[]", "short[]", "float[]", "double[]",
+		"boolean[]", "java.lang.Object[]",
+	} {
+		if strings.HasPrefix(n, pre) {
+			return true
+		}
+	}
+	return false
 }
 
 // walkHeap consumes EVERY sub-record in a heap-dump segment, counting objects
@@ -231,7 +330,9 @@ func (p *hprofParser) walkHeap(r *bufio.Reader, length int64) error {
 			}
 			cs := p.statFor(classObjId)
 			cs.count++
-			cs.bytes += int64(nbytes) + int64(id)*2 // header estimate
+			b := int64(nbytes) + int64(id)*2 // header estimate
+			cs.bytes += b
+			p.noteObj(cs.name, b, "")
 		case 0x22: // OBJ_ARRAY_DUMP: id, u4 stack, u4 n, id arrClass, [n ids]
 			if err := skip(id + 4); err != nil {
 				return err
@@ -241,12 +342,23 @@ func (p *hprofParser) walkHeap(r *bufio.Reader, length int64) error {
 				return err
 			}
 			remaining -= 4
-			if err := skip(id + int(n)*id); err != nil {
+			arrClass, err := p.readID(r) // the real element type, not just Object[]
+			if err != nil {
 				return err
 			}
-			cs := p.arrayStat("java.lang.Object[]")
+			remaining -= int64(id)
+			if err := skip(int(n) * id); err != nil {
+				return err
+			}
+			name := p.className(arrClass)
+			if name == "" {
+				name = "java.lang.Object[]"
+			}
+			cs := p.arrayStat(name)
 			cs.count++
-			cs.bytes += int64(n)*int64(id) + 16
+			b := int64(n)*int64(id) + 16
+			cs.bytes += b
+			p.noteObj(name, b, humanCount(int64(n))+" refs")
 		case 0x23: // PRIM_ARRAY_DUMP: id, u4 stack, u4 n, u1 type, [n*sz]
 			if err := skip(id + 4); err != nil {
 				return err
@@ -262,12 +374,24 @@ func (p *hprofParser) walkHeap(r *bufio.Reader, length int64) error {
 			}
 			remaining--
 			sz := int64(basicTypeSize(etype, id))
-			if err := skip(int(int64(n) * sz)); err != nil {
+			content := int(int64(n) * sz)
+			// duplicate detection: hash small char[]/byte[] (≈ String backing);
+			// everything else (and big arrays) is skipped, cost-free
+			if (etype == 5 || etype == 8) && content > 0 && content <= dupCap {
+				dbuf := make([]byte, content)
+				if _, err := readFull(r, dbuf); err != nil {
+					return err
+				}
+				remaining -= int64(content)
+				p.noteDup(dbuf, int64(content)+16)
+			} else if err := skip(content); err != nil {
 				return err
 			}
 			cs := p.arrayStat(primArrayName[etype])
 			cs.count++
-			cs.bytes += int64(n)*sz + 16
+			b := int64(n)*sz + 16
+			cs.bytes += b
+			p.noteObj(primArrayName[etype], b, humanCount(int64(n))+" elems")
 		case 0x20: // CLASS_DUMP — variable length
 			if err := p.skipClassDump(r, &remaining); err != nil {
 				return err
@@ -405,11 +529,85 @@ func renderHistogram(h *heapHistogram, top int) string {
 		}
 		fmt.Fprintf(&b, "  %5.1f%%  %9s  %10s  %s\n", pct, fmtSize(cs.bytes), humanCount(cs.count), cs.name)
 	}
-	b.WriteString("\nHow to read this: one class holding a runaway share is the leak's shape — byte[]/\n")
-	b.WriteString("char[]/String usually mean cached strings or leaked buffers; HashMap$Node/ArrayList\n")
-	b.WriteString("a growing collection. This is the shallow-size first pass; confirm what actually\n")
-	b.WriteString("keeps them alive in Eclipse MAT → 'Leak Suspects' (free, local).")
+
+	// biggest single objects — the histogram sums by class, hiding whether a
+	// class's bytes are one giant object or many small ones (very different bugs)
+	if len(h.biggest) > 0 && h.biggest[0].bytes > 64<<10 {
+		b.WriteString("\nbiggest single objects (one class total can hide one huge object OR many small):\n")
+		n := len(h.biggest)
+		if n > 6 {
+			n = 6
+		}
+		for _, o := range h.biggest[:n] {
+			extra := ""
+			if o.extra != "" {
+				extra = "  (" + o.extra + ")"
+			}
+			fmt.Fprintf(&b, "  %9s  %s%s\n", fmtSize(o.bytes), o.name, extra)
+		}
+	}
+
+	// duplicate small strings/arrays — a classic, real waste MAT also reports
+	if h.dupWaste > 256<<10 {
+		fmt.Fprintf(&b, "\nduplicate small char[]/byte[]: ~%s wasted across %s repeated value(s)\n",
+			fmtSize(h.dupWaste), humanCount(h.dupGroups))
+		b.WriteString("  → likely duplicate Strings — intern hot values or cache them once.\n")
+	}
+
+	// your app's own classes, split from JDK/framework baseline
+	var app []classStat
+	for _, cs := range h.classes {
+		if !isFrameworkClass(cs.name) {
+			app = append(app, cs)
+			if len(app) == 5 {
+				break
+			}
+		}
+	}
+	if len(app) > 0 {
+		b.WriteString("\nyour app's classes (excluding JDK/Spring/framework):\n")
+		for _, cs := range app {
+			fmt.Fprintf(&b, "  %9s  %10s  %s\n", fmtSize(cs.bytes), humanCount(cs.count), cs.name)
+		}
+	} else {
+		b.WriteString("\nno application classes stand out — the heap is dominated by JDK/framework types.\n")
+	}
+
+	b.WriteString("\n" + heapVerdict(h) + "\n")
+	b.WriteString("shallow-size first pass. For RETAINED size (what actually keeps these alive) and\n")
+	b.WriteString("paths-to-GC-roots, open it in Eclipse MAT → 'Leak Suspects' (free, local).")
 	return b.String()
+}
+
+// heapVerdict turns the numbers into one plain-language read of the heap's shape.
+func heapVerdict(h *heapHistogram) string {
+	if h.totalBytes == 0 {
+		return "verdict: the heap is essentially empty."
+	}
+	topPct, topName := 0.0, ""
+	if len(h.classes) > 0 {
+		topName = h.classes[0].name
+		topPct = float64(h.classes[0].bytes) * 100 / float64(h.totalBytes)
+	}
+	bigPct := 0.0
+	if len(h.biggest) > 0 {
+		bigPct = float64(h.biggest[0].bytes) * 100 / float64(h.totalBytes)
+	}
+	dupPct := float64(h.dupWaste) * 100 / float64(h.totalBytes)
+	switch {
+	case bigPct >= 15:
+		return fmt.Sprintf("verdict: ONE object dominates — a %s at %.0f%% of the heap. That's a single big\n"+
+			"  buffer/collection, not scattered growth. In MAT, look at what holds that one object.", h.biggest[0].name, bigPct)
+	case dupPct >= 10:
+		return fmt.Sprintf("verdict: string-heavy — ~%.0f%% of the heap is DUPLICATE small arrays (likely\n"+
+			"  duplicate Strings). Interning/caching hot values would reclaim most of it.", dupPct)
+	case topPct >= 40:
+		return fmt.Sprintf("verdict: %s holds %.0f%% of the heap — chase what keeps that many alive (a growing\n"+
+			"  cache or collection?) in MAT's dominator tree.", topName, topPct)
+	default:
+		return "verdict: no single class or object runs away — this looks like baseline framework/JDK\n" +
+			"  footprint, not an obvious leak. If memory still climbs, take a SECOND dump under load and diff."
+	}
 }
 
 func humanCount(n int64) string {
