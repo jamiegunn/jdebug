@@ -53,7 +53,7 @@ The app isn't serving the actuator endpoints where jdebug is looking.
 
 The jattach tier needs its binary in the pod (`/tmp/jattach`) or on the box.
 
-- from outside a pod: `jdebug install-jattach` (downloads, caches, copies in)
+- from outside a pod: `jdebug install-jattach` (copies in the vendored, checksum-verified binary — no download)
 - in the menu's local modes: press `i`
 - air-gapped: place a binary manually and pass `--binary /path`
 

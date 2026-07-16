@@ -70,14 +70,16 @@ observe/*.sh                analysis + pod-layer verbs + lifecycle:
                             analyze, memory-report, tail-logs, set-log-level,
                             snapshot, why, security, topology, lifecycle
 tui/                        the Go Bubble Tea frontend (preferred)
-ui/tui.sh                   the classic bash menu (zero-dependency fallback)
+vendor/tui/                 the vendored, hash-verified Go TUI binaries
 docs/                       the published docs site (GitHub Pages / Jekyll)
 tests/                      the test suite + mock kubectl + pty driver
 ```
 
 **Two interactive frontends, kept in lockstep.** The Go TUI (`tui/`, Bubble
-Tea + lipgloss + x/ansi only) is the preferred frontend; the bash menu
-(`ui/tui.sh`) is the zero-dependency fallback (`JDEBUG_CLASSIC=1` forces it).
+Tea + lipgloss + x/ansi only) is the interactive frontend. `jdebug` runs a
+local dev build when present, else the vendored binary for your platform —
+after verifying it against `vendor/tui/SHA256SUMS`. No TUI available → every
+command still works from the CLI.
 **They share the remembered-target config file and must stay behaviorally
 aligned** — every menu/wizard/verb change lands in *both*, or parity silently
 drifts. Forgetting the bash side is the most common mistake.
@@ -94,9 +96,9 @@ State-changing (guarded, need `--confirm`): `restart` (re-roll deployment),
 Setup: `install-jattach`, `push-local`.
 
 The three **capture tiers** (auto-selected, safest-first) are actuator (HTTP
-to the app's `/actuator`), jattach (an ~80 KB helper that speaks the JVM
-attach protocol — needs no HTTP), and jdk (a temporary debug container). This
-is why "no actuator" is never fatal.
+to the app's `/actuator`), jattach (a small vendored helper that speaks the
+JVM attach protocol — needs no HTTP, ships in this repo), and jdk (a temporary
+debug container). This is why "no actuator" is never fatal.
 
 ### The Go TUI, at a glance
 

@@ -45,8 +45,10 @@ config, and session-log behavior:
   recommendations first, then guided diagnosis, quick checks, captures —
   with a full-screen output view for commands. Every action shells out to
   the same tested bash CLI.
-- **bash (classic)** — the zero-dependency fallback; always available.
-  Force it with `JDEBUG_CLASSIC=1`.
+- **vendored binaries** — commits vendor hash-verified builds into
+  `vendor/tui/` for darwin/linux × arm64/amd64 (see `make hooks`), so a fresh
+  clone has a working TUI with no toolchain. `jdebug` checks the binary
+  against `SHA256SUMS` before running it.
 
 Both read and write the same remembered target (`~/.config/jdebug/target`),
 so you can switch between them freely.

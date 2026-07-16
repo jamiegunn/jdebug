@@ -37,7 +37,7 @@ cd "$KIT"
 
 # --- syntax: every script parses ---------------------------------------------
 section "syntax"
-for f in jdebug install.sh lib/common.sh capture/*.sh observe/*.sh ui/tui.sh tests/run-tests.sh; do
+for f in jdebug install.sh lib/common.sh capture/*.sh observe/*.sh tests/run-tests.sh; do
     if bash -n "$f" 2>/dev/null; then ok "bash -n $f"; else run_case bash -n "$f"; bad "bash -n $f" "$OUT"; fi
 done
 if sh -n jdebug-local 2>/dev/null; then ok "sh -n jdebug-local (POSIX)"; else ok_skip=1; run_case sh -n jdebug-local; bad "sh -n jdebug-local" "$OUT"; fi
@@ -569,191 +569,34 @@ MOCK_PODS=multi run_case bash -c 'source lib/common.sh; resolve_one_pod'
 assert_has "resolve_one_pod picks first" "pod-a"
 assert_has "resolve_one_pod flags the sick-pod trap" "restarting one"
 
-# --- TUI (single-keypress navigation: keys act instantly, no Enter) -----------------
-section "TUI"
-
-# readiness gate: with no pod pinned the tools stay hidden and the panel guides
-run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "gate: setup panel when no pod pinned" "SET UP YOUR TARGET FIRST"
-assert_not "gate: action menu hidden until ready" "guided diagnosis"
-run_input 'sqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "gate: blocked action explains what to do" "press g"
-MOCK_PODS=multi run_input 'gp2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "gate: unlocks once a pod is pinned" "guided diagnosis"
-
-# RBAC denials must be explicit, never flattened into "nothing to list"
-MOCK_RBAC=forbidden run_input $'gppod-z\nbqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "rbac: pod listing denial is explicit" "Can't list pods"
-assert_has "rbac: typed pod fallback offered" "type a pod name"
-assert_not "rbac: denial never reads as empty" "no pods match"
-MOCK_RBAC=forbidden run_input $'gn\nbqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "rbac: namespace denial is explicit" "Can't list namespaces"
-MOCK_RBAC=forbidden run_input $'gs\nbqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "rbac: selector discovery names the cause" "pods can't be listed"
-
-# selector discovery: stable labels with match counts, hashes never suggested
-run_input 'gsbbqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "selector: suggestions carry match counts" "matches 2 pod(s)"
-assert_has "selector: most specific stable key offered" "app.kubernetes.io/name=payments"
-assert_not "selector: rollout hashes never suggested" "pod-template-hash"
-
-# a ready target for the rest of the TUI tests (pod pinned, container valid)
-mkdir -p "$TMP/config"; cat > "$TMP/config/target" <<'EOF'
-SAVED_NAMESPACE=default
-SAVED_SELECTOR=''
-SAVED_CONTAINER=app
-SAVED_ACTUATOR=http://localhost:8080/actuator
-SAVED_POD=pod-a
-EOF
-
-run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_rc  "remote menu: q + confirm quits cleanly" 0
-assert_has "quit asks for confirmation" "quit jdebug?"
-assert_has "remote menu: wizard hero banner" "guided diagnosis"
-assert_has "remote menu: heap is the only inline risk text" "pauses app"
-assert_has "remote menu: help key present" "[?] help"
-assert_has "remote menu: doctor key present" "[c] check setup"
-assert_has "remote menu: bundle on key x" "x   bundle"
-assert_has "remote menu: sections render" "QUICK CHECKS"
-
-# esc is a universal "back": never runs anything, never picks a default
-run_input $'\e2qy' ./ui/tui.sh
-assert_has "esc on chooser never picks a mode" "stage jattach"
-run_input $'t\eqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "esc on the capture-route prompt cancels" "cancelled"
-run_input $'w\eqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "esc leaves the wizard for the menu" "quit jdebug?"
-run_input $'g\eqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "esc leaves the target editor for the menu" "quit jdebug?"
-assert_has "remote menu: risk legend" "safe / caution / disruptive"
-assert_has "remote menu: live prompt caret" "❯"
-assert_has "remote header: one-line status shows context" "mock-ctx"
-assert_has "remote header: status shows ns/container/pod" "default / app · pod-a"
-
-run_input 'qn qy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_rc  "declining the quit confirm returns to the menu" 0
-
-MOCK_KUBECTL=x509 run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "remote header: unreachable flagged" "unreachable"
-
-# THE regression test: a FAILED command must pause with its error still visible.
-# (cluster down → gated, so the allowed 'c' doctor is the failing action here)
-MOCK_KUBECTL=x509 run_input 'c\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "failed action: error shown" "cluster unreachable"
-assert_has "failed action: marked failed" "that didn't work"
-assert_has "failed action: pauses (error not wiped)" "any key for the menu"
-
-run_input 's\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "action output is tee'd to session log path" "$TMP/dumps/session-"
-grep -rq 'jdebug status' "$TMP"/dumps/session-*.log 2>/dev/null \
-    && ok "session log records the command" || bad "session log records the command" "no session log with 'jdebug status'"
-
-run_input '?\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "help: glossary defines pod" "one running copy of the app"
-assert_has "help: heap dump risk in glossary" "Pauses the app"
-assert_has "help: first-10-minutes workflow" "A GOOD FIRST 10 MINUTES"
-assert_has "help: safety rules" "cancelling is always safe"
-assert_has "help: hidden utility keys documented" "KEYS NOT SHOWN ON THE MENU"
-assert_has "help: blocked-by key documented" "what's blocked right now"
-
-# blocked-by view ('b') — each blocked check shown as a state + its fix
-run_input 'b\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "blocked-by: names the view" "what can't run right now"
-assert_has "blocked-by: RBAC state" "blocked by RBAC"
-assert_has "blocked-by: least-privilege fix" "get/list on pods"
-assert_has "blocked-by: metrics-server state" "missing metrics-server"
-assert_has "blocked-by: secured actuator fallback names jattach" "no HTTP via jattach"
-
-# runbook cards ('n') — per-signal means/why/check/safe/risky/tell-next
-run_input 'n\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "runbook: names the view" "the common incident signals"
-assert_has "runbook: OOM card" "OOMKilled"
-assert_has "runbook: pairs a safe and risky command" "risky"
-assert_has "runbook: what to tell the next person" "tell next"
-
-run_input 'zzqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_rc  "unknown key: no crash, menu redraws" 0
-
-run_input '\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_rc  "bare Enter does NOT quit (q still needed)" 0
-
-run_input 'qy' env JDEBUG_MODE=2 ./ui/tui.sh
-assert_has "local menu: wizard available" "guided diagnosis"
-assert_has "local menu: stage jattach present" "stage jattach"
-
-JATTACH_BIN="$TMP/nope" MOCK_HTTP=fail run_input 'qy' env JDEBUG_MODE=2 ./ui/tui.sh
-assert_has "local gate: route panel when no actuator + no jattach" "SET UP A ROUTE TO THE JVM"
-assert_not "local gate: tools hidden until a route exists" "guided diagnosis"
-
-run_input 'wbqy' env JDEBUG_MODE=2 ./ui/tui.sh
-assert_has "local wizard: mode-aware target" "this machine (localhost)"
-
-run_input 'j\n\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "jcmd quick-pick offered" "GC.heap_info"
-assert_has "jcmd quick-pick includes JFR" "JFR.start"
-
-# disruptive actions fire only on a second press of the SAME key
-run_input 'Hzqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "heap: double-press confirm offered" "press H again to confirm"
-assert_has "heap: any other key cancels" "cancelled"
-
-# target editor: one key per field, live dropdowns from the cluster
-run_input 'gc1nbqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "target editor: field list shown" "TARGET"
-assert_has "target editor: context dropdown" "Which cluster?"
-assert_has "target editor: current context marked" "mock-ctx  (current)"
-
-run_input 'gn2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "target editor: namespace dropdown applied" "namespace   payments"
-
-run_input 'gs2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "target editor: selector applied from pod labels" "selector    app=payments"
-
-# <any pod> is deliberately LAST in the new candidate ordering (option 5
-# behind 4 label suggestions) — picking it still clears the selector
-run_input 'gs2bgs5bqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "target editor: any-pod option clears selector" "selector    <any pod>"
-
-run_input 'go2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "target editor: container from pod spec" "container   sidecar"
-
-MOCK_PODS=multi run_input 'gp0bqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "target editor: pod picker on multi" "pods match. Which one?"
-
-MOCK_PODS=multi run_input 'gp2o1bqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "target editor: containers read from the PINNED pod" "Container (in pod-b)"
-
-run_input 'aqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "menu: a runs analyze" "first-pass triage"
-
-MOCK_CONTEXT=1 run_input 'eqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "menu: e runs context (app wiring)" "runtime context"
-
-run_input 'q' ./ui/tui.sh
-assert_rc  "mode chooser: q exits" 0
-assert_has "mode chooser: self-test entry" "self-test"
-
-run_input 's\nqy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "quit shows transcript path" "transcript of everything from this session"
-
-# --- remembered target: selections persist between sessions -------------------------
+# --- remembered target: the saved-target file drives the CLI --------------------------
+# (the file is written by the Go TUI's target editor; here we write it the same
+# way — printf %q assignments — and assert the CLI layer honours + gates it)
 section "remembered target"
-MOCK_PODS=multi run_input 'gp2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
-[[ -f "$TMP/config/target" ]] && ok "target file written on editor exit" \
-    || bad "target file written on editor exit" "no $TMP/config/target"
+mkdir -p "$TMP/config"
+{
+    printf '# written by jdebug\x27s target editor — delete this file to forget\n'
+    printf 'SAVED_NAMESPACE=%q\n'  payments
+    printf 'SAVED_SELECTOR=%q\n'   ""
+    printf 'SAVED_CONTAINER=%q\n'  app
+    printf 'SAVED_ACTUATOR=%q\n'   http://localhost:8080/actuator
+    printf 'SAVED_ACTUATOR_AUTH=%q\n' ""
+    printf 'SAVED_POD=%q\n'        pod-b
+} > "$TMP/config/target"
 
-run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "pod pin remembered in a fresh session" "· pod-b"
-
-MOCK_POD_GONE=1 run_input 'qy' env JDEBUG_MODE=1 ./ui/tui.sh
-assert_has "vanished pin falls back to auto with a notice" "no longer exists — back to auto"
-
-run_input 'gn2bqy' env JDEBUG_MODE=1 ./ui/tui.sh
 run_case ./jdebug status
 assert_has "CLI layer uses the remembered namespace" "kubectl -n payments"
 
 JDEBUG_NAMESPACE=zzz run_case ./jdebug status
 assert_has "environment still outranks the remembered value" "kubectl -n zzz"
+
+# a tampered target file must be IGNORED (never executed) with a warning
+printf 'SAVED_NAMESPACE=$(touch %s/pwned)\n' "$TMP" > "$TMP/config/target"
+run_case ./jdebug status
+assert_has "tampered target file is ignored with a warning" "ignoring"
+assert_has "tampered target file falls back to defaults" "kubectl -n default"
+[[ -f "$TMP/pwned" ]] && bad "tampered target file must never execute" "command substitution ran" \
+    || ok "tampered target file never executes"
 
 rm -f "$TMP/config/target"
 
@@ -841,7 +684,7 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
         fi
     fi
 else
-    printf '\n== Go TUI frontend ==\n  (skipped — no Go toolchain; the bash TUI is the fallback)\n'
+    printf '\n== Go TUI frontend ==\n  (skipped — no Go toolchain; TUI code untested in this run: install Go)\n'
 fi
 
 # --- install.sh ----------------------------------------------------------------------

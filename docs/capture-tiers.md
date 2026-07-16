@@ -21,18 +21,21 @@ HTTP client the image has (curl, or busybox wget — both stock-alpine safe).
 
 ## Tier 2 — jattach
 
-An ~80 KB statically-linked binary that speaks the JVM's attach protocol
-directly — no actuator, no JDK. jdebug downloads it (host-side, arch-matched,
-cached in `~/.cache/jdebug/`), `kubectl cp`s it in, verifies it runs, and
-finds the real java PID from `/proc` (PID 1 is the pause sandbox under
+A small statically-linked binary that speaks the JVM's attach protocol
+directly — no actuator, no JDK. The binary is **vendored in this repo**
+(`vendor/jattach/`, pinned version, one static build per arch — nothing is
+downloaded at runtime). jdebug matches the pod's arch, **verifies the binary
+against `vendor/jattach/SHA256SUMS`**, `kubectl cp`s it in, verifies it runs,
+and finds the real java PID from `/proc` (PID 1 is the pause sandbox under
 `shareProcessNamespace`).
 
 - **Gets you:** the whole `jcmd` surface — `GC.heap_info`,
   `VM.native_memory`, `VM.flags`, `JFR.start`, heap and thread dumps.
 - **Needs:** `kubectl exec` landing as the **same uid** as the JVM (the
   attach protocol requires it), and `/tmp` writable in the container.
-- **Air-gapped:** pre-place a binary and pass `--binary /path` (or
-  `$JATTACH_BINARY`); pin the version with `$JATTACH_VERSION`.
+- **Air-gapped:** works out of the box — the binary ships in the repo, so
+  no network is needed. To use your own build instead, pass `--binary /path`
+  (or `$JATTACH_BINARY`); that explicit override bypasses the checksum gate.
 - **Pre-stage before an incident:** `jdebug install-jattach`.
 
 ## Tier 3 — jdk (last resort)

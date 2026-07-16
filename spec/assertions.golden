@@ -1,0 +1,290 @@
+assert_rc  "--version exits 0" 0
+assert_has "--version prints name+version" "jdebug 1.0.0"
+assert_has "--help shows commands" "threads"
+assert_has "--help documents dumps location" "dumps/"
+assert_rc  "unknown command exits 64" 64
+assert_has "unknown command shows usage" "unknown command: frobnicate"
+assert_rc  "stale cert: exits 3" 3
+assert_has "stale cert: plain-language why" "TLS certificate isn't trusted"
+assert_has "stale cert: names the usual suspects" "Rancher Desktop"
+assert_has "stale cert: gives the fix" "kubectl config use-context"
+assert_not "stale cert: raw x509 wall suppressed" "Unhandled Error"
+assert_rc  "cluster off: exits 3" 3
+assert_has "cluster off: says nothing answered" "nothing answered"
+assert_rc  "no context: exits 3" 3
+assert_has "no context: explains" "no context selected"
+assert_rc  "dumps needs no cluster (no preflight)" 0
+assert_rc  "healthy setup exits 0" 0
+assert_has "checks kubectl" "kubectl on PATH"
+assert_has "checks the cluster answers" "answers"
+assert_has "checks pods match" "pod(s) match"
+assert_has "checks actuator tier" "tier 1 ready"
+assert_rc  "unreachable cluster exits 1" 1
+assert_has "unreachable cluster flagged" "cluster unreachable"
+assert_rc  "no matching pods exits 1" 1
+assert_has "no pods: says how to fix" "set -n/-l"
+assert_rc  "status exits 0" 0
+assert_has "status shows pods" "pod-a"
+assert_has "status explains CrashLoopBackOff" "CrashLoopBackOff"
+assert_has "status routes OOM to the wizard" "OOMKilled"
+assert_has "status ends with a verdict" "Bottom line:"
+assert_has "status names the next move" "Next:"
+assert_has "health explains UP/DOWN reading" "chase that system first"
+assert_has "health UP: bottom line" "the app says it is healthy"
+assert_has "bearer: adds the Authorization header" "Authorization: Bearer"
+assert_has "bearer: references the pod env var, unexpanded" 'Bearer $MGMT_TOKEN'
+assert_has "basic: uses curl -u from pod env vars" 'curl -fsS -u "$U:$P"'
+assert_not "no auth: no Authorization header when unset" "Authorization"
+assert_rc "actuator failure points at auth setup" 0
+assert_rc  "secured actuator: threads fails" 1
+assert_has "secured actuator: names 401 + auth fix" "secured (HTTP 401)"
+assert_has "secured actuator: offers the no-HTTP route" "via jattach"
+assert_rc  "absent actuator: heap fails" 1
+assert_has "absent actuator: names 404 + URL fix" "not found (HTTP 404)"
+assert_rc  "badpage: heap capture rejected" 1
+assert_has "badpage: classified as an HTML login page" "HTML login page"
+assert_has "badpage: names the recovery route" "via jattach"
+assert_rc  "pod-gone heap: fails" 1
+assert_has "pod-gone heap: says it couldn't reach the pod" "couldn't reach the pod"
+assert_has "pod-gone heap: names the real cause (renamed pod)" "REPLACED under a new name"
+assert_not "pod-gone heap: does NOT blame the actuator" "secured (HTTP"
+assert_has "pod-gone heap: leaves no 0-byte file behind" "0"
+assert_has "classify: HTML login page" "HTML login page"
+assert_has "classify: JSON actuator error" "JSON error response"
+assert_has "classify: empty/truncated file" "empty file"
+assert_has "top explains what near-limit means" "OOM risk"
+assert_has "top names the next move" "Next:"
+assert_rc  "why exits 0" 0
+assert_has "why: requests vs limits explained" "requests = the scheduler's promise"
+assert_has "why: missing readiness probe warned" "traffic arrives the MOMENT"
+assert_has "why: exit 137 decoded" "KERNEL killed it"
+assert_has "why: HPA blindness explained" "ScalingActive=False"
+assert_has "why: replicas-vs-HPA fight detected" "fights it back"
+assert_has "why: HPA percent-of-request explained" "of the REQUEST"
+assert_has "why: ends with a verdict" "Bottom line:"
+assert_has "why: metrics-server absence explained, not blank" "metrics-server isn't installed"
+assert_rc  "why under RBAC denial exits 1" 1
+assert_has "why: RBAC denial explained, never silent" "your RBAC doesn't allow"
+assert_rc  "security exits 0" 0
+assert_has "security: root exposure explained" "prevents root"
+assert_has "security: privilege escalation flagged" "allowPrivilegeEscalation"
+assert_has "security: SA token risk explained" "kubernetes API"
+assert_has "security: open network flagged" "no NetworkPolicy"
+assert_has "security: verdict counts findings" "hardened"
+assert_has "security: live uid check beats the spec" "VERIFIED LIVE"
+assert_has "security: RBAC denial explained" "your RBAC doesn't allow"
+assert_has "multi-pod: announces the choice" "3 pods match — using pod-a"
+assert_has "multi-pod: lists alternatives" "pod-c"
+assert_rc  "no pods: exits 2" 2
+assert_has "no pods: says how to fix" "pass -n/-l"
+assert_has "empty: says none yet" "none yet"
+assert_has "empty: suggests a safe first capture" "jdebug threads"
+assert_has "dumps: groups by pod" "pod-a/"
+assert_has "dumps: lists a single capture file" "threads-jattach.txt"
+assert_has "dumps: marks a snapshot bundle" "snapshot bundle"
+assert_has "dumps: explains VisualVM (local) for threads" "VisualVM"
+assert_has "dumps: explains MAT for heap" "Leak Suspects"
+assert_has "dumps: PII warning present" "real user data"
+assert_rc  "analyze exits 0" 0
+assert_has "threads: state histogram" "4 threads — 1 RUNNABLE · 2 BLOCKED · 1 WAITING"
+assert_has "threads: deadlock flagged" "DEADLOCK detected"
+assert_has "threads: contention + the lock" "waiting to lock <0x12345>"
+assert_has "threads: names a LOCAL deep tool" "VisualVM"
+assert_not "no cloud analyzers recommended" "fastthread"
+assert_has "health: DOWN component named" "failing component(s): db"
+assert_has "hprof: valid one sanity-checked" "valid hprof"
+assert_has "hprof: invalid one flagged" "NOT a valid hprof"
+assert_has "hprof: invalid classified, not sent to MAT" "raw HTTP error response"
+assert_has "hprof: invalid gives exact recovery route" "via jattach --confirm"
+assert_has "summary counts findings" "finding(s) flagged above"
+assert_has "analyze names the next move" "Next: chase the ⚠ findings"
+assert_has "hprof: advertises the deep retained pass" "jdebug analyze --deep"
+assert_rc  "analyze idle threads exits 0" 0
+assert_not "idle selectors are NOT called a busy loop"   "busy loop"
+assert_not "idle selectors are NOT flagged as a hot frame" "hot frame"
+assert_has "idle selectors explained as parked I/O"       "parked in native I/O"
+assert_rc  "analyze --deep: flag parsed (exit 0)" 0
+assert_not "analyze --deep: not mistaken for a file" "no such file or directory: --deep"
+assert_has "empty hprof: flagged as empty capture" "EMPTY heap capture"
+assert_has "empty hprof: blames the capture, points at the pod" "GONE or was RENAMED"
+assert_has "empty hprof: says re-pick and recapture" "re-pick the current pod"
+assert_not "empty hprof: does NOT mislead toward actuator auth" "set auth (k in the target editor)"
+assert_rc  "analyze default exits 0" 0
+assert_has "analyze default: leads with the NEWEST session" "20260102T000000Z"
+assert_has "analyze default: points at the older sessions" "showing the newest of"
+assert_not "analyze default: ignores session-*.log transcripts" "session-20260101"
+assert_not "analyze default: does not replay older sessions" "20260101T000000Z/threads"
+assert_has "analyze <dir>: analyzes exactly the requested session" "20260101T000000Z"
+assert_has "single-file analysis works" "DEADLOCK detected"
+assert_has "empty: says capture first" "nothing to analyze"
+assert_rc  "topology exits 0" 0
+assert_has "topology names the deployment + revision" "Deployment app  (revision 3)"
+assert_has "topology marks the current ReplicaSet" "← current"
+assert_has "topology flags an old RS still running pods" "OLD revision still running pods"
+assert_has "topology detects the replicas-vs-HPA fight" "they FIGHT"
+assert_has "topology lists the routing Service" "Services routing here: app"
+assert_has "topology ends with a verdict" "Bottom line:"
+assert_rc  "workload exits 0" 0
+assert_has "workload includes the topology tree" "Deployment app  (revision 3)"
+assert_has "workload includes the why deep-dive" "requests = the scheduler's promise"
+assert_has "workload includes probes from why" "traffic arrives the MOMENT"
+assert_rc  "context exits 0" 0
+assert_has "context: owner + image" "image reg/payments:1.4.2"
+assert_has "context: services & ports" "port 80 (http) → targetPort 8080"
+assert_has "context: endpoints membership" "IS in rotation"
+assert_has "context: probes with thresholds" "readiness: HTTP /actuator/health/readiness"
+assert_has "context: JVM env surfaced" "JAVA_TOOL_OPTIONS"
+assert_has "context: Spring profiles" "Spring profiles: prod,cluster"
+assert_has "context: secretKeyRef shown as reference" "← Secret app-secrets/redis-pw"
+assert_has "context: memory-backed volume flagged" "MEMORY-backed"
+assert_has "context: PVC named" "PVC payments-pvc"
+assert_has "context: Valkey/Redis client detected" "SPRING_DATA_REDIS_HOST"
+assert_has "context: cluster-announce surfaced" "cluster-announce-ip"
+assert_has "context: requirepass redacted (never printed)" "requirepass <redacted>"
+assert_not "context: never prints the redis secret value" "supersecret"
+assert_has "context: cluster-announce warning" "verify they resolve from CLIENTS"
+assert_not "context: no raw secret env values" "redis-pw ="
+assert_rc  "escalate exits 0" 0
+assert_has "escalate: names the target" "pod pod-a · container app"
+assert_has "escalate: findings carry confidence" "[likely]"
+assert_has "escalate: OOM finding with memory chain" "last restart was OOMKilled"
+assert_has "escalate: lists commands from the session log" "\$ jdebug why pod-a"
+assert_has "escalate: lists captures with paths" "heap-actuator.hprof"
+assert_has "escalate: suggests a next action" "SUGGESTED NEXT"
+assert_has "escalate: warns about sensitive evidence" "SENSITIVE EVIDENCE"
+assert_rc  "escalate: empty state still works" 0
+assert_has "escalate: notes nothing sensitive yet" "nothing sensitive to warn about"
+assert_rc  "cleanup lists exits 0" 0
+assert_has "cleanup: lists the staged file" "/tmp/jattach"
+assert_has "cleanup: marks the staged one" "staged by jdebug"
+assert_has "cleanup: keeps pre-existing" "will NOT be removed"
+assert_has "cleanup: names local dumps as safe" "local dumps/"
+assert_rc  "cleanup --confirm exits 0" 0
+assert_has "cleanup: removes the staged file" "removed /tmp/jattach"
+assert_has "cleanup: pre-existing survives" "keepme"
+assert_has "cleanup: staged entry gone from manifest" "0"
+assert_rc  "timeline exits 0" 0
+assert_has "timeline: events oldest-first" "14:00:00Z"
+assert_has "timeline: warning event marked" "BackOff (x7)"
+assert_has "timeline: your captures interleaved" "YOU captured"
+assert_has "timeline: capture sorts after the events" "14:09:00Z"
+assert_has "timeline: has a legend" "a capture you took"
+assert_rc  "what-changed exits 0" 0
+assert_has "what-changed: spec image" "spec image : reg/payments:1.4.2"
+assert_has "what-changed: running image digest" "sha256:abc123"
+assert_has "what-changed: restart reason" "last exit    : OOMKilled"
+assert_has "what-changed: HPA vs Deployment replicas" "each deploy resets the count"
+assert_has "what-changed: points at logs --previous" "the previous container's last words"
+assert_rc  "restart w/o --confirm exits 64" 64
+assert_has "restart explains what happens" "rolling restart"
+assert_has "restart explains the downtime risk" "NO downtime"
+assert_has "restart --confirm re-rolls" "successfully rolled out"
+assert_has "restart names the next move" "Next:"
+assert_rc  "kill w/o --confirm exits 64" 64
+assert_has "kill explains graceful termination (SIGTERM)" "SIGTERM"
+assert_has "kill notes the managed respawn" "REPLACEMENT starts automatically"
+assert_has "kill deletes the pod" "deleted"
+assert_rc  "restart under RBAC denial exits 1" 1
+assert_has "restart RBAC denial explained, not masked" "your RBAC doesn't allow"
+assert_rc  "actuator heap w/o --confirm exits 64" 64
+assert_has "actuator heap explains the pause" "pause the JVM"
+assert_rc  "jdk heap w/o --confirm exits 64" 64
+assert_rc  "snapshot --heap w/o --confirm exits 64" 64
+assert_rc  "jattach heap w/o --confirm exits 64" 64
+assert_rc  "jcmd w/o command exits 64" 64
+assert_has "jcmd error shows an example" "GC.heap_info"
+assert_rc  "unknown --via exits 64" 64
+assert_has "unknown --via lists valid tiers" "actuator|jattach|jdk"
+assert_rc  "logs w/o selector exits 64" 64
+assert_has "logs w/o selector says how to fix" "pass -l <selector>"
+assert_rc  "logs --previous exits 0" 0
+assert_has "logs --previous: dead container's last lines" "OutOfMemoryError"
+assert_has "logs --previous: reading guide" "last lines before it died"
+assert_has "logs --previous resolves the pod itself" "OutOfMemoryError"
+assert_rc  "log-level w/o level exits 64" 64
+assert_rc  "invalid level exits 64" 64
+assert_has "invalid level lists valid ones" "TRACE|DEBUG|INFO"
+assert_rc  "lowercase level accepted" 0
+assert_has "lowercase level uppercased" "com.example=DEBUG"
+assert_has "reminds change is not persistent" "NOT persistent"
+assert_has "ROOT TRACE warns about noise" "VERY noisy"
+assert_has "ROOT TRACE says how to revert" "log-level ROOT INFO"
+assert_rc  "help exits 0" 0
+assert_has "help lists dumps command" "dumps"
+assert_rc  "unknown command exits 64" 64
+assert_has "health returns fixture body" '"status":"UP"'
+assert_has "threads emits jstack format" "Full thread dump mock JVM"
+assert_has "metrics lists jvm names" "jvm.gc.pause"
+assert_has "metrics lists process names" "process.cpu.usage"
+assert_has "memory parses heap metric (117.7 MiB)" "117.7"
+assert_has "memory shows live threads" "42"
+assert_rc  "heap w/o --confirm exits 2" 2
+assert_has "heap explains the pause" "PAUSES the JVM"
+assert_rc  "heap --confirm succeeds" 0
+assert_has "heap says where it wrote" "wrote $LOCAL_OUT/heap-"
+assert_has "heap bare-metal hint (already local)" "saved on this machine"
+assert_has "heap analyzer hint" "Leak Suspects"
+assert_has "dumps lists the heap file" "heap-"
+assert_has "dumps empty: threads redirect tip" "threads >"
+assert_rc  "jcmd w/o jattach exits 3" 3
+assert_has "jcmd missing-jattach covers in-pod" "jdebug install-jattach"
+assert_has "jcmd missing-jattach covers bare metal" "bare metal"
+assert_rc  "actuator down: health fails" 1
+assert_has "actuator down: explains + env fix" 'set $ACTUATOR_BASE'
+assert_has "parse_common_args sets all + remains" "prod/app=x/web/extra1 extra2"
+assert_has "pod_fetch prefers curl" "command -v curl"
+assert_has "pod_fetch falls back to wget" "wget -qO-"
+assert_has "pod_fetch sends Accept header" "Accept: text/plain"
+assert_has "pod_post_json wget path uses --post-data" "--post-data"
+assert_has "resolve_one_pod picks first" "pod-a"
+assert_has "resolve_one_pod flags the sick-pod trap" "restarting one"
+assert_has "CLI layer uses the remembered namespace" "kubectl -n payments"
+assert_has "environment still outranks the remembered value" "kubectl -n zzz"
+assert_has "tampered target file is ignored with a warning" "ignoring"
+assert_has "tampered target file falls back to defaults" "kubectl -n default"
+assert_has "tui: --version" "jdebug-tui"
+assert_rc  "heap analyzer rejects a non-hprof (exit 1)" 1
+assert_has "heap analyzer explains the rejection" "not an hprof"
+assert_has "tui: menu sections" "QUICK CHECKS"
+assert_has "tui: start-here section" "START HERE"
+assert_has "tui: advanced tools demoted" "ADVANCED"
+assert_has "tui: workload deep-dive on key W (why collapsed in)" "W   workload"
+assert_has "tui: security on shifted S" "S   security"
+assert_has "tui: terminal on shifted T" "T   terminal"
+assert_has "tui: heap inline risk" "pauses app"
+assert_has "tui: risk legend" "safe / caution / disruptive"
+assert_has "tui: hero banner" "guided diagnosis"
+assert_has "tui: gate panel parity" "SET UP YOUR TARGET FIRST"
+assert_has "tui: glossary parity" "one running copy of the app"
+assert_has "tui: chooser self-test entry" "self-test"
+assert_has "tui: remote-artifacts screen lists staged files" "/tmp/jattach"
+assert_has "tui: remote-artifacts screen keeps pre-existing" "pre-existing"
+assert_has "tui: remote-artifacts screen protects local dumps" "local dumps/"
+assert_has "tui: actuator-auth screen names both formats" "bearer:MANAGEMENT_TOKEN"
+assert_has "tui: actuator-auth screen stores a reference" "REFERENCE, not the secret"
+assert_has "tui: actuator-auth screen offers a jattach fallback" "without HTTP"
+assert_has "tui: dashboard work-area tabs" "LOGS"
+assert_has "tui: dashboard events tab (warn count)" "EVENTS"
+assert_has "tui: dashboard workload pane" "WORKLOAD"
+assert_has "tui: dashboard captures pane" "CAPTURES"
+assert_has "tui: dashboard trends tab" "TRENDS"
+assert_has "tui: trends tab shows JVM heap" "heap"
+assert_has "tui: trends tab shows GC metric" "gc"
+assert_has "tui: restart marker" "▲"
+assert_has "tui: captures browser filter tabs" "[all]"
+assert_has "tui: captures browser recent (all-pods) tab" "recent"
+assert_has "tui: captures browser keyboard hints" "select"
+assert_has "tui: captures browser marks invalid heaps" "not a heap dump"
+assert_has "tui: captures browser tags the capture route" "actuator"
+assert_has "tui: in-app output pane" "scroll"
+assert_has "tui: a held command shows in the WORK tab" "WORK"
+assert_has "tui: strip verdict + way back" "esc back to logs"
+assert_has "tui: crash-loop flow offered" "CrashLoopBackOff"
+assert_has "tui: deploy/what-changed flow offered" "deploy just happened"
+assert_has "tui: transparency cards render" "what each command does"
+assert_has "tui: cards name the data source" "kubectl pod status"
+assert_has "tui: cards flag disruptive risk" "PAUSES the JVM"
+assert_has "tui: limits are labeled" "of 512Mi limit"
+assert_has "tui: heap names its route" "via actuator"
+assert_rc  "install exits 0" 0
+assert_has "symlinked CLI resolves kit and runs" "jdebug 1.0.0"

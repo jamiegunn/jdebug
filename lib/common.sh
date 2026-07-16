@@ -12,8 +12,19 @@ set -euo pipefail
 JDEBUG_CONFIG_DIR="${JDEBUG_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/jdebug}"
 JDEBUG_TARGET_FILE="$JDEBUG_CONFIG_DIR/target"
 if [[ -f "$JDEBUG_TARGET_FILE" ]]; then
-    # shellcheck source=/dev/null
-    source "$JDEBUG_TARGET_FILE" 2>/dev/null || true
+    # The file is written by the menu's target editor with printf %q, and
+    # sourcing EXECUTES it — so gate it first: every line must be a plain
+    # SAVED_* assignment with no command substitution. Anything else means
+    # the file was tampered with or corrupted; ignore it (fall back to
+    # defaults) rather than execute it.
+    if grep -qvE '^(SAVED_[A-Z_]+=|#|[[:space:]]*$)' "$JDEBUG_TARGET_FILE" 2>/dev/null \
+       || grep -qE '\$\(|`' "$JDEBUG_TARGET_FILE" 2>/dev/null; then
+        printf 'warning: ignoring %s — unexpected content (not a saved-target file); using defaults\n' \
+            "$JDEBUG_TARGET_FILE" >&2
+    else
+        # shellcheck source=/dev/null
+        source "$JDEBUG_TARGET_FILE" 2>/dev/null || true
+    fi
 fi
 
 # ${VAR+x} tests set-ness (not emptiness): an exported-but-empty SELECTOR must
@@ -199,6 +210,15 @@ resolve_one_pod() {
     local pod n; pod="$(printf '%s\n' "$pods" | head -n1)"
     n="$(printf '%s\n' "$pods" | grep -c .)"
     if [[ "$n" -gt 1 ]]; then
+        if [[ -n "${JDEBUG_DESTRUCTIVE:-}" ]]; then
+            # pausing a production JVM must never hit a guessed replica —
+            # capturing from a healthy pod while the sick one sits next to it
+            # is the classic wrong-diagnosis trap, and here it also HURTS.
+            err "$n pods match and this operation PAUSES the JVM — refusing to guess which replica."
+            err "  name the pod explicitly (e.g. the restarting one). Matching pods:"
+            printf '%s\n' "$pods" | sed 's/^/    /' >&2
+            exit 2
+        fi
         info "$n pods match — using $pod. If you meant another (e.g. the restarting one), add its name:"
         printf '%s\n' "$pods" | sed 's/^/           /' >&2
     fi
@@ -208,6 +228,8 @@ resolve_one_pod() {
 # ensure_dir <dir> — mkdir -p with friendly error.
 ensure_dir() {
     mkdir -p "$1" || { err "cannot create directory: $1"; exit 1; }
+    # captures (heap dumps!) can hold real production data — owner-only
+    chmod go-rwx "$1" 2>/dev/null || true
 }
 
 # owning_deployment <pod> — the Deployment that ultimately owns a pod

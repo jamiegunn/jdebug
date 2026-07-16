@@ -24,7 +24,6 @@ anywhere on PATH.
 | What | Where | Why |
 |---|---|---|
 | `kubectl` + a reachable context | your machine | everything remote goes through it |
-| `curl` | your machine | downloads the jattach helper (once, then cached) |
 | `python3` | your machine | deeper reports and tests: `memory`, `why`, `security`, `topology`, lifecycle ownership checks, selector discovery, and the pty integration test |
 | `curl` **or** busybox `wget` | in the pod | the actuator tier uses whichever exists — a stock JRE-alpine image works untouched |
 | same uid as the JVM | your `kubectl exec` | the jattach tier attaches same-uid only |

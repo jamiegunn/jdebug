@@ -25,7 +25,7 @@ preference (see [Capture tiers](capture-tiers)):
 | Tier | Route | Needs |
 |---|---|---|
 | 1 | **actuator** — ask the app itself over HTTP | Spring Boot actuator endpoints |
-| 2 | **jattach** — ~80 KB helper binary placed in the pod | same-uid exec into the pod |
+| 2 | **jattach** — vendored helper binary (checksum-verified) placed in the pod | same-uid exec into the pod |
 | 3 | **jdk** — temporary JDK debug container | cluster allows ephemeral containers |
 
 With no tier forced, captures **auto-degrade** — try tier 1, announce the

@@ -61,6 +61,8 @@ if [[ $WANT_HEAP -eq 1 && $CONFIRMED -ne 1 ]]; then
     exit 64
 fi
 
+# with --heap this pauses the JVM — never let it hit a guessed replica
+[[ $WANT_HEAP -eq 1 ]] && export JDEBUG_DESTRUCTIVE=1
 POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
 TS="$(date -u +%Y%m%dT%H%M%SZ)"
 # a snapshot is just a capture session with many files — same organized home

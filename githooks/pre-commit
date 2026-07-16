@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+#
+# pre-commit — keeps the vendored Go TUI binaries in lock-step with their
+# sources, with hash proof, on every commit. Install once: make hooks
+#
+#   · core/ staged?  → its unit tests must be green
+#   · tui/ changed?  → rebuild vendor/tui/ binaries + SHA256SUMS + BUILDINFO
+#                      (scripts/vendor-tui.sh — no-op when already current)
+#   · always         → stage whatever vendor-tui refreshed
+#
+# Skip in an emergency with:  git commit --no-verify
+# (the pre-push hook will still refuse to push stale/unverified binaries)
+
+set -euo pipefail
+cd "$(git rev-parse --show-toplevel)"
+
+staged() { git diff --cached --name-only; }
+
+# core module: never commit red tests
+if staged | grep -q '^core/'; then
+    if command -v go >/dev/null 2>&1; then
+        echo "pre-commit: core/ changed — running its tests"
+        (cd core && go build ./... && go test ./...)
+    else
+        echo "pre-commit: core/ changed but no Go toolchain — cannot verify. Install Go" >&2
+        echo "            or commit with --no-verify (CI/tests will catch it later)." >&2
+        exit 1
+    fi
+fi
+
+# TUI: vendor fresh, hashed binaries whenever the sources they derive from moved
+if staged | grep -qE '^tui/.*\.go$|^tui/go\.(mod|sum)$' \
+   || [[ ! -f vendor/tui/SHA256SUMS ]]; then
+    scripts/vendor-tui.sh
+    git add vendor/tui
+    echo "pre-commit: vendor/tui refreshed and staged"
+fi

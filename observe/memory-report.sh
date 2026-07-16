@@ -162,9 +162,17 @@ printf "    thread stacks       : %8s MiB  (%s threads × ~1 MiB)\n" "$(mib "$ST
 
 ACCOUNTED=$((HEAP_USED + NONHEAP_USED + DIRECT + MAPPED + STACKS))
 UNACCOUNTED=$((RSS_B - ACCOUNTED))
+UNACC_NOTE=""
+if (( UNACCOUNTED < 0 )); then
+    # the ~1 MiB/thread stack estimate can overshoot (e.g. -Xss256k), pushing
+    # "accounted" past RSS — a negative number here would misdirect a native-
+    # leak hunt, so clamp it and say why
+    UNACC_NOTE="  (accounted exceeds RSS by $(mib $((-UNACCOUNTED))) MiB — the ~1 MiB/thread stack estimate overshoots; treat as ≈0)"
+    UNACCOUNTED=0
+fi
 echo
 printf "  Accounted             : %8s MiB  (heap + nonheap pools + direct + mapped + stacks)\n" "$(mib "$ACCOUNTED")"
-printf "  Unaccounted           : %8s MiB  (JVM internal overhead + native libs + allocator waste)\n" "$(mib "$UNACCOUNTED")"
+printf "  Unaccounted           : %8s MiB  (JVM internal overhead + native libs + allocator waste)%s\n" "$(mib "$UNACCOUNTED")" "$UNACC_NOTE"
 if [[ "$LIM_B" != "max" && -n "$LIM_B" ]]; then
     printf "  RSS / limit           : %s%%\n" "$(python3 -c "print(round($RSS_B*100/$LIM_B, 1))")"
 fi

@@ -17,11 +17,9 @@
 #     ships JRE-only, so this script handles the install:
 #       1. --binary <path>              kubectl cp a local copy you provide
 #       2. $JATTACH_BINARY env          same as --binary
-#       3. $JDEBUG_CACHE_DIR/jattach-*  reuse from prior runs
-#          (default ~/.cache/jdebug/)
-#       4. curl from GitHub releases on the HOST, then kubectl cp in
-#          (we download on the host, not in the pod, to avoid relying
-#          on pod egress)
+#       3. vendor/jattach/ in this repo — the PINNED, checksum-verified
+#          binaries (x64 + arm64), kubectl cp'd in. NOTHING is downloaded
+#          at runtime; see vendor/jattach/PROVENANCE.md
 #
 # Usage:
 #   ./jattach.sh threads [pod]
@@ -38,11 +36,15 @@ SCRIPTS_ROOT="$SCRIPT_DIR"; while [[ "$SCRIPTS_ROOT" != / && ! -f "$SCRIPTS_ROOT
 # shellcheck source=lib/common.sh
 source "$SCRIPTS_ROOT/lib/common.sh"
 
-require_cmd kubectl curl
+require_cmd kubectl
 
 : "${JATTACH_VERSION:=v2.2}"
 : "${JATTACH_REMOTE_PATH:=/tmp/jattach}"
 : "${JATTACH_CACHE_DIR:=$JDEBUG_CACHE_DIR}"
+# jattach is VENDORED in this repo (pinned $JATTACH_VERSION) and installed from
+# here — NO runtime download. See vendor/jattach/PROVENANCE.md. Override the
+# vendored copy with --binary / $JATTACH_BINARY.
+: "${JATTACH_VENDOR_DIR:=$SCRIPTS_ROOT/vendor/jattach}"
 
 ACTION=""
 CONFIRMED=0
@@ -75,6 +77,9 @@ fi
 # ${arr[@]+...} guard: bash 3.2 (stock macOS) treats "${arr[@]}" on an empty
 # array as unbound under `set -u`; fixed only in bash 4.4.
 parse_common_args ${FILTERED_ARGS[@]+"${FILTERED_ARGS[@]}"}
+# heap pauses the JVM — never let it hit a guessed replica (resolve_one_pod
+# refuses on an ambiguous multi-pod match when this is set)
+[[ "$ACTION" == "heap" ]] && export JDEBUG_DESTRUCTIVE=1
 POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
 
 if [[ -z "$ACTION" ]]; then
@@ -110,7 +115,8 @@ install_jattach() {
         return
     fi
 
-    # 2/3/4. Auto-detect arch, use cached or download tarball to cache, kubectl cp in
+    # 2. Auto-detect the pod arch and install the jattach binary VENDORED in
+    #    this repo (pinned $JATTACH_VERSION). No runtime download.
     local arch tarball_arch
     arch="$(kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- uname -m)"
     case "$arch" in
@@ -119,29 +125,49 @@ install_jattach() {
         *) err "unsupported pod arch: $arch (provide --binary instead)"; exit 1 ;;
     esac
 
-    local cache_file="$JATTACH_CACHE_DIR/jattach-${arch}-${JATTACH_VERSION}"
+    local cache_file="$JATTACH_VENDOR_DIR/jattach-linux-${tarball_arch}"
     if [[ ! -f "$cache_file" ]]; then
-        ensure_dir "$JATTACH_CACHE_DIR"
-        local tarball_url="https://github.com/jattach/jattach/releases/download/${JATTACH_VERSION}/jattach-linux-${tarball_arch}.tgz"
-        local tmp_dir; tmp_dir="$(mktemp -d -t jattach.XXXXXX)"
-        local tmp_tgz="$tmp_dir/jattach.tgz"
-        info "downloading jattach ${JATTACH_VERSION} (linux-${tarball_arch}) from upstream..."
-        info "  $tarball_url"
-        curl -fsSL -o "$tmp_tgz" "$tarball_url" || {
-            err "download failed. Provide a binary with --binary <path>."
-            rm -rf "$tmp_dir"
-            exit 1
-        }
-        # Tarball contains a single 'jattach' file at the top level. Extract
-        # to a temp dir and move into cache — portable across GNU and BSD tar.
-        tar -xzf "$tmp_tgz" -C "$tmp_dir"
-        mv "$tmp_dir/jattach" "$cache_file"
-        chmod +x "$cache_file"
-        rm -rf "$tmp_dir"
-        info "cached at $cache_file"
-    else
-        info "using cached jattach: $cache_file"
+        err "no vendored jattach for arch '$arch' at: $cache_file"
+        err "  expected a repo-local binary (pinned $JATTACH_VERSION, see vendor/jattach/)."
+        err "  → provide one with --binary <path> or \$JATTACH_BINARY."
+        exit 1
     fi
+    info "using vendored jattach ($JATTACH_VERSION, linux-${tarball_arch}): $cache_file"
+
+    # Integrity gate: verify the vendored binary against SHA256SUMS BEFORE it
+    # ships into a production pod. A corrupted or tampered local file must
+    # never run next to the JVM. --binary/$JATTACH_BINARY (an explicit operator
+    # choice) bypasses this; the vendored default does not.
+    local sums="$JATTACH_VENDOR_DIR/SHA256SUMS" want got
+    if [[ ! -f "$sums" ]]; then
+        err "missing $sums — refusing to install an unverified binary into the pod."
+        err "  → restore it from git, or pass an explicit --binary <path>."
+        exit 1
+    fi
+    want="$(awk -v f="jattach-linux-${tarball_arch}" '$2==f {print $1}' "$sums")"
+    if [[ -z "$want" ]]; then
+        err "no entry for jattach-linux-${tarball_arch} in $sums — refusing to install unverified."
+        err "  → restore SHA256SUMS from git, or pass an explicit --binary <path>."
+        exit 1
+    fi
+    if command -v sha256sum >/dev/null 2>&1; then
+        got="$(sha256sum "$cache_file" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then       # stock macOS
+        got="$(shasum -a 256 "$cache_file" | awk '{print $1}')"
+    else
+        err "neither sha256sum nor shasum on this host — can't verify the vendored binary."
+        err "  → install coreutils/perl, or pass an explicit --binary <path> to skip verification."
+        exit 1
+    fi
+    if [[ "$got" != "$want" ]]; then
+        err "vendored jattach FAILED its checksum — refusing to install it into the pod."
+        err "  expected  $want  (SHA256SUMS)"
+        err "  got       $got  ($cache_file)"
+        err "  → the file was modified or corrupted; restore vendor/jattach/ from git,"
+        err "    or pass an explicit --binary <path>."
+        exit 1
+    fi
+    info "checksum verified (sha256 ${got:0:12}…)"
 
     info "kubectl cp $cache_file $POD:$JATTACH_REMOTE_PATH"
     kubectl -n "$NAMESPACE" cp "$cache_file" "$POD:$JATTACH_REMOTE_PATH" -c "$APP_CONTAINER"
@@ -218,6 +244,13 @@ case "$ACTION" in
         info "running jattach jcmd 'Thread.print -l' on PID $JVM_PID"
         kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
             "$JATTACH_REMOTE_PATH" "$JVM_PID" jcmd "Thread.print -l" > "$LOCAL_PATH"
+        if ! grep -q "Full thread dump" "$LOCAL_PATH" 2>/dev/null; then
+            err "capture looks wrong (no 'Full thread dump' marker) — leaving it for inspection: $LOCAL_PATH"
+            cls="$(classify_capture "$LOCAL_PATH")"
+            [ -n "$cls" ] && err "  $cls"
+            err "  the attach may have hit the wrong process, or the JVM refused the command."
+            exit 1
+        fi
         info "wrote $LOCAL_PATH ($(wc -l <"$LOCAL_PATH") lines)"
         info "analyze: open it in VisualVM (free, runs locally — visualvm.github.io) and look for deadlocks & blocked pools"
         ;;
@@ -229,10 +262,33 @@ case "$ACTION" in
         info "running jattach dumpheap (PAUSES JVM)"
         kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
             "$JATTACH_REMOTE_PATH" "$JVM_PID" dumpheap "$REMOTE_PATH"
+        REMOTE_SIZE="$(kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
+            sh -c "wc -c < '$REMOTE_PATH'" 2>/dev/null | tr -dc '0-9')"
         info "copying $REMOTE_PATH -> $LOCAL_PATH"
         kubectl -n "$NAMESPACE" cp "$POD:$REMOTE_PATH" "$LOCAL_PATH" -c "$APP_CONTAINER"
+        # Validate BEFORE deleting the in-pod copy: kubectl cp rides on tar and
+        # can truncate silently — a partial hprof handed to MAT reads as a
+        # smaller heap and drives a WRONG diagnosis. Magic catches non-dumps;
+        # the size compare catches truncation (magic alone can't).
+        if ! head -c 12 "$LOCAL_PATH" 2>/dev/null | grep -q "JAVA PROFILE"; then
+            err "the copied file is not a valid hprof (bad magic) — leaving it for inspection: $LOCAL_PATH"
+            cls="$(classify_capture "$LOCAL_PATH")"
+            [ -n "$cls" ] && err "  $cls"
+            err "  the in-pod copy is still at $POD:$REMOTE_PATH — retry:"
+            err "    kubectl -n $NAMESPACE cp $POD:$REMOTE_PATH $LOCAL_PATH -c $APP_CONTAINER"
+            exit 1
+        fi
+        LOCAL_SIZE="$(wc -c < "$LOCAL_PATH" | tr -d ' ')"
+        if [[ -n "$REMOTE_SIZE" && "$REMOTE_SIZE" != "$LOCAL_SIZE" ]]; then
+            err "size mismatch after kubectl cp — the dump was TRUNCATED in transit:"
+            err "  in pod: $REMOTE_SIZE bytes · copied: $LOCAL_SIZE bytes"
+            err "  the in-pod copy is still at $POD:$REMOTE_PATH — retry the copy:"
+            err "    kubectl -n $NAMESPACE cp $POD:$REMOTE_PATH $LOCAL_PATH -c $APP_CONTAINER"
+            err "  (then clean up: kubectl -n $NAMESPACE exec $POD -c $APP_CONTAINER -- rm -f $REMOTE_PATH)"
+            exit 1
+        fi
         kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- rm -f "$REMOTE_PATH" || true
-        info "wrote $LOCAL_PATH ($(du -h "$LOCAL_PATH" | cut -f1))"
+        info "wrote $LOCAL_PATH ($(du -h "$LOCAL_PATH" | cut -f1), verified: hprof magic + size match)"
         info "analyze: Eclipse MAT → File → Open Heap Dump → 'Leak Suspects' (or VisualVM)"
         ;;
     jcmd)

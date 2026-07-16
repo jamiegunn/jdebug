@@ -51,6 +51,8 @@ if [[ $CONFIRMED -ne 1 ]]; then
     exit 64
 fi
 
+# heap pauses the JVM — never let it hit a guessed replica
+export JDEBUG_DESTRUCTIVE=1
 POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
 
 TS="$(date -u +%Y%m%dT%H%M%SZ)"

@@ -1,0 +1,69 @@
+
+jdebug — the front door for the JVM debug kit. Cluster-agnostic: works
+against ANY Spring Boot pod on ANY cluster the ambient kubectl context
+points at (KUBECONFIG / kubectl config use-context — no auto-rewriting).
+Every command takes -n <ns> -l <selector> [--container <name>] [pod];
+defaults: namespace "default", any pod, container "app" (or the
+JDEBUG_NAMESPACE / JDEBUG_SELECTOR / JDEBUG_CONTAINER env vars).
+
+Run with NO arguments (or `tui`) for the interactive menu; `wizard` jumps
+straight into a guided, symptom-driven capture flow.
+
+  Triage (runbook steps 1–4)
+    status        pod status, restarts, recent events
+    health        actuator health, incl. per-subsystem + liveness/readiness
+    top           kubectl top pods + HPA state
+    metrics       list JVM/process metric names, or one metric's live value:
+                  metrics jvm.gc.pause — run twice to see a trend
+    why           pod deep-dive: limits, probes, exit codes, HPA (why.sh)
+    security      pod security posture, in plain language (security.sh)
+    topology      deployment → replicasets → pods + HPA/services (topology.sh)
+    workload      topology + why in one scroll — what the TUI's W key runs
+    context       app wiring: services, env, probes, volumes, deps (context.sh)
+    escalate      paste-ready handoff brief for asking for help (escalate.sh)
+    timeline      pod events + your captures, in time order (timeline.sh)
+    what-changed  image/rollout/restart/scale after a deploy (what-changed.sh)
+    cleanup       remove files jdebug staged in the pod (--confirm) (cleanup.sh)
+    restart       re-roll the owning deployment (needs --confirm)
+    kill          delete a pod; managed pods respawn (needs --confirm)
+    logs          stream logs from all replicas         (tail-logs.sh)
+                  logs --previous [pod]: the crashed container's last lines
+    log-level     runtime logger change: log-level <logger> <LEVEL>
+
+  Capture (three tiers — actuator, jattach, jdk)
+    threads       thread dump. With no --via it AUTO-DEGRADES actuator → jattach
+                  → jdk (announcing each fallback); --via <tier> forces one.
+    heap          heap dump — PAUSES THE JVM, needs --confirm; same tiers/auto.
+    jcmd          any jcmd command via jattach: jcmd "GC.heap_info"
+
+  Actuator path defaults to http://localhost:8080/actuator (in the pod).
+  Override with --actuator-base <url> or $ACTUATOR_BASE when it differs
+  (custom management port/base-path, e.g. --actuator-base http://localhost:9001/manage).
+
+  Memory / bundle (runbook steps 5–6)
+    memory        RSS vs JVM anatomy, reconciled        (memory-report.sh)
+    snapshot      one-shot offline-analysis bundle      (snapshot.sh)
+    dumps         list everything captured so far + how to analyze each
+    analyze       first-pass read of ALL captures: deadlocks, blocked
+                  threads, DOWN health, OOM risk, invalid dumps
+
+  Every capture lands under this kit's dumps/ directory (git-ignored);
+  `jdebug dumps` shows what you have and what to open it with.
+
+  Setup
+    doctor            check everything BEFORE an incident: host tools, cluster
+                      reachability, target pods, actuator, jattach cache
+    install-jattach   pre-stage jattach into the pod before an incident
+    push-local        copy the in-pod tool (jdebug-local) into the pod, for
+                      when you'll have a shell but no kubectl (JRE-only image)
+
+Examples:
+  jdebug threads                        # actuator, this repo's app
+  jdebug heap --confirm --via jattach
+  jdebug snapshot -n prod -l app=payments
+  jdebug jcmd "VM.native_memory summary"
+
+No kubectl inside the pod? See jdebug-local (a single POSIX-sh file that runs
+the same captures from within the container): jdebug push-local, then in the
+pod `sh /tmp/jdebug-local help`.
+

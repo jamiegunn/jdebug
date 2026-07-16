@@ -574,6 +574,7 @@ func main() {
 	deepFlag := flag.Bool("deep", false, "with -analyze-heap: also build the dominator tree for retained sizes")
 	diffA := flag.String("diff-a", "", "BEFORE hprof for a two-dump growth diff (with -diff-b)")
 	diffB := flag.String("diff-b", "", "AFTER hprof for a two-dump growth diff (with -diff-a)")
+	startFlag := flag.String("start", "", "open directly on a screen and skip the menu (wizard)")
 	showVersion := flag.Bool("version", false, "print version")
 	flag.Parse()
 
@@ -635,6 +636,15 @@ func main() {
 		m.scr = scChooser
 	} else {
 		m.scr = scMenu
+	}
+	if *startFlag == "wizard" {
+		// `jdebug wizard` jumps straight into the guided flow, exactly like
+		// the classic menu's `w`. No mode chosen yet → remote (the common case).
+		if m.mode == 0 {
+			m.mode = 1
+		}
+		m.scr = scWizard
+		m.wiz = wizardState{}
 	}
 	// a remembered pod pin may have died since last session
 	if m.mode == 1 && m.t.Pod != "" && clusterReachable() {

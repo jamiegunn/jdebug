@@ -59,7 +59,7 @@ records, session tokens, credentials in flight. Expectations:
 | action | impact |
 |---|---|
 | status / health / top / metrics / memory / threads / logs / dumps / doctor | none — read-only |
-| snapshot (without `--heap`) | none, plus an ~80 KB binary staged in `/tmp` for the jcmd sections (skippable: `--no-jattach`) |
+| snapshot (without `--heap`) | none, plus a small static helper binary staged in `/tmp` for the jcmd sections (skippable: `--no-jattach`) |
 | heap dump, `snapshot --heap` | **the JVM pauses** for the duration of the write — seconds on small heaps, minutes on multi-GB. Requires `--confirm` everywhere, plus an interactive y/N in the menu |
 | log-level | log volume changes on every replica; not persistent across restarts |
 | install-jattach / push-local | a file placed in the container's `/tmp`; gone on restart |

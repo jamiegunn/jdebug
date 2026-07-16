@@ -110,14 +110,75 @@ run_tier() {
 # capture <threads|heap> — an explicit --via runs only that tier; otherwise DEGRADE
 # AUTOMATICALLY actuator → jattach → jdk, announcing each fallback to the terminal.
 capture() {
+    # A missing --confirm must read as exactly that — if it fell through to
+    # the tiers, all three would refuse (same gate) and the cascade would
+    # report "all capture tiers failed", blaming the cluster for a flag.
+    if [[ "$1" == heap ]]; then
+        local _c=0 _a
+        for _a in ${ARGS[@]+"${ARGS[@]}"}; do [[ "$_a" == "--confirm" ]] && _c=1; done
+        if [[ "$_c" -ne 1 ]]; then
+            err "heap dumps pause the JVM (destructive in production). Re-run with --confirm."
+            exit 64
+        fi
+    fi
     if [[ "$VIA_EXPLICIT" == 1 ]]; then run_tier "$VIA" "$1"; return $?; fi
-    if run_tier actuator "$1"; then return 0; fi
+    # exit 2 = target resolution failed (no pod matched, or an ambiguous match
+    # on a destructive op) — no tier can fix a target problem, so don't cascade.
+    local rc
+    run_tier actuator "$1"; rc=$?
+    [[ $rc -eq 0 ]] && return 0
+    [[ $rc -eq 2 ]] && return 2
     info "⚠ actuator tier failed — auto-falling back to jattach (needs no actuator)…"
-    if run_tier jattach "$1"; then return 0; fi
+    run_tier jattach "$1"; rc=$?
+    [[ $rc -eq 0 ]] && return 0
+    [[ $rc -eq 2 ]] && return 2
     info "⚠ jattach tier failed — auto-falling back to an ephemeral JDK container…"
     if run_tier jdk "$1"; then return 0; fi
     err "all capture tiers failed (actuator → jattach → jdk); see the errors above."
     return 1
+}
+
+# resolve_tui_binary — the interactive frontend is the Go TUI. Resolution:
+#   1. tui/jdebug-tui        a local `make tui` build (dev loop; not hash-gated —
+#                            it is the developer's own fresh output)
+#   2. vendor/tui/…-<os>-<arch>  the binary VENDORED into the repo by the
+#                            pre-commit hook, verified against SHA256SUMS before
+#                            exec — a tampered/corrupt binary must not run
+# Neither present → explain how to build; the whole CLI works without the TUI.
+resolve_tui_binary() {
+    if [[ -x "$D/tui/jdebug-tui" ]]; then
+        printf '%s\n' "$D/tui/jdebug-tui"; return 0
+    fi
+    local os arch f sums want got
+    case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) os="$(uname -s | tr '[:upper:]' '[:lower:]')" ;; esac
+    case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) arch="$(uname -m)" ;; esac
+    f="$D/vendor/tui/jdebug-tui-$os-$arch"
+    sums="$D/vendor/tui/SHA256SUMS"
+    if [[ ! -x "$f" ]]; then
+        err "the interactive menu needs the Go TUI and none is available for $os/$arch."
+        err "  build it:  make tui        (needs Go; ~5s — jdebug then uses tui/jdebug-tui)"
+        err "  or commit once with the hooks installed (make hooks) — the pre-commit hook"
+        err "  vendors verified binaries into vendor/tui/ for darwin+linux, arm64+amd64."
+        err "  every CLI command works without the TUI: jdebug --help"
+        return 1
+    fi
+    if [[ ! -f "$sums" ]]; then
+        err "vendored TUI has no SHA256SUMS ($sums) — refusing to run an unverified binary."
+        err "  → re-commit with the hooks installed (make hooks), or build fresh: make tui"
+        return 1
+    fi
+    want="$(awk -v f="$(basename "$f")" '$2==f {print $1}' "$sums")"
+    if command -v sha256sum >/dev/null 2>&1; then got="$(sha256sum "$f" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then got="$(shasum -a 256 "$f" | awk '{print $1}')"
+    else got=""; fi
+    if [[ -z "$want" || -z "$got" || "$want" != "$got" ]]; then
+        err "vendored TUI FAILED its checksum — refusing to run it."
+        err "  expected  ${want:-<no entry in SHA256SUMS>}"
+        err "  got       ${got:-<could not hash>}  ($f)"
+        err "  → restore vendor/tui/ from git, or build fresh: make tui"
+        return 1
+    fi
+    printf '%s\n' "$f"
 }
 
 # Preflight: every cluster-touching command checks connectivity first and
@@ -130,13 +191,11 @@ esac
 
 case "$cmd" in
     tui|menu|"")
-        # Prefer the Go frontend when it's built (richer rendering, same
-        # features); JDEBUG_CLASSIC=1 forces the zero-dependency bash menu.
-        if [[ -z "${JDEBUG_CLASSIC:-}" && -x "$D/tui/jdebug-tui" ]]; then
-            JDEBUG_KIT="$D" exec "$D/tui/jdebug-tui"
-        fi
-        exec "$D/ui/tui.sh" ;;
-    wizard|guide)    exec "$D/ui/tui.sh" wizard ;;
+        TUI_BIN="$(resolve_tui_binary)" || exit 1
+        JDEBUG_KIT="$D" exec "$TUI_BIN" ;;
+    wizard|guide)
+        TUI_BIN="$(resolve_tui_binary)" || exit 1
+        JDEBUG_KIT="$D" exec "$TUI_BIN" -start wizard ;;
 
     status)
         triage_parse
@@ -354,8 +413,6 @@ HINTS
         echo "host"
         command -v kubectl >/dev/null 2>&1 && chk "kubectl on PATH" \
             || bad "kubectl missing — install it and/or add it to PATH"
-        command -v curl >/dev/null 2>&1 && chk "curl on PATH" \
-            || bad "curl missing — needed to download jattach (everything actuator-side still works)"
         command -v python3 >/dev/null 2>&1 && chk "python3 on PATH" \
             || wrn "python3 missing — 'jdebug memory' won't run; every other command is fine"
         if mkdir -p "$JDEBUG_DUMPS" 2>/dev/null && [[ -w "$JDEBUG_DUMPS" ]]; then
@@ -363,10 +420,25 @@ HINTS
         else
             bad "cannot write the captures dir ($JDEBUG_DUMPS) — set \$JDEBUG_DUMPS elsewhere"
         fi
-        if ls "$JDEBUG_CACHE_DIR"/jattach-* >/dev/null 2>&1; then
-            chk "jattach cached ($JDEBUG_CACHE_DIR) — tier 2 works offline"
+        # jattach ships IN this repo (vendored, pinned, checksummed) — no
+        # download, ever. Verify both binaries against SHA256SUMS right here,
+        # so a corrupted/tampered copy is caught BEFORE an incident.
+        JAT_VENDOR="${JATTACH_VENDOR_DIR:-$D/vendor/jattach}"
+        if ls "$JAT_VENDOR"/jattach-linux-* >/dev/null 2>&1; then
+            if [[ -f "$JAT_VENDOR/SHA256SUMS" ]] && command -v sha256sum >/dev/null 2>&1 \
+                    && (cd "$JAT_VENDOR" && sha256sum -c SHA256SUMS >/dev/null 2>&1); then
+                chk "jattach vendored + checksums verified ($JAT_VENDOR) — tier 2 needs no network"
+            elif [[ -f "$JAT_VENDOR/SHA256SUMS" ]] && command -v shasum >/dev/null 2>&1 \
+                    && (cd "$JAT_VENDOR" && shasum -a 256 -c SHA256SUMS >/dev/null 2>&1); then
+                chk "jattach vendored + checksums verified ($JAT_VENDOR) — tier 2 needs no network"
+            elif [[ ! -f "$JAT_VENDOR/SHA256SUMS" ]]; then
+                bad "vendored jattach has no SHA256SUMS ($JAT_VENDOR) — installs will refuse; restore it from git"
+            else
+                bad "vendored jattach FAILS its checksums ($JAT_VENDOR) — modified/corrupt; restore from git"
+            fi
         else
-            wrn "jattach not cached yet — first use downloads it (~80 KB); air-gapped? pass --binary"
+            wrn "vendored jattach binaries missing ($JAT_VENDOR) — the jattach tier can't install;"
+            wrn "  restore vendor/jattach/ from git, or pass --binary /path/to/jattach per run"
         fi
         echo
         echo "cluster"
@@ -383,6 +455,12 @@ HINTS
                     wrn "actuator not answering at $ACTUATOR_BASE in $DOC_POD — the actuator tier won't"
                     wrn "  work there. Custom port/path? --actuator-base. No actuator at all? the"
                     wrn "  jattach tier needs none: jdebug install-jattach"
+                fi
+                if kubectl auth can-i patch pods/ephemeralcontainers -n "$NAMESPACE" >/dev/null 2>&1; then
+                    chk "ephemeral containers allowed — tier 3 (jdk) available if tiers 1–2 fail"
+                else
+                    wrn "RBAC blocks ephemeral containers (pods/ephemeralcontainers) — tier 3 (jdk)"
+                    wrn "  won't work here; tiers 1–2 (actuator, jattach) are unaffected"
                 fi
             else
                 bad "no pods match namespace=$NAMESPACE selector='${SELECTOR:-<any>}' — set -n/-l (or press t in the menu)"

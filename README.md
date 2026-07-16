@@ -20,7 +20,7 @@ that work anyway, and falls back only when it has to.
 
 **Three capture tiers** (in preference order):
 1. **actuator** (default) — Spring Boot's `/actuator/threaddump` + `/actuator/heapdump`. Works JRE-only, no binary needed.
-2. **jattach** — an ~80 KB static binary that speaks the Hotspot attach protocol, for the full `jcmd` surface (`GC.heap_info`, `VM.native_memory`, `JFR`, …). **Auto-downloaded** from GitHub releases and cached (see below); no manual placement.
+2. **jattach** — a small static binary that speaks the Hotspot attach protocol, for the full `jcmd` surface (`GC.heap_info`, `VM.native_memory`, `JFR`, …). **Vendored in this repo** (pinned version, checksum-verified before every install — nothing is downloaded at runtime); no manual placement.
 3. **jdk** — last resort: an ephemeral JDK container via `kubectl debug` for `jstack`/`jmap`.
 
 ## Install
@@ -33,9 +33,14 @@ that work anyway, and falls back only when it has to.
 Or run it in place: `./jdebug <cmd>`. (The CLI resolves symlinks, so the
 symlink install works from anywhere on PATH.)
 
-Optional, nicer menu: `make tui` builds the Go (Bubble Tea) frontend — same
-keys and features, richer rendering; `jdebug` prefers it automatically once
-built (`JDEBUG_CLASSIC=1` forces the zero-dependency bash menu).
+The interactive menu and wizard are the Go (Bubble Tea) frontend. `jdebug`
+uses a local dev build (`make tui`) when present, otherwise the **vendored,
+hash-verified** binary under `vendor/tui/` for your platform (darwin/linux ×
+arm64/amd64). The git hooks keep those binaries in lock-step with the sources:
+run `make hooks` once — every commit that touches `tui/` rebuilds and re-hashes
+them (`vendor/tui/SHA256SUMS`), and `git push` refuses stale or unverified
+binaries. `jdebug` verifies the checksum before executing a vendored binary.
+Every CLI command works without the TUI.
 
 ## Usage
 
@@ -88,11 +93,18 @@ Defaults come from flags, then env, then built-ins:
 
 ## jattach binary
 
-Auto-downloaded from `github.com/jattach/jattach` releases (matched to the pod's
-arch), `kubectl cp`'d into the pod, and cached at
-`${XDG_CACHE_HOME:-~/.cache}/jdebug/`. For air-gapped clusters, pre-place a copy
-and pass `--binary /path/to/jattach` (or set `$JATTACH_BINARY`). Override the
-version with `$JATTACH_VERSION`.
+**Vendored in this repo** at `vendor/jattach/` — a pinned version of
+[jattach](https://github.com/jattach/jattach), one statically-linked binary per
+arch (x64, arm64; static so the same binary runs on glibc *and* musl/alpine
+pods). At install time jdebug matches the pod's arch (`uname -m`), **verifies
+the binary against `vendor/jattach/SHA256SUMS`**, and `kubectl cp`'s it in; a
+missing or checksum-failing file refuses to install. Nothing is downloaded at
+runtime, so air-gapped clusters work out of the box. Build/provenance notes:
+`vendor/jattach/PROVENANCE.md`.
+
+To use your own build instead, pass `--binary /path/to/jattach` (or set
+`$JATTACH_BINARY`) — an explicit override that bypasses the vendored copy and
+its checksum gate.
 
 ## No kubectl inside the pod? (`jdebug-local`)
 
@@ -122,7 +134,7 @@ the actuator + jattach + memory tiers all work.
 
 ## Requirements
 
-`kubectl` + `curl` on your PATH (plus `python3` for `jdebug memory`), a
+`kubectl` on your PATH (plus `python3` for `jdebug memory`), a
 reachable kube context, and a pod that runs as the same uid your `kubectl exec`
 lands as (jattach attaches same-uid). All actuator-backed commands use whatever
 HTTP client is **in the pod** — `curl` or busybox `wget` — so they work against

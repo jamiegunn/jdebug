@@ -11,8 +11,8 @@ evidence you can't lose. Roughly ordered by leverage; none are promises.
 ## Recently shipped
 
 - **Go (Bubble Tea) frontend** — `make tui`; same keys/screens/config as the
-  classic bash menu, richer rendering, drives the same tested CLI; bash menu
-  remains the zero-dependency fallback (`JDEBUG_CLASSIC=1`)
+  drives the same tested CLI; binaries are vendored per-platform in
+  `vendor/tui/` with hash proof (SHA256SUMS), kept fresh by the git hooks
 - **Readiness gate** — the menu hides its tools until the cluster answers and
   a real pod + container are selected (per mode), with a ✓/✗ checklist
 - **`jdebug analyze`** — built-in first-pass triage of every capture type

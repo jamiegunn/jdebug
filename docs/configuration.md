@@ -30,14 +30,14 @@ longer exists is detected at startup and falls back to auto with a notice.
 |---|---|---|
 | `JDEBUG_DUMPS` | `<kit>/dumps` | root for all operator-side captures + session logs |
 | `OUT_DIR` | per command | one-off override of a capture's output dir |
-| `JDEBUG_CACHE_DIR` | `~/.cache/jdebug` | downloaded jattach binaries (XDG-aware) |
+| `JATTACH_VENDOR_DIR` | `<kit>/vendor/jattach` | the vendored, checksum-verified jattach binaries |
 
 ## jattach tier
 
 | variable | flag | default | meaning |
 |---|---|---|---|
-| `JATTACH_BINARY` | `--binary` | — | use this local binary instead of downloading (air-gapped) |
-| `JATTACH_VERSION` | — | `v2.2` | release to download |
+| `JATTACH_BINARY` | `--binary` | — | use this local binary instead of the vendored one (bypasses the checksum gate) |
+| `JATTACH_VERSION` | — | `v2.2` | the pinned version the vendored binaries were built from (informational) |
 | `JATTACH_REMOTE_PATH` | — | `/tmp/jattach` | where it lands in the pod |
 
 ## jdk tier

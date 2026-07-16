@@ -187,6 +187,7 @@ EXIT_MEANING = {
     139: "SIGSEGV — a native crash (JNI, corrupted native lib)",
     143: "SIGTERM — 128+15, a polite shutdown request: a deploy, eviction, or scale-down asked it to stop",
 }
+oom_seen = False
 for cs in pod.get("status", {}).get("containerStatuses", []) or []:
     if container and cs.get("name") != container:
         continue
@@ -195,6 +196,8 @@ for cs in pod.get("status", {}).get("containerStatuses", []) or []:
     term = (cs.get("lastState") or {}).get("terminated")
     if term:
         code, reason = term.get("exitCode"), term.get("reason", "")
+        if reason == "OOMKilled":
+            oom_seen = True
         meaning = EXIT_MEANING.get(code, "uncommon code — 128+N usually means killed by signal N")
         w = warn if rc > 3 or reason == "OOMKilled" else line
         w(f"last exit {code} ({reason or 'no reason recorded'}) → {meaning}")
@@ -202,6 +205,21 @@ for cs in pod.get("status", {}).get("containerStatuses", []) or []:
     if waiting and waiting.get("reason"):
         warn(f"currently {waiting['reason']} — kubernetes is backing off between restart attempts; "
              "'jdebug logs --previous' has the crash itself")
+# an OOM-killed JVM dies before any exec-based capture can reach it — the ONLY
+# way to get that heap is the JVM writing it itself at the moment of death.
+# If the flag isn't set, every future OOM loses its evidence too: say so NOW.
+if oom_seen:
+    env_blob = " ".join(
+        (e.get("value") or "")
+        for c in spec.get("containers", [])
+        if not container or c.get("name") == container
+        for e in (c.get("env") or [])
+    )
+    if "HeapDumpOnOutOfMemoryError" not in env_blob:
+        warn("this container has been OOM-killed and -XX:+HeapDumpOnOutOfMemoryError is not in its env — "
+             "the NEXT OOM will leave no heap dump behind either. Add it (plus "
+             "-XX:HeapDumpPath=<mounted volume>) via JAVA_TOOL_OPTIONS so the crash captures itself. "
+             "(Flags baked into the image aren't visible here — verify live: jdebug jcmd VM.flags)")
 print()
 
 # --- autoscaling ------------------------------------------------------------------
