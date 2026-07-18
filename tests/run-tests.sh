@@ -606,8 +606,11 @@ if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then
     if (cd tui && go build -o jdebug-tui . 2>"$TMP/gobuild.err"); then ok "go build"
     else bad "go build" "$(head -3 "$TMP/gobuild.err")"; fi
     if (cd tui && go vet ./... >/dev/null 2>&1); then ok "go vet"; else bad "go vet" "see go vet ./tui/..."; fi
-    if (cd tui && go test ./... >/dev/null 2>"$TMP/gotest.err"); then ok "go test (update-logic + parity)"
-    else bad "go test" "$(head -3 "$TMP/gotest.err")"; fi
+    # capture COMBINED output — `go test` prints failing assertions to stdout, so
+    # discarding it (as before) left CI failures with a blank reason. Surface the
+    # FAIL/panic lines and the *_test.go:NN locations on failure.
+    if (cd tui && go test ./... >"$TMP/gotest.out" 2>&1); then ok "go test (update-logic + parity)"
+    else bad "go test" "$(grep -nE '^(--- FAIL|=== RUN|FAIL|ok |panic:)|_test\.go:[0-9]+' "$TMP/gotest.out" | grep -vE '=== RUN|^[0-9]+:ok ' | head -12)"; fi
     if [[ -x tui/jdebug-tui ]]; then
         run_case ./tui/jdebug-tui -version
         assert_has "tui: --version" "jdebug-tui"
