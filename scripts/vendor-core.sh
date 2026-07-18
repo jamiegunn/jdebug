@@ -23,7 +23,7 @@ OUT="tools/core"
 
 # source hash: every input that determines the binaries (module + all .go under core/)
 source_hash() {
-    { cat core/go.mod core/go.sum 2>/dev/null; find core -name '*.go' -not -name '*_test.go' | sort | xargs cat; } \
+    { cat core/go.mod core/go.sum 2>/dev/null; find core -name '*.go' -not -name '*_test.go' | LC_ALL=C sort | xargs cat; } \
         | { command -v sha256sum >/dev/null 2>&1 && sha256sum || shasum -a 256; } | awk '{print $1}'
 }
 

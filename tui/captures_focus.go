@@ -12,12 +12,35 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"regexp"
 	"sort"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
+
+// capStampRe pulls the capture SESSION timestamp (YYYYMMDDThhmmssZ) out of an
+// entry's session-dir name. That, not the file's mtime, is what "newest" means:
+// mtimes collide when several files are written in the same instant (and their
+// sub-second tie-break is filesystem/OS-dependent), so ordering by mtime alone
+// is non-deterministic across platforms. The stamp is fixed-width, so a plain
+// string compare orders it correctly.
+var capStampRe = regexp.MustCompile(`\d{8}T\d{6}Z`)
+
+func capStamp(ce capEntry) string { return capStampRe.FindString(ce.Name) }
+
+// capNewer reports whether a sorts before b in newest-first order: by session
+// stamp, then mtime, then path — a total, deterministic order.
+func capNewer(a, b capEntry) bool {
+	if sa, sb := capStamp(a), capStamp(b); sa != sb {
+		return sa > sb
+	}
+	if !a.Mod.Equal(b.Mod) {
+		return a.Mod.After(b.Mod)
+	}
+	return a.Path < b.Path
+}
 
 var capsFilters = []string{"all", "heaps", "threads", "logs", "snapshots", "recent"}
 
@@ -58,7 +81,7 @@ func fetchCapsFlat(kit string) tea.Cmd {
 			out = append(out, ce)
 			return nil
 		})
-		sort.SliceStable(out, func(i, j int) bool { return out[i].Mod.After(out[j].Mod) })
+		sort.SliceStable(out, func(i, j int) bool { return capNewer(out[i], out[j]) })
 		return capsFlatMsg{entries: out}
 	}
 }

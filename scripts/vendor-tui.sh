@@ -29,7 +29,10 @@ sha() {
 # source hash: every input that determines the binaries
 source_hash() {
     # shellcheck disable=SC2012
-    cat tui/go.mod tui/go.sum $(ls tui/*.go | sort) | { command -v sha256sum >/dev/null 2>&1 && sha256sum || shasum -a 256; } | awk '{print $1}'
+    # LC_ALL=C pins a bytewise sort: without it the file order (and thus this
+    # hash) depends on the runner's locale — macOS/glibc-UTF8 collate dots/case
+    # differently than C, so the same sources fingerprint differently per box.
+    cat tui/go.mod tui/go.sum $(ls tui/*.go | LC_ALL=C sort) | { command -v sha256sum >/dev/null 2>&1 && sha256sum || shasum -a 256; } | awk '{print $1}'
 }
 
 SRC_SHA="$(source_hash)"

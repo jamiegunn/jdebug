@@ -23,6 +23,18 @@ func TestCapsFocusFlatAndFilter(t *testing.T) {
 	mk("pod-a", "20260705T103000Z", "tail-logs.txt", "log line")
 	mk("pod-b", "20260705T110000Z", "heap-jdk.hprof", "not a heap")
 
+	// pin every file to the SAME mtime: this reproduces what happens when captures
+	// are written in one instant (mtimes collide, and their sub-second tie-break is
+	// filesystem/OS-dependent). "recent" ordering must therefore come from the
+	// capture's session timestamp, not mtime — this is the CI-vs-local bug guard.
+	eq := time.Date(2026, 7, 5, 12, 0, 0, 0, time.UTC)
+	_ = filepath.Walk(dir, func(p string, _ os.FileInfo, err error) error {
+		if err == nil {
+			os.Chtimes(p, eq, eq)
+		}
+		return nil
+	})
+
 	entries := fetchCapsFlat(".")().(capsFlatMsg).entries
 	if len(entries) != 4 {
 		t.Fatalf("flat browser should list every capture file across pods, got %d", len(entries))

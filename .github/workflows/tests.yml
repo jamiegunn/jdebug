@@ -22,6 +22,28 @@ jobs:
       - name: Run the test suite (bash kit + Go TUI)
         run: tests/run-tests.sh
 
+  provenance:
+    # Enforce, on Linux (a userland the author's macOS is not), that each vendored
+    # binary set's recorded source hash matches the committed sources. The recipe
+    # is locale-pinned (LC_ALL=C); this job is the machine "you don't control" that
+    # catches any collation-dependent drift the local hooks might miss off-box.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: TUI + core provenance (committed source hash matches BUILDINFO)
+        run: |
+          set -euo pipefail
+          tui_src=$(cat tui/go.mod tui/go.sum $(ls tui/*.go | LC_ALL=C sort) | sha256sum | awk '{print $1}')
+          tui_rec=$(awk -F': ' '/^source_sha256/{print $2}' vendor/tui/BUILDINFO)
+          [ "$tui_src" = "$tui_rec" ] || { echo "::error::TUI provenance mismatch: sources=$tui_src BUILDINFO=$tui_rec"; exit 1; }
+          echo "TUI provenance OK ($tui_src)"
+          if [ -d tools/core ]; then
+            core_src=$({ cat core/go.mod core/go.sum 2>/dev/null; find core -name '*.go' -not -name '*_test.go' | LC_ALL=C sort | xargs cat; } | sha256sum | awk '{print $1}')
+            core_rec=$(awk -F': ' '/^source_sha256/{print $2}' tools/core/BUILDINFO)
+            [ "$core_src" = "$core_rec" ] || { echo "::error::core provenance mismatch: sources=$core_src BUILDINFO=$core_rec"; exit 1; }
+            echo "core provenance OK ($core_src)"
+          fi
+
   shellcheck:
     # Advisory: the kit documents its deliberate violations (word-splitting
     # for known-safe names, etc.); treat findings as review input, not gates.

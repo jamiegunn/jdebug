@@ -21,7 +21,7 @@ mkdir -p spec
 
 # verbs: the dispatch case arms in jdebug (strip patterns, one per line)
 awk '/^case "\$cmd" in/,/^esac/' jdebug \
-    | grep -oE '^\s+[a-z|-]+\)' | tr -d ' )' | tr '|' '\n' | grep -v '^$' | sort -u \
+    | grep -oE '^\s+[a-z|-]+\)' | tr -d ' )' | tr '|' '\n' | grep -v '^$' | LC_ALL=C sort -u \
     > spec/commands.golden
 
 # the behavioural contract: every assertion the suite makes, with its label

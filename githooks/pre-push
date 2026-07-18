@@ -26,7 +26,7 @@ else
 fi
 
 # 2. the hashes were computed from THESE sources
-src_now="$(cat tui/go.mod tui/go.sum $(ls tui/*.go | sort) | { command -v sha256sum >/dev/null 2>&1 && sha256sum || shasum -a 256; } | awk '{print $1}')"
+src_now="$(cat tui/go.mod tui/go.sum $(ls tui/*.go | LC_ALL=C sort) | { command -v sha256sum >/dev/null 2>&1 && sha256sum || shasum -a 256; } | awk '{print $1}')"
 src_rec="$(awk -F': ' '/^source_sha256/ {print $2}' vendor/tui/BUILDINFO)"
 [[ "$src_now" == "$src_rec" ]] || fail "vendored TUI is STALE — built from different tui/ sources than this push"
 
@@ -40,7 +40,7 @@ if [[ -d tools/core ]]; then
     else
         (cd tools/core && shasum -a 256 -c SHA256SUMS >/dev/null 2>&1) || fail "vendored core binaries FAIL their checksums"
     fi
-    core_now="$({ cat core/go.mod core/go.sum 2>/dev/null; find core -name '*.go' -not -name '*_test.go' | sort | xargs cat; } | { command -v sha256sum >/dev/null 2>&1 && sha256sum || shasum -a 256; } | awk '{print $1}')"
+    core_now="$({ cat core/go.mod core/go.sum 2>/dev/null; find core -name '*.go' -not -name '*_test.go' | LC_ALL=C sort | xargs cat; } | { command -v sha256sum >/dev/null 2>&1 && sha256sum || shasum -a 256; } | awk '{print $1}')"
     core_rec="$(awk -F': ' '/^source_sha256/ {print $2}' tools/core/BUILDINFO)"
     [[ "$core_now" == "$core_rec" ]] || fail "vendored core is STALE — built from different core/ sources than this push"
     echo "pre-push: vendored core verified (binaries match SHA256SUMS, sources match BUILDINFO)"
