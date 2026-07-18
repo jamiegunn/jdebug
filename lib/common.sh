@@ -324,6 +324,29 @@ resolve_tui_binary() {
     printf '%s\n' "$f"
 }
 
+# resolve_core_binary <kit-root> — the v2 capture engine (Go). Same discipline as
+# resolve_tui_binary: a local `make core` build wins; otherwise the vendored,
+# checksum-verified binary for this os/arch. Prints the path, or returns 1
+# (quietly — callers fall back to the v1 bash capture tiers).
+resolve_core_binary() {
+    local root="${1:-${JDEBUG_KIT:-}}"
+    if [[ -x "$root/core/jdebug-core" ]]; then
+        printf '%s\n' "$root/core/jdebug-core"; return 0
+    fi
+    local os arch f sums want got
+    case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) os="$(uname -s | tr '[:upper:]' '[:lower:]')" ;; esac
+    case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) arch="$(uname -m)" ;; esac
+    f="$root/tools/core/jdebug-core-$os-$arch"
+    sums="$root/tools/core/SHA256SUMS"
+    [[ -x "$f" && -f "$sums" ]] || return 1
+    want="$(awk -v f="$(basename "$f")" '$2==f {print $1}' "$sums")"
+    if command -v sha256sum >/dev/null 2>&1; then got="$(sha256sum "$f" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then got="$(shasum -a 256 "$f" | awk '{print $1}')"
+    else return 1; fi
+    [[ -n "$want" && "$want" == "$got" ]] || return 1
+    printf '%s\n' "$f"
+}
+
 # check_cluster — is the kube context actually answering? If not, translate the
 # usual kubectl failure modes into plain language and a likely fix, instead of
 # letting every later kubectl call spew TLS stack traces and memcache spam.

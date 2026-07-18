@@ -2,7 +2,7 @@
 # is the interactive frontend (a dev build via `make tui`, or the vendored,
 # hash-verified binaries under vendor/tui/ kept fresh by the git hooks).
 
-.PHONY: tui core vendor-tui hooks test clean
+.PHONY: tui core vendor-tui vendor-core hooks test clean
 
 tui:            ## build the Go TUI for THIS machine (jdebug prefers tui/jdebug-tui)
 	cd tui && go build -o jdebug-tui .
@@ -12,6 +12,9 @@ core:           ## build the v2 capture engine (jdebug routes threads/heap/jcmd 
 
 vendor-tui:     ## (re)build + hash the committed multi-platform TUI binaries
 	scripts/vendor-tui.sh
+
+vendor-core:    ## (re)build + hash the committed multi-platform v2 engine binaries (tools/core)
+	scripts/vendor-core.sh
 
 hooks:          ## install the git hooks (pre-commit vendors the TUI, pre-push proves it)
 	git config core.hooksPath githooks

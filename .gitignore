@@ -11,5 +11,6 @@ core/jdebug-core
 # integration suite scratch output (tests/integration writes here)
 .it-dumps/
 
-# scratch full-repo tarball snapshots parked under _to_delete/
-_to_delete/*.tar.gz
+# local dev scratch — never shipped
+_to_delete/
+.claude/

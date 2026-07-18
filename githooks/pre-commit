@@ -16,11 +16,13 @@ cd "$(git rev-parse --show-toplevel)"
 
 staged() { git diff --cached --name-only; }
 
-# core module: never commit red tests
+# core module: never commit red tests, and keep tools/core vendored in step
 if staged | grep -q '^core/'; then
     if command -v go >/dev/null 2>&1; then
-        echo "pre-commit: core/ changed — running its tests"
+        echo "pre-commit: core/ changed — running its tests + re-vendoring tools/core"
         (cd core && go build ./... && go test ./...)
+        scripts/vendor-core.sh
+        git add tools/core
     else
         echo "pre-commit: core/ changed but no Go toolchain — cannot verify. Install Go" >&2
         echo "            or commit with --no-verify (CI/tests will catch it later)." >&2

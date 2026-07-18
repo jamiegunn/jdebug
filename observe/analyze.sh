@@ -47,9 +47,9 @@ _pick_heaps() {
 
 if [[ -n "$DIFF" ]]; then
     # two memory reports? (F9) → the core differ answers "where did it grow"
-    if [[ -f "${1:-}" && -f "${2:-}" ]] && grep -q 'Container RSS' "$1" 2>/dev/null \
-            && [[ -x "$SCRIPTS_ROOT/core/jdebug-core" && -z "${JDEBUG_V1:-}" ]]; then
-        exec "$SCRIPTS_ROOT/core/jdebug-core" diff-memory "$1" "$2"
+    if [[ -f "${1:-}" && -f "${2:-}" ]] && grep -q 'Container RSS' "$1" 2>/dev/null && [[ -z "${JDEBUG_V1:-}" ]]; then
+        _core="$(resolve_core_binary "$SCRIPTS_ROOT" 2>/dev/null || true)"
+        [[ -n "$_core" ]] && exec "$_core" diff-memory "$1" "$2"
     fi
     # the heap-diff reader is the Go TUI binary — a make-tui build if present,
     # else the checksum-verified vendored binary. No Go toolchain required.
