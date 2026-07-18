@@ -173,6 +173,12 @@ esac
 # capture verb routes to the same binary; empty → the v1 bash tiers take over.
 CORE_BIN="$(resolve_core_binary "$D" 2>/dev/null || true)"
 
+# --via passes through to the core only when the user set it explicitly. An array
+# (not an unquoted command substitution) keeps it two args or none without the
+# word-splitting shellcheck rightly flags.
+VIA_FLAG=()
+[[ "$VIA_EXPLICIT" == 1 ]] && VIA_FLAG=(--via "$VIA")
+
 case "$cmd" in
     tui|menu|"")
         TUI_BIN="$(resolve_tui_binary "$D")" || exit 1
@@ -305,13 +311,13 @@ case "$cmd" in
     threads)
         if [[ -z "${JDEBUG_V1:-}" && -n "$CORE_BIN" ]]; then
             JDEBUG_KIT="$D" exec "$CORE_BIN" threads \
-                $( [[ "$VIA_EXPLICIT" == 1 ]] && printf -- '--via %s' "$VIA" ) ${ARGS[@]+"${ARGS[@]}"}
+                ${VIA_FLAG[@]+"${VIA_FLAG[@]}"} ${ARGS[@]+"${ARGS[@]}"}
         fi
         capture threads ;;
     heap)
         if [[ -z "${JDEBUG_V1:-}" && -n "$CORE_BIN" ]]; then
             JDEBUG_KIT="$D" exec "$CORE_BIN" heap \
-                $( [[ "$VIA_EXPLICIT" == 1 ]] && printf -- '--via %s' "$VIA" ) ${ARGS[@]+"${ARGS[@]}"}
+                ${VIA_FLAG[@]+"${VIA_FLAG[@]}"} ${ARGS[@]+"${ARGS[@]}"}
         fi
         capture heap ;;
 

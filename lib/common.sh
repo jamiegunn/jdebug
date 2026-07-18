@@ -321,6 +321,19 @@ resolve_tui_binary() {
         err "  → restore vendor/tui/ from git, or build fresh: make tui"
         return 1
     fi
+    # provenance (non-fatal): the binary is checksum-verified above; also flag when
+    # the sources beside it drifted from what was vendored, so a clone never runs a
+    # binary whose relationship to the visible source is silently unknown. Recipe is
+    # locale-pinned to match scripts/vendor-tui.sh and the pre-push/CI gate.
+    local bi="$root/vendor/tui/BUILDINFO" rec now gofiles
+    if [[ -f "$bi" ]]; then
+        rec="$(awk -F': ' '/^source_sha256/{print $2}' "$bi")"
+        gofiles="$(ls "$root"/tui/*.go 2>/dev/null | LC_ALL=C sort)"
+        # shellcheck disable=SC2086  # $gofiles is a newline list of .go paths (no spaces) — deliberate split
+        now="$(cat "$root/tui/go.mod" "$root/tui/go.sum" $gofiles 2>/dev/null | { command -v sha256sum >/dev/null 2>&1 && sha256sum || shasum -a 256; } | awk '{print $1}')"
+        [[ -n "$rec" && -n "$now" && "$rec" != "$now" ]] && \
+            err "note: vendored TUI does not match tui/ sources (provenance drift; re-vendor: make vendor-tui)"
+    fi
     printf '%s\n' "$f"
 }
 
@@ -344,6 +357,14 @@ resolve_core_binary() {
     elif command -v shasum >/dev/null 2>&1; then got="$(shasum -a 256 "$f" | awk '{print $1}')"
     else return 1; fi
     [[ -n "$want" && "$want" == "$got" ]] || return 1
+    # provenance (non-fatal): same source-drift note as the TUI resolver.
+    local bi="$root/tools/core/BUILDINFO" rec now
+    if [[ -f "$bi" ]]; then
+        rec="$(awk -F': ' '/^source_sha256/{print $2}' "$bi")"
+        now="$({ cat "$root/core/go.mod" "$root/core/go.sum" 2>/dev/null; find "$root/core" -name '*.go' -not -name '*_test.go' | LC_ALL=C sort | xargs cat; } | { command -v sha256sum >/dev/null 2>&1 && sha256sum || shasum -a 256; } | awk '{print $1}')"
+        [[ -n "$rec" && -n "$now" && "$rec" != "$now" ]] && \
+            err "note: vendored core does not match core/ sources (provenance drift; re-vendor: make vendor-core)" >&2
+    fi
     printf '%s\n' "$f"
 }
 

@@ -36,11 +36,23 @@ symlink install works from anywhere on PATH.)
 The interactive menu and wizard are the Go (Bubble Tea) frontend. `jdebug`
 uses a local dev build (`make tui`) when present, otherwise the **vendored,
 hash-verified** binary under `vendor/tui/` for your platform (darwin/linux ×
-arm64/amd64). The git hooks keep those binaries in lock-step with the sources:
-run `make hooks` once — every commit that touches `tui/` rebuilds and re-hashes
-them (`vendor/tui/SHA256SUMS`), and `git push` refuses stale or unverified
-binaries. `jdebug` verifies the checksum before executing a vendored binary.
-Every CLI command works without the TUI.
+arm64/amd64). Every CLI command works without the TUI.
+
+How the vendored binaries are kept honest, in three layers:
+
+- **At runtime**, `jdebug` verifies each vendored binary against
+  `vendor/tui/SHA256SUMS` before executing it — a tampered or corrupt binary is
+  refused — and warns if the sources beside it no longer match the provenance
+  recorded in `BUILDINFO`.
+- **On push** (opt-in: `make hooks`), the pre-commit hook re-vendors and
+  re-hashes whenever `tui/`/`core/` change, and the pre-push hook recomputes the
+  source fingerprint and refuses to push if it doesn't match `BUILDINFO`.
+- **In CI** (not skippable), a Linux `provenance` job re-runs that same check on
+  every push, so the guarantee holds on a userland that isn't the author's.
+
+The fingerprint recipe is locale-pinned (`LC_ALL=C`) so it yields the same hash
+on every platform, and the builds are deterministic (`-trimpath`, stripped), so
+anyone can rebuild `vendor/tui/` and reproduce the committed hashes byte-for-byte.
 
 ## Usage
 
