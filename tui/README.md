@@ -2,9 +2,10 @@
 
 The interactive menu for the jdebug kit, implemented with
 [Bubble Tea](https://github.com/charmbracelet/bubbletea) +
-[Lipgloss](https://github.com/charmbracelet/lipgloss). It has **feature
-parity with the classic bash menu** (`ui/tui.sh`): same keys, same screens,
-same readiness gating, same remembered target, same session log.
+[Lipgloss](https://github.com/charmbracelet/lipgloss). It is the sole
+interactive frontend — it grew out of, and replaced, the retired bash menu
+(`ui/tui.sh`): same keys, same screens, same readiness gating, same
+remembered target, same session log.
 
 ## Architecture: frontend only
 
@@ -24,8 +25,9 @@ Two consequences worth knowing:
   drops to the normal screen via `tea.ExecProcess` — its narrated
   step-by-step chain rides on that contract. Every run appends the same
   `$ cmd … ✓/✗` transcript block to `dumps/session-<ts>.log`.
-- It reads and writes the same `~/.config/jdebug/target`, so you can switch
-  between the frontends freely (`JDEBUG_CLASSIC=1` forces bash).
+- It reads and writes the same `~/.config/jdebug/target` the CLI uses, so the
+  TUI and `jdebug <verb>` always agree on which pod you're aimed at. (This Go
+  TUI is the only frontend now — the old bash menu has been retired.)
 
 The layout scales in three tiers (`layout.go`): compact (<104 cols), the
 classic menu + 38-col TARGET LIVE sidebar (104–139), and the full grid

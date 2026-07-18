@@ -4,3 +4,12 @@ tui/jdebug-tui
 
 # stray artifact from `go build ./...` (binary named after the dir)
 tui/tui
+
+# dev build of the v2 engine (make core) — routed to when present
+core/jdebug-core
+
+# integration suite scratch output (tests/integration writes here)
+.it-dumps/
+
+# scratch full-repo tarball snapshots parked under _to_delete/
+_to_delete/*.tar.gz

@@ -1,0 +1,64 @@
+name: vendor-tui
+
+# Authoritative, hook-independent rebuild of the committed TUI binaries.
+#
+# Whenever the TUI sources change on main, CI rebuilds vendor/tui/ from source
+# and commits the result back — so the prebuilt binaries in the repo can never
+# drift from the code, even for a contributor who never ran `make hooks`.
+# The local pre-commit hook still does this for people who have it; this job is
+# the backstop that does NOT depend on that.
+#
+# Loop-safety: the trigger only fires on tui/** changes. The bot's commit-back
+# touches ONLY vendor/tui/**, which is not under tui/**, so it can never
+# retrigger this workflow. (Belt-and-suspenders: GITHUB_TOKEN-authored pushes
+# don't retrigger workflows by default, and the commit carries [skip ci].)
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'tui/**'          # TUI sources only — never vendor/tui (see loop-safety)
+  workflow_dispatch: {}   # allow a manual "rebuild the vendored TUI now"
+
+permissions:
+  contents: write         # required to commit the rebuilt binaries back
+
+concurrency:
+  group: vendor-tui       # serialize — never two commit-backs racing to push
+  cancel-in-progress: false
+
+jobs:
+  vendor:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          # MUST match vendor/tui/BUILDINFO's go_version. Go cross-builds are
+          # byte-reproducible for a given toolchain (with -trimpath, which
+          # vendor-tui.sh uses), so a matching version = no spurious churn; a
+          # mismatch = one self-healing "correction" commit. Bump both together.
+          go-version: '1.26.4'
+          cache-dependency-path: tui/go.sum
+
+      - name: Rebuild + hash the vendored TUI
+        # Cross-compiles all platforms (darwin/linux × arm64/amd64), runs the
+        # TUI tests first, and no-ops when the sources already match BUILDINFO.
+        run: scripts/vendor-tui.sh
+
+      - name: Commit the rebuilt binaries back if they changed
+        run: |
+          if git diff --quiet -- vendor/tui; then
+            echo "vendor/tui already up to date — nothing to commit"
+            exit 0
+          fi
+          git config user.name  "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add vendor/tui
+          git commit -m "vendor: rebuild TUI binaries from source [skip ci]"
+          # A human push may have landed on main while we were building. Rebase
+          # our vendor-only commit onto it so the direct push applies cleanly
+          # instead of failing non-fast-forward; retry once if it still races.
+          git pull --rebase origin main
+          git push origin HEAD:main || { git pull --rebase origin main && git push origin HEAD:main; }

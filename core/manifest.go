@@ -62,6 +62,21 @@ func (s *Store) Session(pod string, ts time.Time) (*Session, error) {
 	return sess, nil
 }
 
+// SessionAt opens a session at an explicit directory (the $OUT_DIR
+// override) — same manifest, same owner-only permissions.
+func (s *Store) SessionAt(dir, pod string, ts time.Time) (*Session, error) {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return nil, err
+	}
+	sess := &Session{Dir: dir, pod: pod}
+	if _, err := os.Stat(sess.manifestPath()); os.IsNotExist(err) {
+		if err := sess.write(Manifest{Pod: pod, StartedAt: ts}); err != nil {
+			return nil, err
+		}
+	}
+	return sess, nil
+}
+
 func (s *Session) manifestPath() string { return filepath.Join(s.Dir, "manifest.json") }
 
 // Read returns the session's manifest.

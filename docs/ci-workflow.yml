@@ -1,0 +1,76 @@
+# jdebug CI — four layers, each proving what the previous one can't:
+#   suite      the black-box mock suite (control flow, UX copy, gates)
+#   core       the Go engine's unit tests (pipeline, validators, parsers)
+#   live-jvm   a REAL HotSpot JVM on the runner: authentic thread dumps,
+#              real hprofs, the vendored jattach speaking the actual attach
+#              protocol ("real JVM, fake transport")
+#   kind       a real cluster: real kubectl exec/cp transport, the jdk tier's
+#              ephemeral-container attach, crash-loop behavior ("real
+#              transport" — the layer nothing else can test)
+name: ci
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+  schedule:
+    - cron: "17 6 * * *" # nightly: the kind job's chaos cases belong here
+
+jobs:
+  suite:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.26.x" }
+      - name: build frontends (the suite tests them when present)
+        run: make core tui
+      - name: black-box suite (mock cluster) — Go path
+        run: tests/run-tests.sh
+      - name: black-box suite (mock cluster) — bash fallback path
+        run: |
+          mv core/jdebug-core /tmp/jdebug-core
+          JDEBUG_V1=1 tests/run-tests.sh
+          mv /tmp/jdebug-core core/jdebug-core
+
+  core:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.26.x" }
+      - run: cd core && go vet ./... && go test ./...
+      - run: cd tui && go vet ./... && go test ./...
+      - name: vendored TUI binaries match their sources (the pre-push proof, enforced in CI)
+        run: |
+          if [ -d vendor/tui ]; then
+            (cd vendor/tui && sha256sum -c SHA256SUMS)
+            src="$(cat tui/go.mod tui/go.sum $(ls tui/*.go | sort) | sha256sum | awk '{print $1}')"
+            rec="$(awk -F': ' '/^source_sha256/ {print $2}' vendor/tui/BUILDINFO)"
+            [ "$src" = "$rec" ] || { echo "vendor/tui is STALE vs tui/ sources"; exit 1; }
+          fi
+
+  live-jvm:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.26.x" }
+      - uses: actions/setup-java@v4
+        with: { distribution: temurin, java-version: "21" }
+      - name: live-JVM validation (real dumps, real attach protocol)
+        run: tests/live/run-live-tests.sh
+
+  kind:
+    runs-on: ubuntu-latest
+    # the full-transport layer is slower and needs image pulls — run it on
+    # main pushes and nightly, not on every PR iteration
+    if: github.event_name != 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with: { go-version: "1.26.x" }
+      - uses: helm/kind-action@v1
+        with: { cluster_name: jdebug-ci }
+      - name: integration against a real cluster
+        run: tests/integration/run-kind-tests.sh

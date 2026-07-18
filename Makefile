@@ -2,10 +2,13 @@
 # is the interactive frontend (a dev build via `make tui`, or the vendored,
 # hash-verified binaries under vendor/tui/ kept fresh by the git hooks).
 
-.PHONY: tui vendor-tui hooks test clean
+.PHONY: tui core vendor-tui hooks test clean
 
 tui:            ## build the Go TUI for THIS machine (jdebug prefers tui/jdebug-tui)
 	cd tui && go build -o jdebug-tui .
+
+core:           ## build the v2 capture engine (jdebug routes threads/heap/jcmd + analyze parsers to it)
+	cd core && go build -o jdebug-core ./cmd/jdebug-core
 
 vendor-tui:     ## (re)build + hash the committed multi-platform TUI binaries
 	scripts/vendor-tui.sh
@@ -18,4 +21,4 @@ test:           ## full suite: bash kit + Go frontend (Go parts need a toolchain
 	tests/run-tests.sh
 
 clean:
-	rm -f tui/jdebug-tui
+	rm -f tui/jdebug-tui core/jdebug-core

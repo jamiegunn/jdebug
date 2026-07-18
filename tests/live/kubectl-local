@@ -1,0 +1,67 @@
+#!/usr/bin/env bash
+# kubectl-local — the live-test shim: translates jdebug's kubectl calls into
+# LOCAL operations against a real JVM on this host (tests/fixture). The point
+# of the live suite is "real JVM, fake transport": the attach protocol, the
+# /proc discovery, the dump formats, and the validators are all genuine —
+# only the pod boundary is simulated.
+#
+#   exec POD -- CMD...   → run CMD locally (same host, same uid as the JVM)
+#   cp SRC POD:DST       → cp SRC DST     (and the reverse)
+#   get pods             → "local-jvm"
+#   get --raw=/version   → ok (cluster "reachable")
+#   debug                → unsupported (the jdk tier needs a real cluster)
+#
+# Flag stripping happens ONLY before the `--` separator — everything after
+# it is the in-pod command and passes through verbatim (`sh -c` included).
+
+set -uo pipefail
+
+head=() tail=() seen_sep=0
+for a in "$@"; do
+    if [[ $seen_sep -eq 1 ]]; then tail+=("$a"); continue; fi
+    if [[ "$a" == "--" ]]; then seen_sep=1; continue; fi
+    head+=("$a")
+done
+
+# strip -n <ns> / -c <container> pairs from the head only
+clean=() skip=0
+for a in "${head[@]}"; do
+    if [[ $skip -eq 1 ]]; then skip=0; continue; fi
+    case "$a" in
+        -n|-c) skip=1 ;;
+        *) clean+=("$a") ;;
+    esac
+done
+set -- "${clean[@]}"
+
+case "${1:-}" in
+    get)
+        case "$*" in
+            *--raw=/version*) echo '{"major":"1","minor":"99","note":"kubectl-local shim"}'; exit 0 ;;
+            *jsonpath*) echo "local-jvm"; exit 0 ;;
+            *"-o json"*) echo '{"spec":{"containers":[{"env":[]}]}}'; exit 0 ;;
+            *pods*) echo "local-jvm"; exit 0 ;;
+        esac
+        exit 0 ;;
+    describe)
+        echo "Name: local-jvm (kubectl-local shim — a real JVM on this host)"; exit 0 ;;
+    exec)
+        # head is now: exec POD; the command is the tail after `--`
+        [[ ${#tail[@]} -gt 0 ]] || exit 0
+        exec "${tail[@]}" ;;
+    cp)
+        src="$2"; dst="$3"
+        src="${src#*:}"           # strip pod: prefix wherever it is
+        dst="${dst#*:}"
+        exec cp "$src" "$dst" ;;
+    logs)
+        echo "(kubectl-local: no pod logs — this is a same-host JVM)"; exit 0 ;;
+    debug)
+        echo "kubectl-local: the jdk tier needs a real cluster (kind job covers it)" >&2; exit 1 ;;
+    auth)
+        echo yes; exit 0 ;;
+    config)
+        echo "kubectl-local"; exit 0 ;;
+    *)
+        exit 0 ;;
+esac

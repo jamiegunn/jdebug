@@ -53,6 +53,7 @@ announcing each fallback. Force one tier with `--via actuator|jattach|jdk`.
 | command | does |
 |---|---|
 | `jdebug doctor` | pre-incident checkup: host tools, captures dir, jattach cache, cluster, target pods, actuator — ✓/!/✗ with fixes, non-zero exit on blockers |
+| `jdebug fetch-heap [dir] [pod]` | retrieve the hprof the JVM wrote **on crash** (`-XX:+HeapDumpOnOutOfMemoryError`) — the only heap that exists for an OOMKilled pod; explains the setup when it finds nothing | read-only; size-verified copy; needs the v2 engine (`make core`) |
 | `jdebug dumps` | list every capture with per-type analysis instructions |
 | `jdebug analyze [path]` | first-pass triage of every capture: thread-state histogram (idle NIO/epoll selectors named, not mistaken for a busy loop), deadlocks, contended locks, real hot frames, DOWN health components, OOM-risk %, invalid dumps — with the right deep tool named per finding |
 | `jdebug analyze --deep <heap>` | heap dump **retained size** (dominator tree) + **path to GC roots** — which objects keep memory alive and why. No Eclipse MAT needed |

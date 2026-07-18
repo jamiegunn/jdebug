@@ -277,11 +277,68 @@ record_artifact() {
         "$owned" "${NAMESPACE:-}" "${POD:-}" "${APP_CONTAINER:-}" "$path" "$note" >> "$mf"
 }
 
+# resolve_tui_binary <kit-root> — the Go TUI carries the interactive frontend AND
+# the heap reader (histogram / retained-size / two-dump diff). EVERY entry point
+# that needs it (this CLI's menu/wizard, observe/analyze.sh) resolves through here
+# so they all get the SAME binary. Resolution:
+#   1. <root>/tui/jdebug-tui        a local `make tui` build (dev loop; the
+#                                   developer's own fresh output, not hash-gated)
+#   2. <root>/vendor/tui/…-<os>-<arch>  the binary VENDORED into the repo,
+#                                   verified against SHA256SUMS before use — a
+#                                   tampered/corrupt binary must not run
+# Neither present → explain, return 1. The whole CLI works without the TUI.
+resolve_tui_binary() {
+    local root="${1:-${JDEBUG_KIT:-}}"
+    if [[ -x "$root/tui/jdebug-tui" ]]; then
+        printf '%s\n' "$root/tui/jdebug-tui"; return 0
+    fi
+    local os arch f sums want got
+    case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) os="$(uname -s | tr '[:upper:]' '[:lower:]')" ;; esac
+    case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) arch="$(uname -m)" ;; esac
+    f="$root/vendor/tui/jdebug-tui-$os-$arch"
+    sums="$root/vendor/tui/SHA256SUMS"
+    if [[ ! -x "$f" ]]; then
+        err "the Go TUI (interactive menu + heap reader) is not available for $os/$arch."
+        err "  build it:  make tui        (needs Go; ~5s — then jdebug uses tui/jdebug-tui)"
+        err "  or commit once with the hooks installed (make hooks) — the pre-commit hook"
+        err "  vendors verified binaries into vendor/tui/ for darwin+linux, arm64+amd64."
+        err "  every CLI command works without the TUI: jdebug --help"
+        return 1
+    fi
+    if [[ ! -f "$sums" ]]; then
+        err "vendored TUI has no SHA256SUMS ($sums) — refusing to run an unverified binary."
+        err "  → re-commit with the hooks installed (make hooks), or build fresh: make tui"
+        return 1
+    fi
+    want="$(awk -v f="$(basename "$f")" '$2==f {print $1}' "$sums")"
+    if command -v sha256sum >/dev/null 2>&1; then got="$(sha256sum "$f" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then got="$(shasum -a 256 "$f" | awk '{print $1}')"
+    else got=""; fi
+    if [[ -z "$want" || -z "$got" || "$want" != "$got" ]]; then
+        err "vendored TUI FAILED its checksum — refusing to run it."
+        err "  expected  ${want:-<no entry in SHA256SUMS>}"
+        err "  got       ${got:-<could not hash>}  ($f)"
+        err "  → restore vendor/tui/ from git, or build fresh: make tui"
+        return 1
+    fi
+    printf '%s\n' "$f"
+}
+
 # check_cluster — is the kube context actually answering? If not, translate the
 # usual kubectl failure modes into plain language and a likely fix, instead of
 # letting every later kubectl call spew TLS stack traces and memcache spam.
 # (/version is readable by anyone, so this works with any RBAC.)
 check_cluster() {
+    # kubectl-missing is NOT cluster-unreachable: without kubectl there is no
+    # command to reach ANY cluster, and calling it below would surface a bare
+    # "kubectl: command not found" mislabelled as the cluster's own answer.
+    if ! command -v kubectl >/dev/null 2>&1; then
+        err "kubectl is not installed, or not on PATH — jdebug drives kubectl to reach the cluster."
+        err "  why: nothing here can talk to Kubernetes until kubectl exists on PATH."
+        err "  fix: install it (macOS: brew install kubectl · docs: https://kubernetes.io/docs/tasks/tools/)"
+        err "       then re-run.  (jdebug doctor checks your whole setup.)"
+        return 1
+    fi
     local out ctx
     out="$(kubectl get --raw=/version --request-timeout=4s 2>&1 >/dev/null)" && return 0
     ctx="$(kubectl config current-context 2>/dev/null || true)"

@@ -32,7 +32,7 @@ jobs:
       - name: shellcheck (bash scripts)
         run: |
           sudo apt-get update -q && sudo apt-get install -y -q shellcheck
-          shellcheck -S warning jdebug install.sh lib/common.sh capture/*.sh observe/*.sh ui/tui.sh
+          shellcheck -S warning jdebug install.sh lib/common.sh capture/*.sh observe/*.sh
       - name: shellcheck (POSIX sh)
         if: always()
         run: shellcheck -s sh -S warning jdebug-local

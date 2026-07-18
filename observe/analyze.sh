@@ -46,8 +46,14 @@ _pick_heaps() {
 }
 
 if [[ -n "$DIFF" ]]; then
-    tui_bin="$SCRIPTS_ROOT/tui/jdebug-tui"
-    [[ -x "$tui_bin" ]] || { err "the heap reader isn't built — run: make -C '$SCRIPTS_ROOT' tui"; exit 1; }
+    # two memory reports? (F9) → the core differ answers "where did it grow"
+    if [[ -f "${1:-}" && -f "${2:-}" ]] && grep -q 'Container RSS' "$1" 2>/dev/null \
+            && [[ -x "$SCRIPTS_ROOT/core/jdebug-core" && -z "${JDEBUG_V1:-}" ]]; then
+        exec "$SCRIPTS_ROOT/core/jdebug-core" diff-memory "$1" "$2"
+    fi
+    # the heap-diff reader is the Go TUI binary — a make-tui build if present,
+    # else the checksum-verified vendored binary. No Go toolchain required.
+    tui_bin="$(resolve_tui_binary "$SCRIPTS_ROOT")" || exit 1
     before="${1:-}"; after="${2:-}"
     if [[ -z "$before" || -z "$after" ]]; then
         _h="$(_pick_heaps)"
@@ -75,8 +81,25 @@ flag() { printf '    ⚠ %s\n' "$*"; FLAGS=$((FLAGS+1)); }
 hd()   { printf '\n■ %s\n' "$*"; ANALYZED=$((ANALYZED+1)); }
 
 analyze_threads() {
-    local f="$1" before=$FLAGS total run blk wai tim
+    local f="$1"
     hd "thread dump: $f"
+    # v2: the Go parser builds a real lock graph, so deadlocks are found on
+    # actuator-format dumps too (they carry no jstack banner — the grep
+    # below false-negatives on them). Falls back to greps if core is absent.
+    if [[ -z "${JDEBUG_V1:-}" && -x "$SCRIPTS_ROOT/core/jdebug-core" ]]; then
+        local out n
+        if out="$("$SCRIPTS_ROOT/core/jdebug-core" analyze-threads "$f" 2>/dev/null)" && [[ -n "$out" ]]; then
+            n="$(printf '%s\n' "$out" | sed -n 's/^__FLAGS__ //p')"
+            printf '%s\n' "$out" | grep -v '^__FLAGS__'
+            FLAGS=$((FLAGS + ${n:-0}))
+            return
+        fi
+    fi
+    analyze_threads_grep "$f"
+}
+
+analyze_threads_grep() {
+    local f="$1" before=$FLAGS total run blk wai tim
     total=$(grep -c '^"' "$f")
     run=$(grep -c 'Thread.State: RUNNABLE' "$f")
     blk=$(grep -c 'Thread.State: BLOCKED' "$f")
@@ -141,8 +164,8 @@ analyze_hprof() {
     say "valid hprof, $(du -h "$f" | cut -f1 | tr -d ' ')"
     # the Go TUI binary carries a fast class-histogram reader — the first-pass
     # "what's eating the heap?" without opening a desktop tool
-    local tui="$SCRIPTS_ROOT/tui/jdebug-tui"
-    if [[ -x "$tui" ]]; then
+    local tui
+    if tui="$(resolve_tui_binary "$SCRIPTS_ROOT" 2>/dev/null)"; then
         local hflags=(-analyze-heap "$f")
         [[ -n "$DEEP" ]] && hflags=(-deep -analyze-heap "$f") # add the retained-size pass
         "$tui" "${hflags[@]}" 2>/dev/null | sed 's/^/    /' \
@@ -152,6 +175,7 @@ analyze_hprof() {
             say "for GROWTH (leak hunting): take a 2nd dump under load, then jdebug analyze --diff"
         fi
     else
+        # no TUI binary AND no vendored fallback for this platform — point at the free desktop tools
         say "open: MAT → File → Open Heap Dump → run 'Leak Suspects'  (build the TUI for an inline histogram: make tui)"
         say "leak hunting: take a second dump after more load, then jdebug analyze --diff (or MAT 'compare to another heap dump')"
     fi
@@ -224,7 +248,7 @@ analyze_session() {
     printf '\n━━ %s: %s\n' "$kind" "$d"
     while IFS= read -r f; do
         analyze_file "$f" || true
-    done < <(find "$d" -maxdepth 1 -type f ! -name '.*' ! -name 'session-*.log' ! -name 'remote-artifacts.tsv' 2>/dev/null | sort)
+    done < <(find "$d" -maxdepth 1 -type f ! -name '.*' ! -name 'session-*.log' ! -name 'remote-artifacts.tsv' ! -name 'manifest.json' 2>/dev/null | sort)
 }
 
 analyze_file() {
@@ -260,7 +284,7 @@ fi
 # directly holds a real capture file), newest first by its timestamp name.
 # session-*.log (transcripts) and remote-artifacts.tsv are NOT captures.
 list_sessions() {
-    find "$1" -type f ! -name '.*' ! -name 'session-*.log' ! -name 'remote-artifacts.tsv' -exec dirname {} \; 2>/dev/null | sort -u |
+    find "$1" -type f ! -name '.*' ! -name 'session-*.log' ! -name 'remote-artifacts.tsv' ! -name 'manifest.json' -exec dirname {} \; 2>/dev/null | sort -u |
     while IFS= read -r d; do
         local ts; ts="$(basename "$d" | grep -oE '[0-9]{8}T[0-9]{6}Z' | tail -1)"
         printf '%s\t%s\n' "${ts:-00000000T000000Z}" "$d"
@@ -270,7 +294,7 @@ list_sessions() {
 if [[ -f "$TARGET" ]]; then
     analyze_file "$TARGET" || { err "don't know how to analyze: $TARGET"; exit 64; }
 elif [[ -d "$TARGET" ]]; then
-    if find "$TARGET" -maxdepth 1 -type f ! -name '.*' ! -name 'session-*.log' ! -name 'remote-artifacts.tsv' 2>/dev/null | grep -q .; then
+    if find "$TARGET" -maxdepth 1 -type f ! -name '.*' ! -name 'session-*.log' ! -name 'remote-artifacts.tsv' ! -name 'manifest.json' 2>/dev/null | grep -q .; then
         # the target IS a session dir (directly holds captures) → analyze it
         analyze_session "$TARGET"
     elif [[ -z "$EXPLICIT" ]]; then

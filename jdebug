@@ -36,6 +36,10 @@
 #                   → jdk (announcing each fallback); --via <tier> forces one.
 #     heap          heap dump — PAUSES THE JVM, needs --confirm; same tiers/auto.
 #     jcmd          any jcmd command via jattach: jcmd "GC.heap_info"
+#     fetch-heap    retrieve the hprof the JVM wrote ON CRASH (OOMKilled pods:
+#                   the only heap that exists is the one written on the way
+#                   down — needs -XX:+HeapDumpOnOutOfMemoryError; fetch-heap
+#                   explains the setup when it finds nothing). Read-only.
 #
 #   Actuator path defaults to http://localhost:8080/actuator (in the pod).
 #   Override with --actuator-base <url> or $ACTUATOR_BASE when it differs
@@ -138,63 +142,38 @@ capture() {
     return 1
 }
 
-# resolve_tui_binary — the interactive frontend is the Go TUI. Resolution:
-#   1. tui/jdebug-tui        a local `make tui` build (dev loop; not hash-gated —
-#                            it is the developer's own fresh output)
-#   2. vendor/tui/…-<os>-<arch>  the binary VENDORED into the repo by the
-#                            pre-commit hook, verified against SHA256SUMS before
-#                            exec — a tampered/corrupt binary must not run
-# Neither present → explain how to build; the whole CLI works without the TUI.
-resolve_tui_binary() {
-    if [[ -x "$D/tui/jdebug-tui" ]]; then
-        printf '%s\n' "$D/tui/jdebug-tui"; return 0
-    fi
-    local os arch f sums want got
-    case "$(uname -s)" in Darwin) os=darwin ;; Linux) os=linux ;; *) os="$(uname -s | tr '[:upper:]' '[:lower:]')" ;; esac
-    case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) arch="$(uname -m)" ;; esac
-    f="$D/vendor/tui/jdebug-tui-$os-$arch"
-    sums="$D/vendor/tui/SHA256SUMS"
-    if [[ ! -x "$f" ]]; then
-        err "the interactive menu needs the Go TUI and none is available for $os/$arch."
-        err "  build it:  make tui        (needs Go; ~5s — jdebug then uses tui/jdebug-tui)"
-        err "  or commit once with the hooks installed (make hooks) — the pre-commit hook"
-        err "  vendors verified binaries into vendor/tui/ for darwin+linux, arm64+amd64."
-        err "  every CLI command works without the TUI: jdebug --help"
-        return 1
-    fi
-    if [[ ! -f "$sums" ]]; then
-        err "vendored TUI has no SHA256SUMS ($sums) — refusing to run an unverified binary."
-        err "  → re-commit with the hooks installed (make hooks), or build fresh: make tui"
-        return 1
-    fi
-    want="$(awk -v f="$(basename "$f")" '$2==f {print $1}' "$sums")"
-    if command -v sha256sum >/dev/null 2>&1; then got="$(sha256sum "$f" | awk '{print $1}')"
-    elif command -v shasum >/dev/null 2>&1; then got="$(shasum -a 256 "$f" | awk '{print $1}')"
-    else got=""; fi
-    if [[ -z "$want" || -z "$got" || "$want" != "$got" ]]; then
-        err "vendored TUI FAILED its checksum — refusing to run it."
-        err "  expected  ${want:-<no entry in SHA256SUMS>}"
-        err "  got       ${got:-<could not hash>}  ($f)"
-        err "  → restore vendor/tui/ from git, or build fresh: make tui"
-        return 1
-    fi
-    printf '%s\n' "$f"
-}
+# resolve_tui_binary lives in lib/common.sh so every entry point — this CLI AND
+# observe/analyze.sh — resolves the SAME checksum-verified binary. Call it with
+# the kit root: resolve_tui_binary "$D".
+
+# Interactive frontends (menu, wizard) need a real terminal. On a pipe/redirect
+# — CI, cron, `expect`, `jdebug wizard </dev/null` smoke tests — the TUI would
+# spray escape sequences into the stream and then block on input forever. Fail
+# loud with a next step instead of hanging.
+case "$cmd" in
+    tui|menu|""|wizard|guide)
+        if [[ ! -t 0 ]]; then
+            err "interactive mode needs a terminal, but stdin is not a TTY (pipe/redirect/CI)."
+            err "  for scripts, call a specific verb:  jdebug doctor | status | threads | analyze"
+            err "  (jdebug --help lists them all)"
+            exit 64
+        fi ;;
+esac
 
 # Preflight: every cluster-touching command checks connectivity first and
 # explains failures in plain language (check_cluster, lib/common.sh) rather
 # than surfacing raw kubectl TLS/connection noise mid-command.
 case "$cmd" in
-    status|health|top|metrics|threads|heap|jcmd|memory|snapshot|logs|log-level|install-jattach|push-local)
+    status|health|top|metrics|threads|heap|jcmd|memory|snapshot|logs|log-level|install-jattach|push-local|fetch-heap)
         check_cluster || exit 3 ;;
 esac
 
 case "$cmd" in
     tui|menu|"")
-        TUI_BIN="$(resolve_tui_binary)" || exit 1
+        TUI_BIN="$(resolve_tui_binary "$D")" || exit 1
         JDEBUG_KIT="$D" exec "$TUI_BIN" ;;
     wizard|guide)
-        TUI_BIN="$(resolve_tui_binary)" || exit 1
+        TUI_BIN="$(resolve_tui_binary "$D")" || exit 1
         JDEBUG_KIT="$D" exec "$TUI_BIN" -start wizard ;;
 
     status)
@@ -315,10 +294,34 @@ case "$cmd" in
         fi
         ;;
 
-    threads)  capture threads ;;
-    heap)     capture heap ;;
+    # Capture verbs: the Go core (core/jdebug-core, `make core`) is the v2
+    # engine — typed destructive-target gate, unskippable validation, manifest
+    # provenance. It takes over when built; JDEBUG_V1=1 forces the bash tiers.
+    threads)
+        if [[ -z "${JDEBUG_V1:-}" && -x "$D/core/jdebug-core" ]]; then
+            JDEBUG_KIT="$D" exec "$D/core/jdebug-core" threads \
+                $( [[ "$VIA_EXPLICIT" == 1 ]] && printf -- '--via %s' "$VIA" ) ${ARGS[@]+"${ARGS[@]}"}
+        fi
+        capture threads ;;
+    heap)
+        if [[ -z "${JDEBUG_V1:-}" && -x "$D/core/jdebug-core" ]]; then
+            JDEBUG_KIT="$D" exec "$D/core/jdebug-core" heap \
+                $( [[ "$VIA_EXPLICIT" == 1 ]] && printf -- '--via %s' "$VIA" ) ${ARGS[@]+"${ARGS[@]}"}
+        fi
+        capture heap ;;
 
-    jcmd)            fwd "$D/capture/jattach.sh" jcmd ;;
+    fetch-heap)
+        # F7: retrieve the hprof the JVM wrote on OOM (needs the core: make core)
+        if [[ -x "$D/core/jdebug-core" ]]; then
+            JDEBUG_KIT="$D" exec "$D/core/jdebug-core" fetch-heap ${ARGS[@]+"${ARGS[@]}"}
+        fi
+        err "fetch-heap needs the v2 engine — build it once: make core (needs Go)"
+        exit 1 ;;
+    jcmd)
+        if [[ -z "${JDEBUG_V1:-}" && -x "$D/core/jdebug-core" ]]; then
+            JDEBUG_KIT="$D" exec "$D/core/jdebug-core" jcmd ${ARGS[@]+"${ARGS[@]}"}
+        fi
+        fwd "$D/capture/jattach.sh" jcmd ;;
     why)             fwd "$D/observe/why.sh" ;;
     security)        fwd "$D/observe/security.sh" ;;
     topology)        fwd "$D/observe/topology.sh" ;;
@@ -335,7 +338,11 @@ case "$cmd" in
     restart)         fwd "$D/observe/lifecycle.sh" restart ;;
     kill)            fwd "$D/observe/lifecycle.sh" kill ;;
     memory)          fwd "$D/observe/memory-report.sh" ;;
-    snapshot)        fwd "$D/observe/snapshot.sh" ;;
+    snapshot)
+        if [[ -z "${JDEBUG_V1:-}" && -x "$D/core/jdebug-core" ]]; then
+            JDEBUG_KIT="$D" exec "$D/core/jdebug-core" snapshot ${ARGS[@]+"${ARGS[@]}"}
+        fi
+        fwd "$D/observe/snapshot.sh" ;;
 
     analyze)         "$D/observe/analyze.sh" ${ARGS[@]+"${ARGS[@]}"} ;;
 
@@ -354,9 +361,9 @@ case "$cmd" in
                 while IFS= read -r ts; do
                     [[ -z "$ts" ]] && continue
                     kind="session"; [[ -f "$ts/.snapshot" ]] && kind="snapshot bundle"
-                    nfiles=$(find "$ts" -type f ! -name '.*' 2>/dev/null | wc -l | tr -d ' ')
+                    nfiles=$(find "$ts" -type f ! -name '.*' ! -name manifest.json 2>/dev/null | wc -l | tr -d ' ')
                     printf '    %s/   (%s, %s file(s))\n' "$(basename "$ts")" "$kind" "$nfiles"
-                    find "$ts" -type f ! -name '.*' 2>/dev/null | sort | while IFS= read -r f; do
+                    find "$ts" -type f ! -name '.*' ! -name manifest.json 2>/dev/null | sort | while IFS= read -r f; do
                         printf '      %6s  %s\n' "$(du -h "$f" 2>/dev/null | cut -f1 | tr -d ' ')" "$(basename "$f")"
                     done
                 done < <(find "$pod" -mindepth 1 -maxdepth 1 -type d 2>/dev/null | sort -r)

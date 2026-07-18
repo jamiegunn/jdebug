@@ -218,7 +218,8 @@ if oom_seen:
     if "HeapDumpOnOutOfMemoryError" not in env_blob:
         warn("this container has been OOM-killed and -XX:+HeapDumpOnOutOfMemoryError is not in its env — "
              "the NEXT OOM will leave no heap dump behind either. Add it (plus "
-             "-XX:HeapDumpPath=<mounted volume>) via JAVA_TOOL_OPTIONS so the crash captures itself. "
+             "-XX:HeapDumpPath=<mounted volume>) via JAVA_TOOL_OPTIONS so the crash captures itself; "
+             "then 'jdebug fetch-heap' retrieves it. "
              "(Flags baked into the image aren't visible here — verify live: jdebug jcmd VM.flags)")
 print()
 

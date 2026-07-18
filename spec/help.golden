@@ -35,6 +35,10 @@ straight into a guided, symptom-driven capture flow.
                   → jdk (announcing each fallback); --via <tier> forces one.
     heap          heap dump — PAUSES THE JVM, needs --confirm; same tiers/auto.
     jcmd          any jcmd command via jattach: jcmd "GC.heap_info"
+    fetch-heap    retrieve the hprof the JVM wrote ON CRASH (OOMKilled pods:
+                  the only heap that exists is the one written on the way
+                  down — needs -XX:+HeapDumpOnOutOfMemoryError; fetch-heap
+                  explains the setup when it finds nothing). Read-only.
 
   Actuator path defaults to http://localhost:8080/actuator (in the pod).
   Override with --actuator-base <url> or $ACTUATOR_BASE when it differs

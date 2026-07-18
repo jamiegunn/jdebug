@@ -27,13 +27,14 @@ type Meta struct {
 	Command string // the operator-visible command this ran (the show_cmd line)
 }
 
-// Acquirer fetches one artifact's bytes for a resolved target.
+// Acquirer fetches one artifact for a resolved target.
 type Acquirer interface {
 	Meta() Meta
-	// Acquire writes the artifact to w. Size is the expected byte count
-	// when the source knows it (in-pod file size before kubectl cp);
-	// return 0 when unknowable.
-	Acquire(ctx context.Context, c Cluster, t Resolved, w io.Writer) (size int64, err error)
+	// Acquire produces the artifact at destPath (the pipeline pre-creates
+	// it owner-only; kubectl-cp-style acquirers may overwrite it in place).
+	// Size is the expected byte count when the source knows it (in-pod file
+	// size before kubectl cp); return 0 when unknowable.
+	Acquire(ctx context.Context, c Cluster, t Resolved, destPath string) (size int64, err error)
 }
 
 // Verdict is a validator's judgment of a captured file.
@@ -50,6 +51,9 @@ type Validator func(path string, expected int64) Verdict
 type Pipeline struct {
 	Cluster Cluster
 	Store   *Store
+	// OutDir overrides the session directory for this run ($OUT_DIR in v1) —
+	// captures land exactly there instead of <root>/pods/<pod>/<ts>/.
+	OutDir string
 }
 
 // Run executes a non-destructive capture. Destructive captures (anything
@@ -69,24 +73,28 @@ func (p Pipeline) run(ctx context.Context, acq Acquirer, t Resolved, validate Va
 	if validate == nil {
 		return Artifact{}, fmt.Errorf("pipeline: nil validator for %s — every capture must be validated", acq.Meta().Name)
 	}
-	sess, err := p.Store.Session(t.Pod, time.Now().UTC())
+	var sess *Session
+	var err error
+	if p.OutDir != "" {
+		sess, err = p.Store.SessionAt(p.OutDir, t.Pod, time.Now().UTC())
+	} else {
+		sess, err = p.Store.Session(t.Pod, time.Now().UTC())
+	}
 	if err != nil {
 		return Artifact{}, err
 	}
 	m := acq.Meta()
 	path := filepath.Join(sess.Dir, m.Name)
+	// pre-create owner-only: heap dumps can hold real production data
 	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 	if err != nil {
 		return Artifact{}, err
 	}
-	expected, aerr := acq.Acquire(ctx, p.Cluster, t, f)
-	cerr := f.Close()
+	_ = f.Close()
+	expected, aerr := acq.Acquire(ctx, p.Cluster, t, path)
 	if aerr != nil {
 		_ = os.Remove(path) // an acquire failure leaves nothing half-written behind
 		return Artifact{}, fmt.Errorf("capture %s (tier %s): %w", m.Name, m.Tier, aerr)
-	}
-	if cerr != nil {
-		return Artifact{}, cerr
 	}
 
 	v := validate(path, expected)
