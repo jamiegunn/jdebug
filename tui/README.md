@@ -21,9 +21,9 @@ Two consequences worth knowing:
   live into the bottom pane, replacing the log tail while it's held — the
   menu stays interactive, `esc` stops/dismisses, ↑↓ scrolls, the title
   carries the ✓/✗ verdict (`output.go`). Terminals too small for the strip
-  get the same stream in a full-screen view. Only the **wizard** still
-  drops to the normal screen via `tea.ExecProcess` — its narrated
-  step-by-step chain rides on that contract. Every run appends the same
+  get the same stream in a full-screen view. The **wizard** streams its
+  narrated steps through the same pane (`wizard.go` → `startPane`) — nothing
+  drops to a raw terminal takeover anymore. Every run appends the same
   `$ cmd … ✓/✗` transcript block to `dumps/session-<ts>.log`.
 - It reads and writes the same `~/.config/jdebug/target` the CLI uses, so the
   TUI and `jdebug <verb>` always agree on which pod you're aimed at. (This Go
@@ -89,8 +89,8 @@ and non-tty output strip styling entirely.
 
 ## Conventions
 
-- Keys are case-sensitive and mirror the bash menu exactly: `H` (heap) and
-  `M` (mode) are deliberately shifted; `g` opens the target editor.
+- Keys are case-sensitive: `H` (heap) and `M` (mode) are deliberately
+  shifted; `g` opens the target editor.
 - Disruptive actions confirm by pressing the **same key again**.
 - Model methods use value receivers and return the mutated copy — standard
   Elm-architecture style; the only escape hatch is `confirmThen/Else`

@@ -73,6 +73,15 @@ MOCK_KUBECTL=noctx run_case ./jdebug threads
 assert_rc  "no context: exits 3" 3
 assert_has "no context: explains" "no context selected"
 
+# expired token (EKS/GKE SSO) is NOT "unreachable" — it needs re-auth, and
+# "switch context" is the WRONG fix. The most common junior failure mode.
+MOCK_KUBECTL=unauthorized run_case ./jdebug status
+assert_rc  "expired creds: exits 3" 3
+assert_has "expired creds: says rejected, not unreachable" "REJECTED your credentials"
+assert_has "expired creds: names the fix" "re-authenticate"
+assert_has "expired creds: warns off the wrong fix" "switching contexts will NOT fix"
+assert_not "expired creds: no 'can't reach' misdiagnosis" "can't reach the Kubernetes cluster"
+
 run_case ./jdebug dumps
 assert_rc  "dumps needs no cluster (no preflight)" 0
 
@@ -83,7 +92,21 @@ assert_rc  "healthy setup exits 0" 0
 assert_has "checks kubectl" "kubectl on PATH"
 assert_has "checks the cluster answers" "answers"
 assert_has "checks pods match" "pod(s) match"
-assert_has "checks actuator tier" "tier 1 ready"
+assert_has "checks the container exists" "container 'app' exists"
+assert_has "checks the CAPTURE endpoint, not just /health" "tier 1 (actuator) ready"
+
+# /health up but /threaddump 404 — stock Spring Boot's default. Doctor must NOT
+# certify tier 1; it must name the exposure property (the #1 real-world miss).
+MOCK_ACTUATOR=absent MOCK_EXEC_OUT='{"status":"UP"}' run_case ./jdebug doctor
+assert_not "unexposed endpoint: no tier-1 blessing" "tier 1 (actuator) ready"
+assert_has "unexposed endpoint: names the fix" "management.endpoints.web.exposure.include"
+
+# wrong container name (the 'app' default on a real cluster) must be its own
+# finding — not disguised as an actuator failure.
+JDEBUG_CONTAINER=web run_case ./jdebug doctor
+assert_rc  "wrong container: doctor fails loudly" 1
+assert_has "wrong container: names the real containers" "no container named 'web'"
+assert_has "wrong container: gives the fix" "--container"
 
 MOCK_KUBECTL=x509 run_case ./jdebug doctor
 assert_rc  "unreachable cluster exits 1" 1
@@ -451,6 +474,27 @@ MOCK_RBAC=forbidden run_case ./jdebug restart pod-a --confirm
 assert_rc  "restart under RBAC denial exits 1" 1
 assert_has "restart RBAC denial explained, not masked" "your RBAC doesn't allow"
 
+# DESTRUCTIVE verbs must never guess a replica: several matching pods and no
+# explicit name → refuse (same contract as heap), and kubectl delete must NOT
+# run. MOCK_LOG records every kubectl call so we can assert the absence.
+KILL_LOG="$TMP/kill-calls.log"; : > "$KILL_LOG"
+MOCK_PODS=multi MOCK_LOG="$KILL_LOG" run_case ./jdebug kill --confirm
+assert_rc  "kill --confirm with ambiguous match REFUSES (exit 2)" 2
+assert_has "kill refusal says why" "refusing to guess which replica"
+assert_has "kill refusal names the harm" "DELETES a pod"
+assert_has "kill refusal lists the candidates" "pod-b"
+if grep -q "delete pod" "$KILL_LOG"; then
+    bad "kill refusal really deleted nothing" "kubectl delete WAS invoked: $(grep 'delete pod' "$KILL_LOG" | head -1)"
+else
+    ok  "kill refusal really deleted nothing (no kubectl delete in call log)"
+fi
+MOCK_PODS=multi run_case ./jdebug restart --confirm
+assert_rc  "restart --confirm with ambiguous match REFUSES (exit 2)" 2
+assert_has "restart refusal says why" "refusing to guess"
+# an explicit pod name still works with multiple matches
+MOCK_PODS=multi run_case ./jdebug kill pod-b --confirm
+assert_has "kill with explicit pod proceeds" "deleted"
+
 # --- destructive-action gates ---------------------------------------------------
 section "confirm gates (heap pauses the JVM)"
 run_case ./capture/actuator.sh heap
@@ -598,7 +642,127 @@ assert_has "tampered target file falls back to defaults" "kubectl -n default"
 [[ -f "$TMP/pwned" ]] && bad "tampered target file must never execute" "command substitution ran" \
     || ok "tampered target file never executes"
 
+# bypass attempts that START with a valid assignment must also be caught:
+# "VAR=x; cmd" (command after separator) and "VAR=x cmd" (assignment-prefix
+# execution) both defeated the old prefix-only gate.
+printf 'SAVED_NAMESPACE=prod; touch %s/pwned2\n' "$TMP" > "$TMP/config/target"
+run_case ./jdebug status
+assert_has "tamper via ';' is ignored with a warning" "ignoring"
+[[ -f "$TMP/pwned2" ]] && bad "tamper via ';' must never execute" "separator command ran" \
+    || ok "tamper via ';' never executes"
+
+printf 'SAVED_NAMESPACE=prod touch %s/pwned3\n' "$TMP" > "$TMP/config/target"
+run_case ./jdebug status
+assert_has "tamper via assignment-prefix is ignored" "ignoring"
+[[ -f "$TMP/pwned3" ]] && bad "tamper via assignment-prefix must never execute" "prefix command ran" \
+    || ok "tamper via assignment-prefix never executes"
+
 rm -f "$TMP/config/target"
+
+# --- misdiagnosis regressions: the errors a junior actually hits --------------------
+section "misdiagnosis regressions"
+
+# wrong container name (default 'app' on a real cluster) must be named as such —
+# not disguised as "actuator fetch failed / secured? wrong port?" — in BOTH engines.
+JDEBUG_V1=1 MOCK_EXEC=wrongcontainer run_case ./jdebug threads --via actuator
+assert_rc  "wrong container (v1): capture fails" 1
+assert_has "wrong container (v1): names the real cause" "no container named"
+assert_has "wrong container (v1): gives the fix" "--container"
+assert_not "wrong container (v1): not blamed on the actuator" "actuator fetch failed"
+if [[ -x core/jdebug-core ]]; then
+    MOCK_EXEC=wrongcontainer run_case ./jdebug threads --via actuator
+    assert_rc  "wrong container (core): capture fails" 1
+    assert_has "wrong container (core): names the real cause" "no container named"
+    assert_has "wrong container (core): gives the fix" "--container"
+fi
+
+# distroless image (no sh) must not read as "pod gone — re-pick it" — in BOTH engines.
+JDEBUG_V1=1 MOCK_EXEC=noshell run_case ./jdebug threads --via actuator
+assert_rc  "no shell (v1): capture fails" 1
+assert_has "no shell (v1): names the real cause" "NO SHELL"
+assert_has "no shell (v1): points at the tier that works" "--via jdk"
+assert_not "no shell (v1): no pod-replaced misdiagnosis" "REPLACED under a new name"
+if [[ -x core/jdebug-core ]]; then
+    MOCK_EXEC=noshell run_case ./jdebug threads --via actuator
+    assert_rc  "no shell (core): capture fails" 1
+    assert_has "no shell (core): names the real cause" "NO SHELL"
+    assert_has "no shell (core): points at the tier that works" "--via jdk"
+fi
+
+# events RBAC restricted: `status` must still print its decision guidance
+MOCK_EVENTS=forbidden run_case ./jdebug status
+assert_rc  "status survives events RBAC denial" 0
+assert_has "status explains the missing events" "events not readable here"
+assert_has "status still prints its reading guide" "how to read this"
+assert_has "status still prints the bottom line" "Bottom line:"
+
+# the v1 bash cascade must actually cascade (it was dead under inherited set -e):
+# tier 1 secured → announce jattach fallback → announce jdk fallback → honest failure
+JDEBUG_V1=1 MOCK_ACTUATOR=secured run_case ./jdebug threads
+assert_rc  "v1 cascade: still fails overall (mock has no real JVM)" 1
+assert_has "v1 cascade: announces the jattach fallback" "auto-falling back to jattach"
+assert_has "v1 cascade: announces the jdk fallback" "falling back to an ephemeral JDK container"
+assert_has "v1 cascade: honest summary" "all capture tiers failed"
+
+# the core-binary checksum gate must FAIL CLOSED: a present-but-tampered vendored
+# binary returns 2 (loud), a missing one returns 1 (quiet fallback).
+GATE="$TMP/coregate"; mkdir -p "$GATE/tools/core"
+_os="$(uname -s | tr '[:upper:]' '[:lower:]')"; _arch="$(uname -m)"
+case "$_arch" in x86_64) _arch=amd64 ;; aarch64) _arch=arm64 ;; esac
+printf '#!/bin/sh\nexit 0\n' > "$GATE/tools/core/jdebug-core-$_os-$_arch"
+chmod +x "$GATE/tools/core/jdebug-core-$_os-$_arch"
+printf '%s  jdebug-core-%s-%s\n' "0000000000000000000000000000000000000000000000000000000000000000" "$_os" "$_arch" > "$GATE/tools/core/SHA256SUMS"
+run_case bash -c "source lib/common.sh; resolve_core_binary '$GATE'"
+assert_rc  "tampered vendored core: resolver returns 2" 2
+assert_has "tampered vendored core: loud refusal" "FAILED its checksum"
+rm -f "$GATE/tools/core/SHA256SUMS"
+run_case bash -c "source lib/common.sh; resolve_core_binary '$GATE'"
+assert_rc  "unverifiable vendored core (no SHA256SUMS): returns 2" 2
+rm -rf "$GATE/tools/core"; mkdir -p "$GATE/tools/core"
+run_case bash -c "source lib/common.sh; rc=0; resolve_core_binary '$GATE' || rc=\$?; echo \"rc=\$rc\""
+assert_has "absent core: quiet fallback (rc=1, no error text)" "rc=1"
+assert_not "absent core: stays quiet" "FAILED"
+
+# --- end-to-end capture: a SUCCESSFUL capture writes real, findable bytes -----------
+# (the review's root-cause finding: 293 assertions and not one proved a capture
+# actually wrote a file — which is how wrong-path and dead-validator bugs shipped)
+section "end-to-end capture"
+E2E_DUMP='Full thread dump OpenJDK 64-Bit Server VM (21.0.2+13 mixed mode):
+"main" #1 prio=5 os_prio=0 tid=0x1 nid=0x1 runnable
+   java.lang.Thread.State: RUNNABLE'
+
+e2e_check() { # <label-prefix> — $OUT/$RC already hold the run
+    assert_rc  "$1: exits 0" 0
+    assert_has "$1: reports the written file" "wrote "
+    local p
+    p="$(printf '%s\n' "$OUT" | sed -n 's/.*wrote \([^ ]*\) .*/\1/p' | head -1)"
+    if [[ -n "$p" && -f "$p" ]] && grep -q "Full thread dump" "$p"; then
+        ok "$1: the PRINTED path exists and holds the dump"
+    else
+        bad "$1: the PRINTED path exists and holds the dump" "path='$p'"
+    fi
+}
+
+E2E_LOG="$TMP/e2e-calls.log"; : > "$E2E_LOG"
+MOCK_LOG="$E2E_LOG" MOCK_EXEC_OUT="$E2E_DUMP" run_case ./jdebug threads
+e2e_check "capture (default engine)"
+if grep -q " exec " "$E2E_LOG"; then
+    ok "capture (default engine): kubectl exec really ran (call log)"
+else
+    bad "capture (default engine): kubectl exec really ran (call log)" "no exec in $E2E_LOG"
+fi
+if [[ -x core/jdebug-core ]]; then
+    E2E_PATH="$(printf '%s\n' "$OUT" | sed -n 's/.*wrote \([^ ]*\) .*/\1/p' | head -1)"
+    if [[ -n "$E2E_PATH" && -f "$(dirname "$E2E_PATH")/manifest.json" ]] \
+        && grep -q '"sha256"' "$(dirname "$E2E_PATH")/manifest.json"; then
+        ok "capture (core): manifest with sha256 sits beside the artifact"
+    else
+        bad "capture (core): manifest with sha256 sits beside the artifact" "none beside '$E2E_PATH'"
+    fi
+fi
+
+JDEBUG_V1=1 MOCK_EXEC_OUT="$E2E_DUMP" run_case ./jdebug threads
+e2e_check "capture (v1 bash engine)"
 
 # --- Go TUI frontend (runs when a Go toolchain is present) ---------------------------
 if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then

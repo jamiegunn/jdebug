@@ -32,7 +32,13 @@ ERRF="$(mktemp)"; trap 'rm -f "$ERRF"' EXIT
 
 case "$ACTION" in
     restart)
+        # Destructive: with several matching pods and no explicit name, REFUSE
+        # to guess (same contract as heap). Guessing which deployment to
+        # re-roll mid-incident is how the wrong workload gets cycled.
+        JDEBUG_DESTRUCTIVE=1 JDEBUG_DESTRUCTIVE_WHY="RE-ROLLS the owning deployment"
+        export JDEBUG_DESTRUCTIVE JDEBUG_DESTRUCTIVE_WHY
         POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
+        unset JDEBUG_DESTRUCTIVE JDEBUG_DESTRUCTIVE_WHY
         require_cmd python3
         # is the pod even readable? separate an RBAC/not-found failure (explain
         # it) from a pod that's readable but simply not Deployment-owned.
@@ -83,7 +89,13 @@ case "$ACTION" in
         ;;
 
     kill)
+        # Destructive: with several matching pods and no explicit name, REFUSE
+        # to guess (same contract as heap). Deleting a guessed replica can take
+        # out the healthy pod — or destroy the sick one's evidence.
+        JDEBUG_DESTRUCTIVE=1 JDEBUG_DESTRUCTIVE_WHY="DELETES a pod"
+        export JDEBUG_DESTRUCTIVE JDEBUG_DESTRUCTIVE_WHY
         POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
+        unset JDEBUG_DESTRUCTIVE JDEBUG_DESTRUCTIVE_WHY
         # is it managed? then a replacement comes back automatically
         MANAGED=""
         if command -v python3 >/dev/null 2>&1; then

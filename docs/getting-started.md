@@ -76,9 +76,10 @@ a second `H`.
 ## 5. Or just describe the symptom
 
 Press `w`. The wizard asks what you're seeing — OOMKilled, slow/hung,
-high CPU, memory creeping, GC pauses, or "not sure" — then runs the right
-capture sequence, explains each result as it lands, and names the analysis
-tool to open next. Anything that could hurt the app asks first.
+high CPU, memory creeping (leak), GC pauses, crash-looping, "a deploy just
+happened", or "not sure" — then runs the right capture sequence, explains
+each result as it lands, and names the analysis tool to open next. Anything
+that could hurt the app asks first.
 
 ## 6. Find your evidence
 

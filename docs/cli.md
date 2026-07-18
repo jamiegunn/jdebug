@@ -5,9 +5,11 @@ nav_order: 4
 
 # Command reference
 
-Every command takes `-n/--namespace`, `-l/--selector`, `--container <name>`,
-`--actuator-base <url>`, `-h/--help`, and (where a single pod matters) an
-optional trailing pod name. `jdebug -V` prints the version.
+Every cluster-facing command takes `-n/--namespace`, `-l/--selector`,
+`--container <name>`, `--actuator-base <url>`, `-h/--help`, and (where a
+single pod matters) an optional trailing pod name. `jdebug -V` prints the
+version. Exception: `jdebug analyze` operates on local capture files, so it
+takes a path (plus `--deep`/`--diff`/`--help`), not `-n`/`-l`.
 
 ## Triage — safe, read-only
 
@@ -32,7 +34,7 @@ optional trailing pod name. `jdebug -V` prints the version.
 
 | command | does | risk |
 |---|---|---|
-| `jdebug threads [--via t]` | thread dump | safe, instant |
+| `jdebug threads [--via t] [--json]` | thread dump (`--json`: Spring's structured actuator format) | safe, instant |
 | `jdebug heap --confirm [--via t]` | heap dump (hprof) | **pauses the JVM** — seconds on small heaps, minutes on multi-GB |
 | `jdebug jcmd "<cmd>"` | any jcmd via jattach (`GC.heap_info`, `VM.native_memory summary`, `JFR.start …`) | mostly safe; individual jcmds vary |
 | `jdebug snapshot [--heap --confirm]` | one offline bundle: describe + **why** + **security** + health + threads + memory + jcmd set (+ optional hprof) | safe unless `--heap` |
@@ -52,12 +54,12 @@ announcing each fallback. Force one tier with `--via actuator|jattach|jdk`.
 
 | command | does |
 |---|---|
-| `jdebug doctor` | pre-incident checkup: host tools, captures dir, jattach cache, cluster, target pods, actuator — ✓/!/✗ with fixes, non-zero exit on blockers |
+| `jdebug doctor` | pre-incident checkup: host tools, captures dir, vendored binaries (jattach / core engine / TUI), cluster, target pods, container name, actuator **capture endpoint** (`/threaddump`, not just `/health` — catches unexposed endpoints) — ✓/!/✗ with fixes, non-zero exit on blockers |
 | `jdebug fetch-heap [dir] [pod]` | retrieve the hprof the JVM wrote **on crash** (`-XX:+HeapDumpOnOutOfMemoryError`) — the only heap that exists for an OOMKilled pod; explains the setup when it finds nothing | read-only; size-verified copy; needs the v2 engine (`make core`) |
 | `jdebug dumps` | list every capture with per-type analysis instructions |
 | `jdebug analyze [path]` | first-pass triage of every capture: thread-state histogram (idle NIO/epoll selectors named, not mistaken for a busy loop), deadlocks, contended locks, real hot frames, DOWN health components, OOM-risk %, invalid dumps — with the right deep tool named per finding |
-| `jdebug analyze --deep <heap>` | heap dump **retained size** (dominator tree) + **path to GC roots** — which objects keep memory alive and why. No Eclipse MAT needed |
-| `jdebug analyze --diff [before after]` | diff two heap dumps to see what **grew** (leak hunting); with no args it auto-picks the two newest valid dumps |
+| `jdebug analyze --deep <heap>` | heap dump **retained size** (dominator tree) + **path to GC roots** — which objects keep memory alive and why. No Eclipse MAT needed — but it DOES need the TUI binary (vendored in `vendor/tui/`, or `make tui`); without it, analyze points you at MAT instead |
+| `jdebug analyze --diff [before after]` | diff two heap dumps to see what **grew** (leak hunting); with no args it auto-picks the two newest valid dumps. Needs the TUI binary (vendored, or `make tui`) |
 | `jdebug cleanup` | prune old/empty captures and stale remote artifacts from `dumps/` |
 | `jdebug install-jattach` | pre-stage the jattach binary in the pod |
 | `jdebug push-local` | copy the in-pod tool (`jdebug-local`) to `<pod>:/tmp` |

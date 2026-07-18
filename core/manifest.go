@@ -24,6 +24,12 @@ type Artifact struct {
 	SHA256     string    `json:"sha256,omitempty"`
 	CapturedAt time.Time `json:"captured_at"`
 	Verdict    Verdict   `json:"verdict"`
+	// Path is where the file actually lives on disk (runtime-only, not
+	// persisted — the manifest sits beside its files). Callers must print
+	// THIS, never a path reconstructed from CapturedAt: the session dir is
+	// timestamped at pipeline start, so any capture that crosses a second
+	// boundary makes a reconstructed path point at nothing.
+	Path string `json:"-"`
 }
 
 // Manifest is a capture session's full record.

@@ -29,6 +29,13 @@ func rbacBlocked(errs ...string) bool {
 func (m model) blockers() []blocker {
 	var b []blocker
 	if m.mode == 1 {
+		if m.remote.Unauthorized {
+			// NOT unreachable: the cluster answered and rejected the token.
+			// "switch context" is the wrong fix here — re-auth is.
+			return []blocker{{"blocked by expired credentials",
+				"the cluster is UP but rejected your token (expired SSO/OIDC/cloud-CLI login)",
+				"re-authenticate: aws sso login · gcloud auth login · az login · oc login — then any key to re-probe"}}
+		}
 		if !m.remote.Cluster {
 			return []blocker{{"blocked by cluster unreachable",
 				"kubectl can't reach the cluster API, so nothing downstream can run",

@@ -102,6 +102,7 @@ func (p Pipeline) run(ctx context.Context, acq Acquirer, t Resolved, validate Va
 		Name: m.Name, Tier: m.Tier, Command: m.Command,
 		CapturedAt: time.Now().UTC(),
 		Verdict:    v,
+		Path:       path,
 	}
 	if st, err := os.Stat(path); err == nil {
 		art.Bytes = st.Size()
@@ -151,6 +152,27 @@ func ValidateThreadDump(path string, _ int64) Verdict {
 	}
 	if !strings.Contains(string(b), "Full thread dump") {
 		return Verdict{false, "no 'Full thread dump' marker — " + classifyHead(path)}
+	}
+	return Verdict{OK: true}
+}
+
+// ValidateThreadDumpJSON: Spring's JSON thread dump ({"threads":[...]})
+// carries NO "Full thread dump" marker — the text validator would reject
+// every valid JSON capture and call the actuator broken. Valid = parseable
+// JSON whose top level has a "threads" array with at least one entry (a
+// live JVM always has threads; an error body has none).
+func ValidateThreadDumpJSON(path string, _ int64) Verdict {
+	f, err := os.Open(path)
+	if err != nil {
+		return Verdict{false, "unreadable: " + err.Error()}
+	}
+	defer f.Close()
+	d, perr := ParseThreadDump(f)
+	if perr != nil {
+		return Verdict{false, "not a parseable JSON thread dump — " + classifyHead(path)}
+	}
+	if len(d.Threads) == 0 {
+		return Verdict{false, "JSON parsed but contains no threads — " + classifyHead(path)}
 	}
 	return Verdict{OK: true}
 }

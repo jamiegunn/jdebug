@@ -123,7 +123,16 @@ func (p *hprofParser) className(classObjId uint64) string {
 	return ""
 }
 
-func analyzeHprof(path string) (*heapHistogram, error) {
+func analyzeHprof(path string) (hist *heapHistogram, err error) {
+	// A corrupt dump (damaged record length, bit rot mid-kubectl-cp) must
+	// produce a readable message, never a Go stack trace — a junior's most
+	// likely artifact is a damaged capture, and "errors that teach" is the
+	// whole product promise.
+	defer func() {
+		if rec := recover(); rec != nil {
+			hist, err = nil, fmt.Errorf("corrupt heap dump (parser aborted: %v) — the file is damaged; recapture, or try Eclipse MAT", rec)
+		}
+	}()
 	f, err := os.Open(path)
 	if err != nil {
 		return nil, err
@@ -171,6 +180,14 @@ func analyzeHprof(path string) (*heapHistogram, error) {
 		}
 		switch tag {
 		case 0x01: // STRING
+			// a corrupt length (< idSize, or absurdly large) must not reach
+			// make([]byte, negative) — that's a panic, not a diagnosis.
+			if int64(length) < int64(p.idSize) || length > 1<<24 {
+				if _, err := discard(r, int(length)); err != nil {
+					return p.result(), nil
+				}
+				continue
+			}
 			id, err := p.readID(r)
 			if err != nil {
 				return p.result(), nil

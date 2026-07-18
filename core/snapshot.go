@@ -60,7 +60,12 @@ func Snapshot(ctx context.Context, c Cluster, pipe Pipeline, cfg Config, t Confi
 	res := SnapshotResult{Dir: sess.Dir}
 	o.Log.p("snapshot of pod %s → %s", r.Pod, sess.Dir)
 
-	step := func(name, what string, fill func(w *os.File) error) {
+	// stepV: run one section; validate (when a validator is given) so a 401
+	// login page or marker-less "thread dump" can't record as ✔; hash/stat
+	// only AFTER any failure-note overwrite, so the manifest always describes
+	// the file as it exists on disk — a manifest whose hashes fail against
+	// its own files is the inverse of provenance.
+	stepV := func(name, what string, validate Validator, fill func(w *os.File) error) {
 		path := filepath.Join(sess.Dir, name)
 		f, ferr := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o600)
 		if ferr != nil {
@@ -69,11 +74,12 @@ func Snapshot(ctx context.Context, c Cluster, pipe Pipeline, cfg Config, t Confi
 		}
 		serr := fill(f)
 		_ = f.Close()
-		art := Artifact{Name: name, Tier: "snapshot", Command: what, CapturedAt: time.Now().UTC()}
-		if st, err := os.Stat(path); err == nil {
-			art.Bytes = st.Size()
+		if serr == nil && validate != nil {
+			if v := validate(path, 0); !v.OK {
+				serr = fmt.Errorf("captured content failed validation: %s", v.Reason)
+			}
 		}
-		art.SHA256, _ = fileSHA256(path)
+		art := Artifact{Name: name, Tier: "snapshot", Command: what, CapturedAt: time.Now().UTC(), Path: path}
 		if serr != nil {
 			res.Failed++
 			// the failure note lives IN the file, like v1 — an empty file
@@ -86,8 +92,13 @@ func Snapshot(ctx context.Context, c Cluster, pipe Pipeline, cfg Config, t Confi
 			art.Verdict = Verdict{OK: true}
 			o.Log.p("  ✔ %s  (%s)", name, what)
 		}
+		if st, err := os.Stat(path); err == nil {
+			art.Bytes = st.Size()
+		}
+		art.SHA256, _ = fileSHA256(path)
 		_ = sess.Append(art)
 	}
+	step := func(name, what string, fill func(w *os.File) error) { stepV(name, what, nil, fill) }
 
 	execPodTo := func(w *os.File, script string) error {
 		return c.ExecPod(ctx, r.Namespace, r.Pod, r.Container, w, "sh", "-c", script)
@@ -116,16 +127,29 @@ func Snapshot(ctx context.Context, c Cluster, pipe Pipeline, cfg Config, t Confi
 		return kitScript(w, "observe/security.sh")
 	})
 	// health: NO -f — a DOWN health is a 503 WITH the diagnostic body, and
-	// that body is exactly what an incident snapshot needs
-	step("health.json", "actuator health", func(w *os.File) error {
+	// that body is exactly what an incident snapshot needs. But it DOES get
+	// auth (like every other section) and a content check: a 401 login page
+	// must never be recorded "✔ health.json".
+	validateHealth := func(path string, _ int64) Verdict {
+		b, rerr := os.ReadFile(path)
+		if rerr != nil {
+			return Verdict{false, "unreadable: " + rerr.Error()}
+		}
+		if !strings.Contains(string(b), `"status"`) {
+			return Verdict{false, "doesn't look like actuator health output — " + classifyHead(path)}
+		}
+		return Verdict{OK: true}
+	}
+	stepV("health.json", "actuator health", validateHealth, func(w *os.File) error {
 		return execPodTo(w, fmt.Sprintf(
-			`if command -v curl >/dev/null 2>&1; then curl -sS '%s/health'; else wget -qO- '%s/health'; fi`,
-			cfg.ActuatorBase, cfg.ActuatorBase))
+			`if command -v curl >/dev/null 2>&1; then curl -sS %s'%s/health'; else wget -qO- %s'%s/health'; fi`,
+			podAuthFlags("curl", cfg.ActuatorAuth), cfg.ActuatorBase,
+			podAuthFlags("wget", cfg.ActuatorAuth), cfg.ActuatorBase))
 	})
 	step("metrics.json", "actuator metrics index", func(w *os.File) error {
 		return execPodTo(w, PodFetchScript(cfg.ActuatorBase+"/metrics", "", cfg.ActuatorAuth))
 	})
-	step("threads.txt", "actuator threaddump (text)", func(w *os.File) error {
+	stepV("threads.txt", "actuator threaddump (text)", ValidateThreadDump, func(w *os.File) error {
 		return execPodTo(w, PodFetchScript(cfg.ActuatorBase+"/threaddump", "text/plain", cfg.ActuatorAuth))
 	})
 	step("memory-report.txt", "memory anatomy", func(w *os.File) error {

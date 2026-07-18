@@ -5,11 +5,13 @@ nav_order: 12
 
 # UX follow-ups
 
-Design directions from the junior-SRE UX review that are captured here with
-concrete entry points rather than implemented yet. The review's correctness
-and safety items (honest safety copy, colour-free risk text, no-wrap rows, the
-CPU-flow interval, the Resource/JVM panel split, richer autoscale, severity-
-sorted NEXT, panel click-to-drill-in) already shipped.
+The per-item status record of the junior-SRE UX review. Most items below are
+marked **SHIPPED**, each with its remaining refinements listed inline —
+"SHIPPED" means the feature exists and is covered by the mock suite, not that
+it is beyond improvement. Items that never shipped live in `docs/roadmap.md`.
+(Historical note: some entries were written when a bash menu frontend existed;
+that frontend has been removed — architecture.md Phase 0b — and the "bash
+side" of any feature now means the plain CLI verb, not a bash menu.)
 
 ## Click-to-run menu rows — SHIPPED
 
@@ -203,7 +205,22 @@ classic “works inside the pod, clients fail from elsewhere” incident shape.
   see which tier produced it. Go-only richer interaction (bash `d` keeps the
   `jdebug dumps` text listing; the `jdebug dumps` CLI is unchanged).
 
-The junior-SRE UX backlog is now fully cleared.
+That covers the items from the original junior-SRE UX review. It does NOT
+mean the UX is finished — known gaps found by the later adversarial review
+remain open and are tracked here and in `docs/roadmap.md`:
+
+- **TUI process handling**: cancelling a streaming command (esc) kills the
+  wrapper but can leave the underlying `kubectl` running, wedging the output
+  pane until the app is quit; the panel's JVM heap probe runs without a
+  timeout; the render path shells out to `kubectl config current-context`.
+- **Unknowns rendered as values**: on an RBAC-denied read, some dashboard
+  fields show blank/`0` instead of `UNKNOWN` (e.g. restarts), and the PODS
+  pane takes `containerStatuses[0]`'s restart count — with an injected
+  sidecar listed first, the sidecar's count is shown as the app's.
+- **HPA attribution**: the panel uses the namespace's first HPA without
+  matching `scaleTargetRef` — in a shared namespace its warnings can reflect
+  another workload's autoscaler.
+- **Secret redaction** in session logs: still unshipped (roadmap).
 
 ## Invalid heap capture recovery — SHIPPED
 

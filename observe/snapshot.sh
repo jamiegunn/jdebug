@@ -5,7 +5,7 @@
 # Everything an offline analysis (Eclipse MAT, VisualVM — free local tools) or a
 # colleague needs, captured in one command while the incident is live.
 #
-# Collects into <kit>/dumps/snapshot-<ts>/ (override: $OUT_DIR) :
+# Collects into <kit>/dumps/pods/<pod>/<ts>/ (override: $OUT_DIR) :
 #   pod.txt              kubectl describe pod (recent events at the bottom)
 #   health.json          /actuator/health
 #   metrics.json         /actuator/metrics index

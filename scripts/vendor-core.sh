@@ -6,7 +6,7 @@
 # scripts/vendor-tui.sh; run it whenever core/ sources change.
 #
 # Writes:
-#   tools/core/jdebug-core-<os>-<arch>   static binaries (darwin/linux × arm64/amd64)
+#   tools/core/jdebug-core-<os>-<arch>   static binaries (darwin-arm64, linux-arm64, linux-amd64)
 #   tools/core/SHA256SUMS                sha256 of each binary (verified by jdebug
 #                                        before it will exec a vendored binary)
 #   tools/core/BUILDINFO                 go version + source tree hash, binding the

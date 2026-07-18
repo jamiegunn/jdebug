@@ -24,7 +24,7 @@ preference (see [Capture tiers](capture-tiers)):
 
 | Tier | Route | Needs |
 |---|---|---|
-| 1 | **actuator** — ask the app itself over HTTP | Spring Boot actuator endpoints |
+| 1 | **actuator** — ask the app itself over HTTP | Spring Boot actuator capture endpoints **exposed** (stock Boot exposes only `/health`) |
 | 2 | **jattach** — vendored helper binary (checksum-verified) placed in the pod | same-uid exec into the pod |
 | 3 | **jdk** — temporary JDK debug container | cluster allows ephemeral containers |
 
@@ -44,9 +44,10 @@ different clusters and policies.
 - **Evidence you can't lose.** Captures land in one `dumps/` directory, every
   interactive session is transcribed to a log, and `jdebug dumps` lists what
   you have with per-file analysis instructions.
-- **Guided.** `jdebug wizard` asks what you're seeing — down, slow, restarting,
-  memory, CPU, a recent deploy, or "not sure" — and runs the right capture
-  sequence for that symptom. The menu's `?` key is a full glossary.
+- **Guided.** `jdebug wizard` asks what you're seeing — OOMKilled, slow/hung,
+  high CPU, a memory leak, GC pauses, crash-looping, "a deploy just
+  happened", or "not sure" — and runs the right capture sequence for that
+  symptom. The menu's `?` key is a full glossary.
 
 ## Start here
 

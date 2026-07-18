@@ -2,7 +2,7 @@
 #
 # install.sh — put `jdebug` on your PATH by symlinking this kit's CLI into a bin
 # directory. The CLI resolves symlinks, so it finds the rest of the kit (lib/,
-# capture/, observe/, ui/) relative to its real location here.
+# capture/, observe/, tui/) relative to its real location here.
 #
 # Usage:
 #   ./install.sh                 # symlink into ~/.local/bin (or $PREFIX)

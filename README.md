@@ -35,8 +35,10 @@ symlink install works from anywhere on PATH.)
 
 The interactive menu and wizard are the Go (Bubble Tea) frontend. `jdebug`
 uses a local dev build (`make tui`) when present, otherwise the **vendored,
-hash-verified** binary under `vendor/tui/` for your platform (darwin/linux ×
-arm64/amd64). Every CLI command works without the TUI.
+hash-verified** binary under `vendor/tui/` for your platform. Vendored
+platforms today: **darwin-arm64, linux-amd64, linux-arm64** — on an Intel Mac
+(darwin-amd64) run `make tui` once (needs Go). Every CLI command works
+without the TUI.
 
 How the vendored binaries are kept honest, in three layers:
 
@@ -71,7 +73,7 @@ jdebug jcmd "GC.heap_info"                     # any jcmd via jattach
 jdebug snapshot  [--heap]                      # offline bundle (metrics, threads, memory, jcmd)
 jdebug dumps                                   # list captured evidence + how to analyze each
 jdebug analyze                                 # first-pass triage of every capture (deadlocks, DOWN health, OOM risk)
-jdebug logs                                    # stream logs from all replicas
+jdebug logs -l app=payments                    # stream logs from all replicas (needs a selector)
 jdebug log-level <logger> <LEVEL>              # runtime level change via actuator
 jdebug install-jattach                         # pre-stage jattach in the pod
 
@@ -81,11 +83,13 @@ jdebug                                         # interactive menu (opens with a 
 
 **Guided diagnosis.** New to the toolkit or the JVM? `jdebug wizard` (also `▶ w`
 in the menu) asks what you're seeing — OOMKilled, slow/hung, high CPU, creeping
-memory, GC pauses, or "not sure" — then runs the right capture sequence for that
-symptom and names the analyzer to open next. Destructive steps (heap dumps) ask
-first.
+memory (leak), GC pauses, crash-looping, "a deploy just happened", or "not
+sure" — then runs the right capture sequence for that symptom and names the
+analyzer to open next. Destructive steps (heap dumps) ask first.
 
-Every command takes `-n/--namespace`, `-l/--selector`, `--container`, `--help`.
+Every cluster-facing command takes `-n/--namespace`, `-l/--selector`,
+`--container`, and `--help`. (`jdebug analyze` is the exception: it works on
+local capture files, so it takes a path — `jdebug analyze [path|--deep|--diff]`.)
 
 Captures (thread/heap dumps, snapshots) land under the kit's own `dumps/`
 directory — git-ignored, one findable place regardless of where you ran the
@@ -152,10 +156,17 @@ lands as (jattach attaches same-uid). All actuator-backed commands use whatever
 HTTP client is **in the pod** — `curl` or busybox `wget` — so they work against
 a stock JRE-alpine image with nothing added.
 
-Secured actuators: the toolkit assumes the actuator answers unauthenticated on
-localhost inside the pod. If yours requires a token, the actuator tier will
-fail cleanly — capture via the jattach tier instead (`--via jattach`), which
-needs no actuator at all.
+Actuator endpoint exposure: **stock Spring Boot exposes only `/actuator/health`
+over HTTP** — the capture endpoints need the app to opt in
+(`management.endpoints.web.exposure.include=health,threaddump,heapdump,metrics,loggers`).
+Without it, tier 1 404s and captures fall back to jattach/jdk automatically;
+`jdebug doctor` probes `/threaddump` and names this when it's the blocker.
+
+Secured actuators: if yours requires credentials, set
+`ACTUATOR_AUTH=bearer:ENV_VAR` (or `basic:USER_VAR:PASS_VAR`) naming the pod's
+OWN env vars — never a literal secret (menu: target editor `k`). Or skip HTTP
+entirely and capture via the jattach tier (`--via jattach`), which needs no
+actuator at all.
 
 Heap dumps and `snapshot --heap` **pause the JVM** — they require `--confirm` and
 should be treated as destructive in production.
@@ -167,9 +178,38 @@ tests/run-tests.sh
 ```
 
 Self-contained (no framework, no cluster): `tests/mocks/{kubectl,curl}` fake the
-cluster and the in-pod HTTP, driven by `MOCK_*` env vars. The suite exercises
-the CLI, both tools' error messages, the confirm gates, the TUI menus/wizard/
-help, the session log, and the plain-language cluster diagnostics.
+cluster and the in-pod HTTP, driven by `MOCK_*` env vars. The suite (~390
+assertions) exercises the CLI, both tools' error messages, the confirm gates,
+end-to-end mock captures (real bytes at the printed path, manifest recorded,
+kubectl actually invoked), the TUI menus/wizard/help, the session log, and the
+plain-language cluster diagnostics.
+
+**What the suite does and doesn't prove:** it proves messages, gates, and
+capture plumbing against a *mock* kubectl. The live-JVM suite
+(`tests/live/`) and the kind/real-cluster suite (`tests/integration/`) prove
+real transport and real JVM behavior, but they are **run manually** — the kind
+suite has had one green run against a real k3s cluster and is not yet wired
+into CI. See `docs/testing.md` and `docs/architecture.md` for the honest map.
+
+## Known limits
+
+- **Thread-dump analysis** reads jstack-style text and Spring actuator JSON.
+  It detects monitor **and** `java.util.concurrent` (ReentrantLock) deadlock
+  cycles, but the JDK-21 `jcmd Thread.dump_to_file` plain format is refused by
+  name (not silently blessed), and **virtual threads never appear in
+  actuator/ThreadMXBean dumps at all** — jdebug flags a dump as structurally
+  incomplete when it sees signs of a virtual-thread app, but it cannot show
+  you those threads.
+- **Session logs record command output verbatim.** Secret redaction is still a
+  roadmap item — treat `dumps/session-*.log` with the same care as the
+  captures themselves.
+- **Capture timeouts are opt-in** (`JDEBUG_TIMEOUT=90s`, v2 engine only);
+  without it a wedged JVM or dropped connection can stall a capture until you
+  Ctrl-C (which is handled cleanly).
+- **TUI known gaps** (tracked in `docs/ux-followups.md`): cancelling a
+  streaming command can leave the underlying kubectl running in the
+  background, and some dashboard panel reads render as blank/zero rather than
+  "UNKNOWN" when RBAC denies them.
 
 ## License
 

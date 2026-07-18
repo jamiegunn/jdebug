@@ -42,7 +42,9 @@ These are the load-bearing principles. When in doubt, they win.
    kubectl call, absent metrics-server, secured actuator, or missing jattach
    is *explained in plain language with the next action*, never flattened into
    a blank or a stack trace. A denied read is `UNKNOWN`, never treated as
-   "fine" or "nothing there". This is the single most repeated review demand.
+   "fine" or "nothing there". This is the single most repeated review demand —
+   and not yet fully met: some TUI dashboard panel reads still render denied
+   values as blank/zero (see "Known gaps" below).
 5. **Plain language first, jargon paired.** Every command answers "what
    question does this answer?" Terms like selector/actuator/jcmd get inline
    glosses; the glossary is `?`, the per-command transparency cards are `.`.
@@ -55,34 +57,41 @@ These are the load-bearing principles. When in doubt, they win.
 
 ## Architecture (how it's built)
 
-**The CLI is the source of truth.** All capture/analysis logic lives in tested
-bash scripts; the interactive frontends only draw and dispatch keys, then
-shell out to the CLI.
+**The dispatcher routes; the engines do the work.** `jdebug` (bash) routes
+verbs. Capture verbs run through the **v2 Go core** (`core/`) when a built or
+vendored `jdebug-core` is present, with the v1 bash tiers (`capture/*.sh`) as
+the `JDEBUG_V1` fallback; the observe/lifecycle verbs are still bash. See
+`docs/architecture.md` for the migration ledger — it is mid-migration, and
+that document is the honest status record.
 
 ```
 jdebug                      the verb router (bash). `jdebug <verb> [args]`.
 jdebug-local                a single-file in-pod CLI (mode 2/3, no kubectl)
 lib/common.sh               shared helpers: target config, kubectl error
                             explainer, pod_fetch (curl/wget-in-pod), session dir
-capture/*.sh                the capture tiers: actuator (HTTP), jattach
+core/                       the v2 capture engine (Go, stdlib-only): typed
+                            destructive-target gate, validate-before-announce
+                            pipeline, manifest provenance, thread-dump parser
+tools/core/                 vendored, hash-verified jdebug-core binaries
+capture/*.sh                the v1 capture tiers: actuator (HTTP), jattach
                             (attach protocol), jdk (debug container)
 observe/*.sh                analysis + pod-layer verbs + lifecycle:
                             analyze, memory-report, tail-logs, set-log-level,
                             snapshot, why, security, topology, lifecycle
-tui/                        the Go Bubble Tea frontend (preferred)
+tui/                        the Go Bubble Tea frontend (the only menu/wizard)
 vendor/tui/                 the vendored, hash-verified Go TUI binaries
+vendor/jattach/             the vendored, hash-verified jattach binaries
 docs/                       the published docs site (GitHub Pages / Jekyll)
-tests/                      the test suite + mock kubectl + pty driver
+tests/                      the mock suite + live-JVM + kind suites + pty driver
 ```
 
-**Two interactive frontends, kept in lockstep.** The Go TUI (`tui/`, Bubble
-Tea + lipgloss + x/ansi only) is the interactive frontend. `jdebug` runs a
-local dev build when present, else the vendored binary for your platform —
-after verifying it against `vendor/tui/SHA256SUMS`. No TUI available → every
-command still works from the CLI.
-**They share the remembered-target config file and must stay behaviorally
-aligned** — every menu/wizard/verb change lands in *both*, or parity silently
-drifts. Forgetting the bash side is the most common mistake.
+**One interactive frontend.** The Go TUI (`tui/`, Bubble Tea + lipgloss +
+x/ansi only) is the only menu/wizard — the old bash menu was removed
+(architecture.md, Phase 0b). `jdebug` runs a local dev build when present,
+else the vendored binary for your platform — after verifying it against
+`vendor/tui/SHA256SUMS`. No TUI available → every command still works from
+the CLI, and error messages give the CLI route alongside any menu key they
+mention.
 
 ### The CLI verbs
 
@@ -132,7 +141,11 @@ tail). Key pieces:
 **Run everything:** `tests/run-tests.sh` from the repo root. It runs Go unit
 tests, bash CLI cases (driven by `tests/mocks/kubectl`, a case-statement fake),
 a real-pty drive of the built TUI, `shellcheck -S warning`, and `gofmt`. As of
-this writing the suite is ~291 assertions and green.
+this writing the suite is ~390 assertions and must be green. Note its limits
+honestly: it proves messages, gates, and capture plumbing against a **mock**
+kubectl; the live-JVM (`tests/live/`) and kind (`tests/integration/`) suites
+prove real transport/JVM behavior but run manually, not in CI (see
+`docs/architecture.md`, Phase 5).
 
 **Gotchas learned the hard way:**
 - `tests/mocks/kubectl` matches **first-case-wins** — anchor patterns
@@ -148,36 +161,39 @@ this writing the suite is ~291 assertions and green.
   build succeeds — that's a Pages-infrastructure flake, not a content problem;
   re-run it.
 
-**Where the design record lives:** `docs/ux-followups.md` tracks the larger
-product directions still open (incident modes, evidence chains, runbook cards,
-incident timeline, "what changed" workflow, escalation summary, blocked-by
-view, confidence levels) — each with a concrete entry point. The shipped UX
-work and its rationale are in the git history (search for "UX" commits).
+**Where the design record lives:** `docs/ux-followups.md` is the per-item UX
+status record (most items there are marked SHIPPED, with the remaining
+refinements listed per item); `docs/roadmap.md` holds the larger unshipped
+ideas; `docs/architecture.md` is the v2-migration status ledger. When these
+disagree with each other or with the code, the code wins — fix the doc.
 
 ## What's done vs. what's next
 
-**Done and test-pinned:** the full JVM + pod-layer capability; organized +
-browsable captures with in-app viewing and a Go heap histogram; guarded
-lifecycle actions; workload topology; the symptom-first menu with click-to-run
-and per-command transparency cards; the severity-sorted NEXT engine and
-panel drill-down; honest safety copy and colour-free risk; secured-actuator
-credential references; and "explain every failure" across every kubectl call.
+**Done and test-pinned:** the JVM + pod-layer verbs; organized + browsable
+captures with in-app viewing and a Go heap histogram; guarded lifecycle
+actions (ambiguous-match refusal on every destructive verb); workload
+topology; the symptom-first menu with click-to-run and per-command
+transparency cards; the severity-sorted NEXT engine and panel drill-down;
+honest safety copy and colour-free risk; secured-actuator credential
+references; the operator-workflow layer (incident modes, evidence chains,
+runbook cards, timeline, what-changed, escalation summary, blocked-by view,
+confidence levels — see `docs/ux-followups.md`); and plain-language failure
+explanation across the CLI's kubectl calls.
 
-**Open (captured in `docs/ux-followups.md`):** the operator-workflow layer —
-incident modes that bias the dashboard, evidence chains + confidence levels on
-NEXT, a one-key escalation summary from session state, an incident timeline, a
-"what changed" workflow, and a blocked-by view. These stay diagnostic-first;
-any executable remediation must follow the `restart`/`kill` pattern (hard
-confirm + full risk brief). Also minor: extend click-to-run to picker lists,
-per-panel-signal cards, and 401-vs-absent actuator detection.
+**Known gaps and open work** (tracked in `docs/roadmap.md` and
+`docs/ux-followups.md`): secret redaction in session logs; `--dry-run`;
+multi-pod fan-out; the TUI's process handling (a cancelled stream can leave
+its kubectl running) and some dashboard reads that render unknowns as
+blank/zero under RBAC denial; the kind/real-cluster suite is not yet wired
+into CI. Anything executable stays behind the `restart`/`kill` pattern (hard
+confirm + full risk brief).
 
 ## The one-paragraph version
 
 jdebug turns a Kubernetes JVM incident into a guided, safe, evidence-producing
-workflow for someone who knows the symptom but not the tools. It's a tested
-bash CLI (JVM + pod layers) with two lockstep interactive frontends (a rich Go
-TUI, a bash fallback). Its non-negotiables: start from symptoms, gate the
-target, make disruptive actions loud, explain every failure in plain language,
-never lose evidence, and keep the bash and Go frontends aligned. Work on it by
-running `tests/run-tests.sh`, changing both frontends together, and preserving
-those principles.
+workflow for someone who knows the symptom but not the tools. It's a bash CLI
+dispatcher over a Go capture engine (with v1 bash tiers as fallback) plus one
+interactive Go TUI. Its non-negotiables: start from symptoms, gate the target,
+make disruptive actions loud, explain every failure in plain language, and
+never lose evidence. Work on it by running `tests/run-tests.sh`, keeping the
+docs honest about what is and isn't proven, and preserving those principles.

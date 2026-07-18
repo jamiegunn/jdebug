@@ -61,7 +61,7 @@ If you copied the repo in a way that stripped executable bits, repair them:
 
 ```sh
 chmod +x install.sh jdebug jdebug-local
-chmod +x capture/*.sh observe/*.sh ui/*.sh tests/run-tests.sh
+chmod +x capture/*.sh observe/*.sh scripts/*.sh tests/run-tests.sh
 ```
 
 The repository should already have those modes when cloned with `git`; the

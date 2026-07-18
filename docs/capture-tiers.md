@@ -14,10 +14,15 @@ Ask the app itself: Spring Boot's `/actuator/threaddump` and
 `/actuator/heapdump` over HTTP, executed **inside** the pod with whatever
 HTTP client the image has (curl, or busybox wget — both stock-alpine safe).
 
-- **Needs:** the app serving HTTP with actuator endpoints exposed.
+- **Needs:** the app serving HTTP with the actuator **capture endpoints
+  exposed** — stock Spring Boot exposes only `/health`; the app must opt in:
+  `management.endpoints.web.exposure.include=health,threaddump,heapdump,metrics,loggers`.
+  This is the most common tier-1 failure on real apps; `jdebug doctor` probes
+  `/threaddump` and names it.
 - **Doesn't need:** anything installed, any binary, any special permission.
-- **Fails when:** the app is too wedged to serve HTTP, actuator is absent,
-  on a custom port (`--actuator-base`), or secured.
+- **Fails when:** the endpoints aren't exposed (above), the app is too wedged
+  to serve HTTP, actuator is absent, on a custom port (`--actuator-base`), or
+  secured (`ACTUATOR_AUTH` — see configuration).
 
 ## Tier 2 — jattach
 
@@ -60,7 +65,8 @@ tier and the exact command to force it. `--via <tier>` runs exactly one.
 
 | situation | use |
 |---|---|
-| normal Spring Boot app | default (auto) — tier 1 will just work |
+| Spring Boot app with capture endpoints exposed | default (auto) — tier 1 will just work |
+| stock Spring Boot (only `/health` exposed) | default (auto) — tier 1 404s and auto-falls back to tier 2 |
 | actuator secured or absent | `--via jattach` |
 | app not serving HTTP at all | `--via jattach` |
 | need `VM.native_memory`, JFR, VM.flags | `jcmd` (always jattach) |

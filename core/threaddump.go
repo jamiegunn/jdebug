@@ -15,8 +15,17 @@ import (
 // "Found one Java-level deadlock" banner, but Spring Boot actuator dumps do
 // NOT run deadlock detection — a grep for the banner false-negatives on the
 // DEFAULT capture tier. Here deadlocks are found structurally, by building
-// the waits-for graph and detecting cycles, which works identically on
-// every format we can parse.
+// the waits-for graph and detecting cycles, from BOTH lock syntaxes:
+// monitors ("- waiting to lock <id>" / "- locked <id>") and
+// java.util.concurrent ("- parking to wait for <id>" / the
+// "Locked ownable synchronizers:" list) — juc locks are the common case in
+// modern Spring code, and a deadlock certified healthy is worse than no tool.
+//
+// KNOWN LIMITS, stated so nobody trusts this past what it can see:
+//   - virtual threads (JDK 21+) never appear in ThreadMXBean/actuator dumps;
+//     Render warns when the dump shows signs of a virtual-thread app.
+//   - the JDK-21 `jcmd Thread.dump_to_file` plain format uses different
+//     headers; Render refuses (0 threads) rather than blessing it blind.
 
 // ThreadInfo is one thread's parsed state.
 type ThreadInfo struct {
@@ -33,14 +42,25 @@ type ThreadInfo struct {
 type ThreadDump struct {
 	Threads      []ThreadInfo
 	JstackBanner bool // the dump itself declared a deadlock (jstack/jcmd)
+	// PlainFormatHeads counts `#N "name"`-style headers — the JDK-21
+	// `jcmd Thread.dump_to_file` plain format this parser does NOT read.
+	// Total==0 with PlainFormatHeads>0 means "wrong format", not "no threads".
+	PlainFormatHeads int
 }
 
 var (
 	reThreadHead = regexp.MustCompile(`^"([^"]+)"`)
 	reState      = regexp.MustCompile(`java\.lang\.Thread\.State:\s+([A-Z_]+)`)
 	reWaiting    = regexp.MustCompile(`-\s+waiting to lock <([^>]+)>(.*)`)
-	reLocked     = regexp.MustCompile(`-\s+locked <([^>]+)>`)
-	reFrame      = regexp.MustCompile(`^\s*at\s+(\S+)`)
+	// juc syntax: LockSupport.park on an AQS sync (ReentrantLock & friends).
+	// The thread is WAITING, not BLOCKED, and no "waiting to lock" appears.
+	reParking = regexp.MustCompile(`-\s+parking to wait for\s+<([^>]+)>(.*)`)
+	reLocked  = regexp.MustCompile(`-\s+locked <([^>]+)>`)
+	// a held juc lock appears as a bare "- <id>" line under the
+	// "Locked ownable synchronizers:" section
+	reSyncHeld  = regexp.MustCompile(`^\s*-\s+<([^>]+)>`)
+	reFrame     = regexp.MustCompile(`^\s*at\s+(\S+)`)
+	rePlainHead = regexp.MustCompile(`^#\d+\s+"`)
 )
 
 // ParseThreadDump auto-detects format: Spring actuator JSON when the first
@@ -66,6 +86,7 @@ func ParseThreadDump(r io.Reader) (ThreadDump, error) {
 func parseTextDump(r io.Reader) (ThreadDump, error) {
 	var d ThreadDump
 	var cur *ThreadInfo
+	inSyncList := false // inside a "Locked ownable synchronizers:" section
 	sc := bufio.NewScanner(r)
 	sc.Buffer(make([]byte, 0, 1024*1024), 16*1024*1024)
 	for sc.Scan() {
@@ -75,12 +96,21 @@ func parseTextDump(r io.Reader) (ThreadDump, error) {
 			cur = nil
 			continue
 		}
+		if rePlainHead.MatchString(line) {
+			d.PlainFormatHeads++
+			continue
+		}
 		if m := reThreadHead.FindStringSubmatch(line); m != nil && !strings.HasPrefix(line, " ") && !strings.HasPrefix(line, "\t") {
 			d.Threads = append(d.Threads, ThreadInfo{Name: m[1]})
 			cur = &d.Threads[len(d.Threads)-1]
+			inSyncList = false
 			continue
 		}
 		if cur == nil {
+			continue
+		}
+		if strings.Contains(line, "Locked ownable synchronizers") {
+			inSyncList = true
 			continue
 		}
 		switch {
@@ -90,8 +120,20 @@ func parseTextDump(r io.Reader) (ThreadDump, error) {
 			m := reWaiting.FindStringSubmatch(line)
 			cur.WaitsFor = m[1]
 			cur.WaitsDesc = "waiting to lock <" + m[1] + ">" + strings.TrimRight(m[2], " ")
+		case reParking.MatchString(line):
+			// juc: parked on an AQS sync. Conditions/queues park too, but
+			// their sync object is held by no one, so no graph edge forms —
+			// only an exclusively-held lock (in someone's ownable-synchronizer
+			// list) can complete a cycle. No false positives from idle pools.
+			m := reParking.FindStringSubmatch(line)
+			if cur.WaitsFor == "" {
+				cur.WaitsFor = m[1]
+				cur.WaitsDesc = "parking to wait for <" + m[1] + ">" + strings.TrimRight(m[2], " ")
+			}
 		case reLocked.MatchString(line):
 			cur.Holds = append(cur.Holds, reLocked.FindStringSubmatch(line)[1])
+		case inSyncList && reSyncHeld.MatchString(line):
+			cur.Holds = append(cur.Holds, reSyncHeld.FindStringSubmatch(line)[1])
 		case reFrame.MatchString(line):
 			cur.Frames = append(cur.Frames, reFrame.FindStringSubmatch(line)[1])
 		}
@@ -158,6 +200,13 @@ type Analysis struct {
 	HotFrameCount  int
 	HotFrame       string
 	IdleRunnable   int
+	// PlainFormatHeads: the dump looks like JDK-21 `jcmd Thread.dump_to_file`
+	// plain format (which this parser does not read) — refuse, don't bless.
+	PlainFormatHeads int
+	// VirtualApp: the dump shows signs of a virtual-thread app (unparker
+	// thread / VirtualThread frames). ThreadMXBean/actuator dumps NEVER
+	// include virtual threads, so this dump is structurally incomplete.
+	VirtualApp bool
 }
 
 // LockContention is one lock and how many threads block on it.
@@ -168,7 +217,22 @@ type LockContention struct {
 
 // Analyze computes the verdict.
 func (d ThreadDump) Analyze() Analysis {
-	a := Analysis{Total: len(d.Threads), JstackBanner: d.JstackBanner}
+	a := Analysis{Total: len(d.Threads), JstackBanner: d.JstackBanner, PlainFormatHeads: d.PlainFormatHeads}
+	for _, t := range d.Threads {
+		if strings.Contains(t.Name, "VirtualThread") {
+			a.VirtualApp = true
+			break
+		}
+		for _, fr := range t.Frames {
+			if strings.Contains(fr, "java.lang.VirtualThread") || strings.Contains(fr, "jdk.internal.vm.Continuation") {
+				a.VirtualApp = true
+				break
+			}
+		}
+		if a.VirtualApp {
+			break
+		}
+	}
 	lockWaiters := map[string][]int{} // lock id → waiting thread indexes
 	lockDesc := map[string]string{}
 	frameCount := map[string]int{}
@@ -232,7 +296,12 @@ func (d ThreadDump) deadlockCycles() [][]string {
 	}
 	next := map[int]int{} // waits-for edges
 	for i, t := range d.Threads {
-		if t.State != "BLOCKED" && t.LockOwner == "" {
+		// An edge exists when the format tells us WHAT the thread waits on
+		// (monitor "waiting to lock", juc "parking to wait for", or JSON's
+		// lockName) — juc waiters are WAITING, not BLOCKED, so gating on
+		// BLOCKED alone made every ReentrantLock deadlock invisible. Idle
+		// pool/condition parking creates no edge: nobody HOLDS those objects.
+		if t.WaitsFor == "" && t.LockOwner == "" {
 			continue
 		}
 		if t.LockOwner != "" {
@@ -290,8 +359,24 @@ func (a Analysis) Render(w io.Writer) int {
 	say := func(s string) { fmt.Fprintf(w, "    %s\n", s) }
 	flag := func(s string) { fmt.Fprintf(w, "    ⚠ %s\n", s); flags++ }
 
+	// 0 parsed threads is NEVER "nothing alarming" — it means this file is
+	// not a thread dump this parser can read. Refuse to bless it.
+	if a.Total == 0 {
+		if a.PlainFormatHeads > 0 {
+			flag(fmt.Sprintf("unreadable FORMAT, not an empty JVM: this looks like a JDK-21 `jcmd Thread.dump_to_file` plain dump (%d thread headers seen) — this parser doesn't read that format", a.PlainFormatHeads))
+			say("the capture may be fine; the analyzer isn't. Open the file directly, or recapture: jdebug threads")
+		} else {
+			flag("0 threads parsed — this does not look like a thread dump (garbage, truncated, or an unsupported format)")
+			say("treat this as a FAILED capture: recapture (jdebug threads) and inspect the file before trusting any tool's read of it")
+		}
+		return flags
+	}
 	say(fmt.Sprintf("%d threads — %d RUNNABLE · %d BLOCKED · %d WAITING · %d TIMED_WAITING",
 		a.Total, a.Runnable, a.Blocked, a.Waiting, a.TimedWaiting))
+	if a.VirtualApp {
+		flag("this dump is STRUCTURALLY INCOMPLETE: the app uses VIRTUAL threads, which never appear in actuator/ThreadMXBean dumps — the request-handling threads are invisible here")
+		say("full picture (JDK 21+): jdebug jcmd 'Thread.dump_to_file -format=json /tmp/vt.json' — then read it directly")
+	}
 	switch {
 	case len(a.DeadlockCycles) > 0:
 		for _, cyc := range a.DeadlockCycles {

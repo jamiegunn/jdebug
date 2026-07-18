@@ -12,11 +12,17 @@ never the directory you happened to run the command from:
 
 ```
 dumps/
-  threads/<pod>-<tier>-thread-<ts>.txt
-  heap/<pod>-<tier>-heap-<ts>.hprof
-  snapshot-<ts>/            (describe, health, metrics, threads, memory, jcmd-*)
+  pods/<pod>/<ts>/          one capture session: threads-<tier>.txt,
+                            heap-<tier>.hprof, manifest.json (sha256 +
+                            validation verdict per artifact); a `.snapshot`
+                            marker means the session is a snapshot bundle
+                            (describe, health, metrics, threads, memory, jcmd-*)
   session-<ts>.log          (transcript of every menu command + its output)
 ```
+
+(Captures made by very old versions used a flat `dumps/threads/…`,
+`dumps/heap/…` layout — `jdebug dumps` still lists those under
+"older flat captures".)
 
 `jdebug dumps` (or `d` in the menu) lists it all, newest first, with the
 right analyzer for each file type — the dashboard's CAPTURES pane shows the

@@ -22,7 +22,7 @@
 # Usage:
 #   ./jdk-threads.sh [-n namespace] [-l selector] [--container name] [pod-name]
 #
-# Output: <kit>/dumps/threads/<pod>-jdk-thread-<ts>.txt  (override: $OUT_DIR)
+# Output: <kit>/dumps/pods/<pod>/<ts>/threads-jdk.txt  (override: $OUT_DIR)
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"

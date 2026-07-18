@@ -1,7 +1,11 @@
 #!/bin/sh
 # Test double for kubectl. Behavior is driven by env vars so tests can script
 # every failure mode without a cluster:
-#   MOCK_KUBECTL   ok (default) | x509 | refused | noctx   — /version probe result
+#   MOCK_KUBECTL   ok (default) | x509 | refused | noctx | unauthorized
+#                                                          — /version probe result
+#   MOCK_EVENTS    forbidden — `get events` fails like restricted RBAC
+#   MOCK_EXEC      wrongcontainer | noshell — `exec` fails at kubectl with the
+#                  real-world error text (container name mismatch / distroless)
 #   MOCK_PODS      one (default) | none | multi            — pod listings
 #   MOCK_EXEC_OUT  what an in-pod `exec` prints            — default "ok"
 #   MOCK_ACTUATOR  secured|absent|badpage                  — actuator fetch outcome
@@ -25,6 +29,7 @@ case "$*" in
             x509)    echo 'Unable to connect to the server: tls: failed to verify certificate: x509: certificate signed by unknown authority' >&2; exit 1 ;;
             refused) echo 'The connection to the server 127.0.0.1:6443 was refused - connection refused' >&2; exit 1 ;;
             noctx)   echo 'error: current-context is not set' >&2; exit 1 ;;
+            unauthorized) echo 'error: You must be logged in to the server (Unauthorized)' >&2; exit 1 ;;
         esac ;;
     "config current-context")
         [ "${MOCK_KUBECTL:-ok}" = noctx ] && { echo 'error: current-context is not set' >&2; exit 1; }
@@ -96,6 +101,10 @@ case "$*" in
     *"get events"*"-o json"*)
         printf '{"items":[{"type":"Normal","reason":"Scheduled","message":"Successfully assigned default/pod-a","lastTimestamp":"2026-07-05T14:00:00Z","count":1},{"type":"Normal","reason":"Pulled","message":"Container image already present on machine","lastTimestamp":"2026-07-05T14:01:00Z","count":1},{"type":"Warning","reason":"BackOff","message":"Back-off restarting failed container app","lastTimestamp":"2026-07-05T14:05:00Z","count":7}]}' ;;
     *"get events"*)
+        if [ "${MOCK_EVENTS:-}" = forbidden ]; then
+            echo 'Error from server (Forbidden): events is forbidden: User "dev" cannot list resource "events" in API group "" in the namespace "default"' >&2
+            exit 1
+        fi
         echo '5m  Warning  BackOff  pod/pod-a  Back-off restarting failed container' ;;
     *"top pods"*)
         printf 'NAME    CPU(cores)   MEMORY(bytes)\npod-a   250m         480Mi\n' ;;
@@ -105,6 +114,14 @@ case "$*" in
         # pod gone: the exec fails at kubectl (NotFound) before the snippet runs
         if [ "${MOCK_POD_GONE:-}" = 1 ]; then
             echo 'Error from server (NotFound): pods "pod-a" not found' >&2; exit 1
+        fi
+        # wrong container name (real clusters rarely have one named "app")
+        if [ "${MOCK_EXEC:-}" = wrongcontainer ]; then
+            echo 'error: container app is not valid for pod pod-a' >&2; exit 1
+        fi
+        # distroless/minimal image: the pod is fine, there is just no shell
+        if [ "${MOCK_EXEC:-}" = noshell ]; then
+            echo 'error: Internal error occurred: error executing command in container: failed to exec in container: failed to start exec "abc": OCI runtime exec failed: exec failed: unable to start container process: exec: "sh": executable file not found in $PATH: unknown' >&2; exit 1
         fi
         # actuator failure simulation: the in-pod snippet carries the URL and,
         # for a status probe, curl's %{http_code}. Match those to script 4xx.

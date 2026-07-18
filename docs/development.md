@@ -24,10 +24,10 @@ tests/            run-tests.sh + mocks/{kubectl,curl} + pty-drive.py
 docs/             this site (Jekyll, GitHub Pages)
 ```
 
-The Go frontend is a thin renderer: all capture logic, error translation, and
-safety gates live in the bash CLI it drives. Its suite runs inside
-`tests/run-tests.sh` when a Go toolchain is present — `go vet`, update-logic
-unit tests, `-render` parity assertions against the bash screens, and a full
+The Go frontend is a thin renderer: capture logic, error translation, and
+safety gates live in the CLI it drives (bash dispatcher + Go core engine).
+Its suite runs inside `tests/run-tests.sh` when a Go toolchain is present —
+`go vet`, update-logic unit tests, `-render` screen assertions, and a full
 interactive round-trip on a real pty (`tests/pty-drive.py`).
 
 ## Conventions that matter

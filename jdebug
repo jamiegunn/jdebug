@@ -57,13 +57,14 @@
 #
 #   Setup
 #     doctor            check everything BEFORE an incident: host tools, cluster
-#                       reachability, target pods, actuator, jattach cache
+#                       reachability, target pods, container name, actuator
+#                       capture endpoint, vendored jattach/core/TUI binaries
 #     install-jattach   pre-stage jattach into the pod before an incident
 #     push-local        copy the in-pod tool (jdebug-local) into the pod, for
 #                       when you'll have a shell but no kubectl (JRE-only image)
 #
 # Examples:
-#   jdebug threads                        # actuator, this repo's app
+#   jdebug threads                        # thread dump via the actuator tier
 #   jdebug heap --confirm --via jattach
 #   jdebug snapshot -n prod -l app=payments
 #   jdebug jcmd "VM.native_memory summary"
@@ -79,6 +80,12 @@ while [ -L "$_src" ]; do _d="$(cd -P "$(dirname "$_src")" && pwd)"; _src="$(read
 D="$(cd -P "$(dirname "$_src")" && pwd)"
 # shellcheck source=lib/common.sh
 source "$D/lib/common.sh"
+# lib/common.sh turns errexit ON (its leaf scripts want that); this dispatcher
+# is written for `set -uo pipefail` with EXPLICIT rc handling — under errexit,
+# the tier cascade in capture() dies before its rc=$? line, and a failing
+# optional probe (events RBAC, /health/liveness 404) kills status/health
+# before their "Bottom line" guidance prints. Restore the dispatcher's mode.
+set +e
 
 JDEBUG_VERSION="1.0.0"
 
@@ -128,12 +135,15 @@ capture() {
     if [[ "$VIA_EXPLICIT" == 1 ]]; then run_tier "$VIA" "$1"; return $?; fi
     # exit 2 = target resolution failed (no pod matched, or an ambiguous match
     # on a destructive op) — no tier can fix a target problem, so don't cascade.
-    local rc
-    run_tier actuator "$1"; rc=$?
+    # `|| rc=$?` (not `cmd; rc=$?`): errexit-proof, so the cascade still runs
+    # even if a sourced library re-enables set -e.
+    local rc=0
+    run_tier actuator "$1" || rc=$?
     [[ $rc -eq 0 ]] && return 0
     [[ $rc -eq 2 ]] && return 2
     info "⚠ actuator tier failed — auto-falling back to jattach (needs no actuator)…"
-    run_tier jattach "$1"; rc=$?
+    rc=0
+    run_tier jattach "$1" || rc=$?
     [[ $rc -eq 0 ]] && return 0
     [[ $rc -eq 2 ]] && return 2
     info "⚠ jattach tier failed — auto-falling back to an ephemeral JDK container…"
@@ -170,8 +180,22 @@ esac
 
 # v2 capture engine (Go core): a local `make core` build if present, else the
 # checksum-verified vendored binary in tools/core. Resolved once here so every
-# capture verb routes to the same binary; empty → the v1 bash tiers take over.
-CORE_BIN="$(resolve_core_binary "$D" 2>/dev/null || true)"
+# capture verb routes to the same binary.
+#   CORE_RC=0 → verified, use it            CORE_RC=1 → absent, v1 tiers take over
+#   CORE_RC=2 → PRESENT BUT FAILED VERIFICATION — capture verbs refuse to run
+#   (a tampered/corrupt engine must not silently degrade to the v1 tiers).
+CORE_RC=0
+CORE_BIN="$(resolve_core_binary "$D")" || { CORE_RC=$?; CORE_BIN=""; }
+# require_core_ok — called by capture verbs before choosing an engine.
+require_core_ok() {
+    if [[ "$CORE_RC" -eq 2 && -z "${JDEBUG_V1:-}" ]]; then
+        err "the v2 capture engine is present but failed verification (details above) — refusing"
+        err "  to run it, and refusing to fall back silently."
+        err "  fix it:   git checkout -- tools/core   (or: make core)"
+        err "  or force the v1 bash tiers deliberately:   JDEBUG_V1=1 jdebug <command>"
+        exit 1
+    fi
+}
 
 # --via passes through to the core only when the user set it explicitly. An array
 # (not an unquoted command substitution) keeps it two args or none without the
@@ -194,7 +218,15 @@ case "$cmd" in
         printf '%s\n' "$PODS_OUT"
         echo
         show_cmd kubectl -n "$NAMESPACE" get events --sort-by=.lastTimestamp "| tail -15"
-        kubectl -n "$NAMESPACE" get events --sort-by=.lastTimestamp 2>/dev/null | tail -15
+        # events RBAC is often restricted — a denied/failed events read must not
+        # kill this command (the decision guidance below is the whole point).
+        EV_RC=0
+        EV_OUT="$(kubectl -n "$NAMESPACE" get events --sort-by=.lastTimestamp 2>&1 | tail -15)" || EV_RC=$?
+        if [[ $EV_RC -ne 0 ]]; then
+            echo "  (events not readable here — usually events RBAC; the pod table above still tells the story)"
+        else
+            printf '%s\n' "$EV_OUT"
+        fi
         echo
         echo "how to read this:"
         echo "  RESTARTS climbing         → the app keeps dying; the events above + logs say why"
@@ -226,7 +258,7 @@ case "$cmd" in
 
     health)
         triage_parse
-        POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
+        POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")" || exit $?
         # curl-or-wget in the pod, against $ACTUATOR_BASE (adjustable via
         # --actuator-base). Not pod_fetch: health must show the 503-with-body a
         # DOWN status returns, so no curl -f here.
@@ -251,9 +283,12 @@ case "$cmd" in
         else
             printf '%s\n' "$BODY"
         fi
+        # the liveness/readiness health GROUPS are optional in Spring Boot —
+        # a 404 here is normal and must not kill the verdict below.
         for probe in liveness readiness; do
             printf '%-10s: ' "$probe"
-            hfetch "$ACTUATOR_BASE/health/$probe"; echo
+            hfetch "$ACTUATOR_BASE/health/$probe" 2>/dev/null || printf '(not exposed — optional probe group, this is normal)'
+            echo
         done
         echo
         echo 'how to read this: overall "UP" = the app thinks it is healthy. A DOWN component'
@@ -286,7 +321,7 @@ case "$cmd" in
     metrics)
         triage_parse
         METRIC="${REMAINING_ARGS[0]:-}"
-        POD="$(resolve_one_pod "${REMAINING_ARGS[1]:-}")"
+        POD="$(resolve_one_pod "${REMAINING_ARGS[1]:-}")" || exit $?
         mfetch() { kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- sh -c "$(pod_fetch "$1")"; }
         mfail() { err "actuator metrics not reachable at $ACTUATOR_BASE in pod $POD (wrong port/path? secured?) — try --actuator-base"; exit 1; }
         if [[ -n "$METRIC" ]]; then
@@ -309,12 +344,14 @@ case "$cmd" in
     # engine — typed destructive-target gate, unskippable validation, manifest
     # provenance. It takes over when built; JDEBUG_V1=1 forces the bash tiers.
     threads)
+        require_core_ok
         if [[ -z "${JDEBUG_V1:-}" && -n "$CORE_BIN" ]]; then
             JDEBUG_KIT="$D" exec "$CORE_BIN" threads \
                 ${VIA_FLAG[@]+"${VIA_FLAG[@]}"} ${ARGS[@]+"${ARGS[@]}"}
         fi
         capture threads ;;
     heap)
+        require_core_ok
         if [[ -z "${JDEBUG_V1:-}" && -n "$CORE_BIN" ]]; then
             JDEBUG_KIT="$D" exec "$CORE_BIN" heap \
                 ${VIA_FLAG[@]+"${VIA_FLAG[@]}"} ${ARGS[@]+"${ARGS[@]}"}
@@ -323,12 +360,14 @@ case "$cmd" in
 
     fetch-heap)
         # F7: retrieve the hprof the JVM wrote on OOM (needs the core: make core)
+        require_core_ok
         if [[ -n "$CORE_BIN" ]]; then
             JDEBUG_KIT="$D" exec "$CORE_BIN" fetch-heap ${ARGS[@]+"${ARGS[@]}"}
         fi
         err "fetch-heap needs the v2 engine — build it once: make core (needs Go)"
         exit 1 ;;
     jcmd)
+        require_core_ok
         if [[ -z "${JDEBUG_V1:-}" && -n "$CORE_BIN" ]]; then
             JDEBUG_KIT="$D" exec "$CORE_BIN" jcmd ${ARGS[@]+"${ARGS[@]}"}
         fi
@@ -350,6 +389,7 @@ case "$cmd" in
     kill)            fwd "$D/observe/lifecycle.sh" kill ;;
     memory)          fwd "$D/observe/memory-report.sh" ;;
     snapshot)
+        require_core_ok
         if [[ -z "${JDEBUG_V1:-}" && -n "$CORE_BIN" ]]; then
             JDEBUG_KIT="$D" exec "$CORE_BIN" snapshot ${ARGS[@]+"${ARGS[@]}"}
         fi
@@ -410,7 +450,7 @@ HINTS
 
     push-local)
         triage_parse
-        POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")"
+        POD="$(resolve_one_pod "${REMAINING_ARGS[0]:-}")" || exit $?
         show_cmd kubectl -n "$NAMESPACE" cp "$D/jdebug-local" "$POD:/tmp/jdebug-local" -c "$APP_CONTAINER"
         if kubectl -n "$NAMESPACE" cp "$D/jdebug-local" "$POD:/tmp/jdebug-local" -c "$APP_CONTAINER"; then
             info "staged jdebug-local at $POD:/tmp/jdebug-local — now: kubectl -n $NAMESPACE exec -it $POD -c $APP_CONTAINER -- sh /tmp/jdebug-local help"
@@ -458,6 +498,24 @@ HINTS
             wrn "vendored jattach binaries missing ($JAT_VENDOR) — the jattach tier can't install;"
             wrn "  restore vendor/jattach/ from git, or pass --binary /path/to/jattach per run"
         fi
+        # capture engine + interactive frontend: say which engine captures will
+        # use, and catch a broken TUI BEFORE `jdebug` (no args) fails on it.
+        if [[ "$CORE_RC" -eq 2 ]]; then
+            bad "v2 capture engine present but FAILED verification (details above) — capture verbs"
+            bad "  will refuse until fixed: git checkout -- tools/core  (or: make core)"
+        elif [[ -n "$CORE_BIN" ]]; then
+            chk "v2 capture engine ready ($(basename "$CORE_BIN"), checksum-verified)"
+        else
+            wrn "v2 capture engine not available for this platform — captures use the v1 bash tiers"
+            wrn "  (build it once for the better engine: make core — needs Go)"
+        fi
+        if resolve_tui_binary "$D" >/dev/null 2>&1; then
+            chk "interactive menu/wizard (TUI) ready"
+        else
+            wrn "the interactive menu/wizard binary is unavailable — 'jdebug' (no args) and"
+            wrn "  'jdebug wizard' won't start; every plain CLI verb still works."
+            wrn "  build it: make tui   (needs Go — or restore vendor/tui/ from git)"
+        fi
         echo
         echo "cluster"
         if check_cluster >/dev/null 2>&1; then
@@ -466,10 +524,43 @@ HINTS
             if [[ "${PODS_FOUND:-0}" -gt 0 ]]; then
                 chk "$PODS_FOUND pod(s) match namespace=$NAMESPACE selector='${SELECTOR:-<any>}'"
                 DOC_POD="$(resolve_pods 2>/dev/null | head -n1)"
-                if kubectl -n "$NAMESPACE" exec "$DOC_POD" -c "$APP_CONTAINER" -- \
-                        sh -c "$(pod_fetch "$ACTUATOR_BASE/health")" >/dev/null 2>&1; then
-                    chk "actuator answers in $DOC_POD ($ACTUATOR_BASE) — tier 1 ready"
+                # container FIRST: if $APP_CONTAINER doesn't exist, every in-pod
+                # check below would fail and read like an actuator problem.
+                DOC_CONTAINERS="$(kubectl -n "$NAMESPACE" get pod "$DOC_POD" -o jsonpath='{.spec.containers[*].name}' 2>/dev/null | tr '\n' ' ' || true)"
+                DOC_C_OK=1
+                if [[ -z "${DOC_CONTAINERS// /}" ]]; then
+                    wrn "couldn't list containers in $DOC_POD (RBAC?) — in-pod checks below may mislead"
+                elif [[ " $DOC_CONTAINERS " == *" $APP_CONTAINER "* ]]; then
+                    chk "container '$APP_CONTAINER' exists in $DOC_POD"
                 else
+                    DOC_C_OK=0
+                    bad "no container named '$APP_CONTAINER' in $DOC_POD (it has: $DOC_CONTAINERS)"
+                    printf '      → jdebug defaults to '\''app'\''. Set the real name: --container <name>,\n'
+                    printf '        JDEBUG_CONTAINER=<name>, or the menu'\''s target editor (k)\n'
+                fi
+                if [[ "$DOC_C_OK" -eq 1 ]] && kubectl -n "$NAMESPACE" exec "$DOC_POD" -c "$APP_CONTAINER" -- \
+                        sh -c "$(pod_fetch "$ACTUATOR_BASE/health")" >/dev/null 2>&1; then
+                    chk "actuator answers in $DOC_POD ($ACTUATOR_BASE)"
+                    # /health up is NOT tier-1-ready: stock Spring Boot exposes ONLY
+                    # /health over HTTP — the capture endpoint needs opting in. Probe it.
+                    TD_CODE="$(kubectl -n "$NAMESPACE" exec "$DOC_POD" -c "$APP_CONTAINER" -- \
+                        sh -c "$(pod_http_status "$ACTUATOR_BASE/threaddump")" 2>/dev/null | tr -dc '0-9')"
+                    case "$TD_CODE" in
+                        200)
+                            chk "capture endpoint $ACTUATOR_BASE/threaddump answers — tier 1 (actuator) ready" ;;
+                        401|403)
+                            wrn "capture endpoint /threaddump is SECURED (HTTP $TD_CODE) — tier 1 needs credentials:"
+                            wrn "  export ACTUATOR_AUTH=bearer:ENV_VAR (or basic:USER_VAR:PASS_VAR) — menu: target editor (k)" ;;
+                        404)
+                            wrn "/health answers but /threaddump is NOT EXPOSED (HTTP 404) — tier 1 will fail."
+                            wrn "  Stock Spring Boot exposes only /health; the app must opt in:"
+                            wrn "    management.endpoints.web.exposure.include=health,threaddump,heapdump,metrics,loggers"
+                            wrn "  Until then, captures use the jattach/jdk tiers automatically." ;;
+                        *)
+                            wrn "couldn't probe $ACTUATOR_BASE/threaddump (got: ${TD_CODE:-no reply}) — tier 1 unverified;"
+                            wrn "  captures fall back to jattach/jdk automatically if it fails" ;;
+                    esac
+                elif [[ "$DOC_C_OK" -eq 1 ]]; then
                     wrn "actuator not answering at $ACTUATOR_BASE in $DOC_POD — the actuator tier won't"
                     wrn "  work there. Custom port/path? --actuator-base. No actuator at all? the"
                     wrn "  jattach tier needs none: jdebug install-jattach"

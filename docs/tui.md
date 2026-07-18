@@ -9,12 +9,13 @@ nav_order: 5
 every action is labeled with what it answers and how risky it is, and the
 wizard encodes the diagnostic playbooks so you don't have to remember them.
 
-## Two frontends, one contract
+## One frontend, two ways to get it
 
-The menu ships in two implementations with identical keys, screens, gating,
-config, and session-log behavior:
+The menu is a single Go implementation (the old bash menu was removed —
+see architecture.md, Phase 0b). You either build it or use the vendored
+binary:
 
-- **Go (Bubble Tea)** — the preferred frontend. Build once with `make tui`
+- **Go (Bubble Tea)** — the frontend. Build once with `make tui`
   (needs a Go toolchain); `jdebug` automatically prefers the built binary at
   `tui/jdebug-tui`. A **full-screen dashboard that scales to your terminal**:
   on a big window (≥140×34) it becomes a grid — menu on the left, a **live
@@ -46,12 +47,14 @@ config, and session-log behavior:
   with a full-screen output view for commands. Every action shells out to
   the same tested bash CLI.
 - **vendored binaries** — commits vendor hash-verified builds into
-  `vendor/tui/` for darwin/linux × arm64/amd64 (see `make hooks`), so a fresh
-  clone has a working TUI with no toolchain. `jdebug` checks the binary
-  against `SHA256SUMS` before running it.
+  `vendor/tui/` for darwin-arm64, linux-amd64, and linux-arm64 (see
+  `make hooks`), so a fresh clone has a working TUI with no toolchain on
+  those platforms. (Intel Macs — darwin-amd64 — currently need `make tui`.)
+  `jdebug` checks the binary against `SHA256SUMS` before running it.
 
-Both read and write the same remembered target (`~/.config/jdebug/target`),
-so you can switch between them freely.
+The TUI reads and writes the same remembered target
+(`~/.config/jdebug/target`) as the CLI verbs, so they always agree on which
+pod you're aimed at.
 
 ## Layout
 

@@ -28,7 +28,9 @@ func podAuthFlags(client, spec string) string {
 				if client == "curl" {
 					return fmt.Sprintf(`-u "$%s:$%s" `, u, p)
 				}
-				return fmt.Sprintf(`--user="$%s" --password="$%s" `, u, p)
+				// busybox wget (the stated target image) has no
+				// --user/--password — send the header directly.
+				return fmt.Sprintf(`--header="Authorization: Basic $(printf '%%s:%%s' "$%s" "$%s" | base64 | tr -d '\n')" `, u, p)
 			}
 		}
 	}
@@ -42,8 +44,11 @@ func PodFetchScript(url, accept, auth string) string {
 	aw := podAuthFlags("wget", auth)
 	nohttp := `echo 'error: neither curl nor wget exists in this container — the actuator tier cannot run here (jattach needs no HTTP: --via jattach)' >&2; exit 127`
 	if accept != "" {
-		return fmt.Sprintf(`if command -v curl >/dev/null 2>&1; then curl -fsS %s-H 'Accept: %s' '%s'; elif command -v wget >/dev/null 2>&1; then wget -qO- %s--header='Accept: %s' '%s' 2>/dev/null || wget -qO- '%s'; else %s; fi`,
-			ac, accept, url, aw, accept, url, url, nohttp)
+		// NO bare-wget retry here: a retry that drops the auth + Accept
+		// headers can 401 where the first try 4xx'd differently, and a
+		// partial-then-retry pair can concatenate two bodies into one file.
+		return fmt.Sprintf(`if command -v curl >/dev/null 2>&1; then curl -fsS %s-H 'Accept: %s' '%s'; elif command -v wget >/dev/null 2>&1; then wget -qO- %s--header='Accept: %s' '%s'; else %s; fi`,
+			ac, accept, url, aw, accept, url, nohttp)
 	}
 	return fmt.Sprintf(`if command -v curl >/dev/null 2>&1; then curl -fsS %s'%s'; elif command -v wget >/dev/null 2>&1; then wget -qO- %s'%s'; else %s; fi`,
 		ac, url, aw, url, nohttp)

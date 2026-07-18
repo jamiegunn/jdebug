@@ -727,7 +727,14 @@ func pathFromRoot(target int32, parent []int32) []int32 {
 
 // --- render ------------------------------------------------------------------
 
-func analyzeHprofDeep(path string) (string, error) {
+func analyzeHprofDeep(path string) (out string, err error) {
+	// same contract as analyzeHprof: a corrupt dump yields a message, not a
+	// Go stack trace (the caller prints "(retained-size pass skipped: …)").
+	defer func() {
+		if rec := recover(); rec != nil {
+			out, err = "", fmt.Errorf("corrupt heap dump (deep pass aborted: %v)", rec)
+		}
+	}()
 	g, p, err := buildHeapGraph(path)
 	if err != nil {
 		return "", err

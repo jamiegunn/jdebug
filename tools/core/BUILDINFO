@@ -1,4 +1,4 @@
 # vendored jdebug-core — written by scripts/vendor-core.sh
-go_version: go1.26.4
-source_sha256: 163742dc5f5769a31488207d46bf89e71ff3414eae6bb58adc8e237ffcc3a3b0
-built_at: 2026-07-18T03:46:26Z
+go_version: go1.24.7
+source_sha256: d46a95e3d9d8c909e7c26504be5bb3f5677afd01855d6732c92a5ed212aec8cb
+built_at: 2026-07-18T18:13:39Z

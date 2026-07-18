@@ -329,27 +329,53 @@ func selectorCandidates(ns, pod string) ([]string, enum) {
 
 type probe struct {
 	OK      bool
-	Cluster bool     // remote: cluster reachable
-	Jattach bool     // local: jattach staged
-	Lines   []string // rendered checklist lines
-	When    time.Time
+	Cluster bool // remote: cluster reachable AND credentials accepted
+	// Unauthorized: the cluster ANSWERED and rejected the credentials — the
+	// most common junior failure (expired EKS/GKE/OIDC token). It must never
+	// be shown as "unreachable": "switch context" is the wrong fix; re-auth
+	// is the right one.
+	Unauthorized bool
+	Jattach      bool     // local: jattach staged
+	Lines        []string // rendered checklist lines
+	When         time.Time
 }
 
 func zeroTime() time.Time { return time.Time{} }
 
-func clusterReachable() bool {
-	return exec.Command("kubectl", "get", "--raw=/version", "--request-timeout=3s").Run() == nil
+var unauthorizedRe = regexp.MustCompile(`(?i)unauthorized|must be logged in|token.{0,20}expired|provide credentials`)
+
+// clusterStatus distinguishes "ok" / "unauthorized" / "unreachable" — the
+// three need different fixes, and the /version probe's stderr tells them apart.
+func clusterStatus() string {
+	c := exec.Command("kubectl", "get", "--raw=/version", "--request-timeout=3s")
+	var errb bytes.Buffer
+	c.Stderr = &errb
+	if c.Run() == nil {
+		return "ok"
+	}
+	if unauthorizedRe.MatchString(errb.String()) {
+		return "unauthorized"
+	}
+	return "unreachable"
 }
+
+func clusterReachable() bool { return clusterStatus() == "ok" }
 
 func remoteProbe(t target) probe {
 	p := probe{When: time.Now()}
 	bad := false
-	p.Cluster = clusterReachable()
-	if p.Cluster {
+	switch clusterStatus() {
+	case "ok":
+		p.Cluster = true
 		p.Lines = append(p.Lines, cSafe.Render("   ✓")+cMuted.Render(" cluster reachable"))
-	} else {
+	case "unauthorized":
 		bad = true
+		p.Unauthorized = true
+		p.Lines = append(p.Lines, cDisr.Render("   ✗")+cMuted.Render(" credentials — the cluster is UP but REJECTED your token (expired). Re-authenticate"))
+		p.Lines = append(p.Lines, cMuted.Render("     (aws sso login · gcloud auth login · az login · oc login) — switching contexts won't fix this"))
+	default:
 		p.Lines = append(p.Lines, cDisr.Render("   ✗")+cMuted.Render(" cluster — not reachable (press ")+cKey.Render("c")+cMuted.Render(" for the full why + fix, or ")+cKey.Render("g")+cMuted.Render(" to switch context)"))
+		bad = true
 	}
 	switch {
 	case t.Pod == "":

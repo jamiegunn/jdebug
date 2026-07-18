@@ -21,8 +21,8 @@
 # http://localhost:8080/actuator — override with $ACTUATOR_BASE.
 #
 # Output (under the kit's dumps/ dir — override with $OUT_DIR):
-#         dumps/threads/<pod>-actuator-thread-<ts>.{txt,json}
-#         dumps/heap/<pod>-actuator-heap-<ts>.hprof
+#         dumps/pods/<pod>/<ts>/threads-actuator.{txt,json}
+#         dumps/pods/<pod>/<ts>/heap-actuator.hprof
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -45,6 +45,11 @@ explain_capture_fail() {
     local errfile="$1" url="$2" jhint="$3" eline
     eline="$(head -n1 "$errfile" 2>/dev/null)"
     case "$eline" in
+        # wrong-container and no-shell first: both CONTAIN "not found"-ish text
+        # that must not be mistaken for "pod gone" or blamed on the actuator.
+        *"not valid for pod"*|*"container name must be specified"*|*'exec: "sh"'*|*'"sh": executable file not found'*|*Unauthorized*|*"must be logged in"*)
+            err "the capture couldn't reach the pod (it didn't fail at the actuator):"
+            explain_kubectl_error "$eline" "the in-pod capture" ;;
         *NotFound*|*"not found"*|*[Ff]orbidden*|*refused*|*"no such"*|*Unable*|*"context deadline"*|*"unable to upgrade"*)
             err "the capture couldn't reach the pod (it didn't fail at the actuator):"
             explain_kubectl_error "$eline" "the in-pod capture" ;;
@@ -64,13 +69,18 @@ explain_actuator_fail() {
     case "$code" in
         401|403)
             err "  secured (HTTP $code): the actuator needs credentials."
-            err "    → set auth in the target editor (k): bearer:ENV_VAR or basic:USER_VAR:PASS_VAR,"
-            err "      naming the pod's OWN credential env vars (verify with T, then: env | grep -i actuator)."
+            err "    → CLI: export ACTUATOR_AUTH=bearer:ENV_VAR  (or basic:USER_VAR:PASS_VAR),"
+            err "      naming the pod's OWN credential env vars — never a literal secret."
+            err "    → menu: set the same value in the target editor (k); verify with T, then: env | grep -i actuator"
             err "    → or skip HTTP entirely: $jhint" ;;
         404)
             err "  not found (HTTP 404): nothing is served at this path."
-            err "    → the actuator may be disabled, on a different base path, or behind management.server.port."
-            err "    → fix the actuator URL in the target editor (g/a), or skip HTTP: $jhint" ;;
+            err "    → MOST COMMON CAUSE: stock Spring Boot only exposes /health over HTTP."
+            err "      The app must opt in to the capture endpoints, e.g. in application properties:"
+            err "        management.endpoints.web.exposure.include=health,threaddump,heapdump,metrics,loggers"
+            err "    → also possible: actuator disabled, a different base path, or management.server.port."
+            err "      Fix the URL via --actuator-base / \$ACTUATOR_BASE (menu: target editor g/a)."
+            err "    → or skip HTTP entirely: $jhint" ;;
         ""|000)
             err "  no HTTP reply: the app isn't serving (wedged, still starting, or actuator off)."
             err "    → skip HTTP entirely: $jhint" ;;

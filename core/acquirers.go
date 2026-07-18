@@ -1,6 +1,7 @@
 package core
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
@@ -66,7 +67,19 @@ func (a ActuatorAcquirer) Acquire(ctx context.Context, c Cluster, t Resolved, de
 	}
 	defer f.Close()
 	if err := c.ExecPod(ctx, t.Namespace, t.Pod, t.Container, f, "sh", "-c", PodFetchScript(url, accept, a.Auth)); err != nil {
-		// classify: secured vs absent vs wedged — the ONE precise next action
+		// a canceled/timed-out context is OUR doing, not the app's — say so
+		// instead of probing (which would also fail) and blaming the actuator.
+		if ctx.Err() != nil {
+			return 0, fmt.Errorf("capture canceled or timed out (Ctrl-C / JDEBUG_TIMEOUT): %w", ctx.Err())
+		}
+		// FIRST: kubectl-level failures (wrong container, no shell, expired
+		// creds, pod gone) are NOT actuator problems — probing the HTTP
+		// status would fail the same way and misdiagnose them as "no HTTP
+		// reply". Name the real cause instead.
+		if msg := explainExecFail(err.Error(), t); msg != "" {
+			return 0, fmt.Errorf("%w\n%s", err, msg)
+		}
+		// then classify: secured vs absent vs wedged — the ONE precise next action
 		code, _ := ExecPodCapture(ctx, c, t.Namespace, t.Pod, t.Container, "sh", "-c", PodHTTPStatusScript(url, a.Auth))
 		code = strings.Map(func(r rune) rune {
 			if r >= '0' && r <= '9' {
@@ -77,6 +90,31 @@ func (a ActuatorAcquirer) Acquire(ctx context.Context, c Cluster, t Resolved, de
 		return 0, fmt.Errorf("%w\n%s", err, explainActuatorFail(code))
 	}
 	return 0, nil
+}
+
+// explainExecFail classifies kubectl-exec failures that are NOT actuator
+// problems, so they are never blamed on the actuator. Returns "" when the
+// error isn't one of these classes.
+func explainExecFail(e string, t Resolved) string {
+	switch {
+	case strings.Contains(e, "not valid for pod") || strings.Contains(e, "container name must be specified"):
+		return "  the pod has no container named '" + t.Container + "' (jdebug's default is 'app').\n" +
+			"    → point it at the real one: --container <name>\n" +
+			"      (list them: kubectl -n " + t.Namespace + " get pod " + t.Pod + " -o jsonpath='{.spec.containers[*].name}')"
+	case strings.Contains(e, `exec: "sh"`) || strings.Contains(e, `"sh": executable file not found`):
+		return "  the container has NO SHELL (a distroless/minimal image) — the pod itself may be healthy.\n" +
+			"    → in-pod capture tiers need sh; use the ephemeral JDK tier: --via jdk"
+	case strings.Contains(e, "Unauthorized") || strings.Contains(e, "must be logged in"):
+		return "  the cluster REJECTED your credentials (expired token) — re-authenticate\n" +
+			"    (aws sso login / gcloud auth login / az login / oc login), then re-run."
+	case strings.Contains(e, "NotFound"):
+		return "  the pod doesn't exist (anymore) — crash-looping pods are REPLACED under new\n" +
+			"    names; re-pick it (jdebug status shows the current names)."
+	case strings.Contains(e, "orbidden"):
+		return "  your RBAC doesn't allow exec into this pod — ask your cluster admin for\n" +
+			"    pods/exec; the read-only observe verbs may still work."
+	}
+	return ""
 }
 
 func explainActuatorFail(code string) string {
@@ -429,13 +467,22 @@ func (j JDKAcquirer) Acquire(ctx context.Context, c Cluster, t Resolved, destPat
 }
 
 // followDebugLogs retries `logs -f` while the ephemeral container starts.
+// Each attempt writes to its OWN buffer and only the final successful read
+// is flushed to w — a mid-stream drop followed by a successful retry must
+// not write the dump twice (doubled counts pass validation and corrupt the
+// analysis). The retry budget covers a cold-node image pull (~200MB JDK).
 func followDebugLogs(ctx context.Context, c Cluster, t Resolved, container string, w io.Writer) error {
 	var err error
-	for i := 0; i < 10; i++ {
-		if err = c.PodLogs(ctx, t.Namespace, t.Pod, container, true, w); err == nil {
-			return nil
+	for i := 0; i < 30; i++ {
+		if ctx.Err() != nil {
+			return ctx.Err()
+		}
+		var buf bytes.Buffer
+		if err = c.PodLogs(ctx, t.Namespace, t.Pod, container, true, &buf); err == nil {
+			_, werr := w.Write(buf.Bytes())
+			return werr
 		}
 		time.Sleep(time.Second)
 	}
-	return fmt.Errorf("could not read the debug container's output: %w", err)
+	return fmt.Errorf("could not read the debug container's output (the capture may still have completed in the pod): %w", err)
 }

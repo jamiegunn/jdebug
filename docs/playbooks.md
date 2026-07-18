@@ -166,11 +166,11 @@ findings surface in `jdebug analyze`'s summary alongside the JVM ones.
 All recommended tools are free and run locally — evidence never has to leave
 your machine:
 
-| evidence | tool (local install) | first click |
+| evidence (under `dumps/pods/<pod>/<ts>/`) | tool (local install) | first click |
 |---|---|---|
 | anything captured | `jdebug analyze` (built in) | the ⚠ findings |
-| `threads/*.txt` | [VisualVM](https://visualvm.github.io/) | File → Load, check the thread states |
-| `heap/*.hprof` | [Eclipse MAT](https://eclipse.dev/mat/) | *Leak Suspects* report |
-| `heap/*.hprof` (two) | Eclipse MAT | *compare to another heap dump* |
+| `threads-*.txt` | [VisualVM](https://visualvm.github.io/) | File → Load, check the thread states |
+| `heap-*.hprof` | [Eclipse MAT](https://eclipse.dev/mat/) | *Leak Suspects* report |
+| `heap-*.hprof` (two) | Eclipse MAT | *compare to another heap dump* |
 | `*.jfr` | [JDK Mission Control](https://openjdk.org/projects/jmc/) | Method Profiling flame view |
-| `snapshot-*/` | a text editor | `memory-report.txt`, then `threads.txt` |
+| a snapshot bundle (`.snapshot` marker) | a text editor | `memory-report.txt`, then `threads.txt` |

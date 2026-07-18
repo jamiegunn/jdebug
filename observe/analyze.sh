@@ -7,6 +7,8 @@
 #
 # Usage:
 #   ./analyze.sh [file-or-directory]      # default: the kit's dumps/ dir
+#   ./analyze.sh --deep <heap.hprof>      # + retained-size pass (needs the TUI binary)
+#   ./analyze.sh --diff [before after]    # what GREW between two heap dumps (needs the TUI binary)
 #
 # Understands:
 #   thread dumps    (files containing "Full thread dump")
@@ -31,6 +33,7 @@ for _a in "$@"; do
     case "$_a" in
         --deep|-d)  DEEP=1 ;;
         --diff)     DIFF=1 ;;
+        -h|--help)  usage; exit 0 ;;
         *) _args+=("$_a") ;;
     esac
 done
@@ -48,7 +51,7 @@ _pick_heaps() {
 if [[ -n "$DIFF" ]]; then
     # two memory reports? (F9) → the core differ answers "where did it grow"
     if [[ -f "${1:-}" && -f "${2:-}" ]] && grep -q 'Container RSS' "$1" 2>/dev/null && [[ -z "${JDEBUG_V1:-}" ]]; then
-        _core="$(resolve_core_binary "$SCRIPTS_ROOT" 2>/dev/null || true)"
+        _core="$(resolve_core_binary "$SCRIPTS_ROOT")" || _core=""
         [[ -n "$_core" ]] && exec "$_core" diff-memory "$1" "$2"
     fi
     # the heap-diff reader is the Go TUI binary — a make-tui build if present,
@@ -85,14 +88,29 @@ analyze_threads() {
     hd "thread dump: $f"
     # v2: the Go parser builds a real lock graph, so deadlocks are found on
     # actuator-format dumps too (they carry no jstack banner — the grep
-    # below false-negatives on them). Falls back to greps if core is absent.
-    if [[ -z "${JDEBUG_V1:-}" && -x "$SCRIPTS_ROOT/core/jdebug-core" ]]; then
-        local out n
-        if out="$("$SCRIPTS_ROOT/core/jdebug-core" analyze-threads "$f" 2>/dev/null)" && [[ -n "$out" ]]; then
-            n="$(printf '%s\n' "$out" | sed -n 's/^__FLAGS__ //p')"
-            printf '%s\n' "$out" | grep -v '^__FLAGS__'
-            FLAGS=$((FLAGS + ${n:-0}))
-            return
+    # below false-negatives on them). Resolve the SAME way capture does:
+    # local `make core` build OR the checksum-verified vendored binary — a
+    # fresh clone must get the real parser, not the grep fallback. Errors are
+    # SHOWN (they may say "this isn't a thread dump"), not discarded.
+    if [[ -z "${JDEBUG_V1:-}" ]]; then
+        local core out n
+        core="$(resolve_core_binary "$SCRIPTS_ROOT")" || core=""
+        if [[ -n "$core" ]]; then
+            local rc=0
+            out="$("$core" analyze-threads "$f")" || rc=$?
+            if [[ $rc -eq 0 && -n "$out" ]]; then
+                n="$(printf '%s\n' "$out" | sed -n 's/^__FLAGS__ //p')"
+                printf '%s\n' "$out" | grep -v '^__FLAGS__'
+                FLAGS=$((FLAGS + ${n:-0}))
+                return
+            fi
+            # the parser refused (e.g. "not a thread dump") — that refusal IS
+            # the finding; count it and do not let the grep pass overrule it.
+            if [[ -n "$out" ]]; then
+                printf '%s\n' "$out" | grep -v '^__FLAGS__' | sed 's/^/    /'
+                flag "the thread-dump parser could not read this file — treat it as a failed capture, not as healthy"
+                return
+            fi
         fi
     fi
     analyze_threads_grep "$f"
@@ -101,6 +119,15 @@ analyze_threads() {
 analyze_threads_grep() {
     local f="$1" before=$FLAGS total run blk wai tim
     total=$(grep -c '^"' "$f")
+    # 0 parsed threads is NEVER "nothing alarming" — it means this file is not
+    # a thread dump this pass can read (garbage, truncated, or a JDK-21
+    # virtual-thread dump whose headers differ). Refuse to bless it.
+    if [[ "${total:-0}" -eq 0 ]]; then
+        flag "0 threads parsed — this does not look like a thread dump (garbage, truncated, or an unsupported format)"
+        say "treat this as a FAILED capture: recapture (jdebug threads) and inspect the file"
+        say "note: jcmd Thread.dump_to_file (JDK 21 virtual-thread) dumps use a different format this pass can't read"
+        return
+    fi
     run=$(grep -c 'Thread.State: RUNNABLE' "$f")
     blk=$(grep -c 'Thread.State: BLOCKED' "$f")
     wai=$(grep -c 'Thread.State: WAITING' "$f")

@@ -5,7 +5,7 @@
 # (githooks/pre-commit) whenever tui/ sources change; run it manually any time.
 #
 # Writes:
-#   vendor/tui/jdebug-tui-<os>-<arch>   static binaries (darwin/linux × arm64/amd64)
+#   vendor/tui/jdebug-tui-<os>-<arch>   static binaries (darwin-arm64, linux-arm64, linux-amd64)
 #   vendor/tui/SHA256SUMS               sha256 of each binary (verified by jdebug
 #                                       before it will exec a vendored binary)
 #   vendor/tui/BUILDINFO                go version + source tree hash, binding the

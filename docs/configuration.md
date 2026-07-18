@@ -22,7 +22,14 @@ longer exists is detected at startup and falls back to auto with a notice.
 | `JDEBUG_SELECTOR` | `-l` | *(empty = any pod)* | label selector for your app |
 | `JDEBUG_CONTAINER` | `--container` | `app` | app container name in the pod |
 | `ACTUATOR_BASE` | `--actuator-base` | `http://localhost:8080/actuator` | actuator URL *inside* the pod |
+| `ACTUATOR_AUTH` / `JDEBUG_ACTUATOR_AUTH` | — | *(none)* | secured-actuator credentials as a REFERENCE to the pod's own env vars: `bearer:ENV_VAR` or `basic:USER_VAR:PASS_VAR` — never a literal secret. (The menu's target editor `k` sets the same thing.) |
 | `KUBECONFIG` | — | ambient | standard kubectl context selection; never rewritten |
+
+> **Stock Spring Boot note:** only `/actuator/health` is exposed over HTTP by
+> default. For the capture endpoints the app must opt in, e.g.
+> `management.endpoints.web.exposure.include=health,threaddump,heapdump,metrics,loggers`.
+> `jdebug doctor` probes `/threaddump` specifically and tells you when this is
+> the blocker.
 
 ## Capture & evidence
 
@@ -31,6 +38,8 @@ longer exists is detected at startup and falls back to auto with a notice.
 | `JDEBUG_DUMPS` | `<kit>/dumps` | root for all operator-side captures + session logs |
 | `OUT_DIR` | per command | one-off override of a capture's output dir |
 | `JATTACH_VENDOR_DIR` | `<kit>/vendor/jattach` | the vendored, checksum-verified jattach binaries |
+| `JDEBUG_TIMEOUT` | *(none = no limit)* | global budget for one v2-engine capture, e.g. `90s`, `5m` — so no capture can hang an incident call. Unset by default: multi-GB heap dumps legitimately take minutes |
+| `JDEBUG_V1` | *(unset)* | `1` forces the v1 bash capture tiers even when the v2 Go engine is present |
 
 ## jattach tier
 

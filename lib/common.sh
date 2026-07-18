@@ -13,12 +13,14 @@ JDEBUG_CONFIG_DIR="${JDEBUG_CONFIG_DIR:-${XDG_CONFIG_HOME:-$HOME/.config}/jdebug
 JDEBUG_TARGET_FILE="$JDEBUG_CONFIG_DIR/target"
 if [[ -f "$JDEBUG_TARGET_FILE" ]]; then
     # The file is written by the menu's target editor with printf %q, and
-    # sourcing EXECUTES it — so gate it first: every line must be a plain
-    # SAVED_* assignment with no command substitution. Anything else means
-    # the file was tampered with or corrupted; ignore it (fall back to
-    # defaults) rather than execute it.
-    if grep -qvE '^(SAVED_[A-Z_]+=|#|[[:space:]]*$)' "$JDEBUG_TARGET_FILE" 2>/dev/null \
-       || grep -qE '\$\(|`' "$JDEBUG_TARGET_FILE" 2>/dev/null; then
+    # sourcing EXECUTES it — so gate it first with a WHITELIST: every line must
+    # be a comment, blank, or a plain SAVED_* assignment whose value uses only
+    # benign characters (or is the empty ''). A prefix-only check is bypassable
+    # ("SAVED_NAMESPACE=x; evil" and "SAVED_NAMESPACE=x evil" both start with a
+    # valid assignment but execute a command), so the WHOLE line is matched.
+    # Anything fancier means tampered/corrupted; ignore it (fall back to
+    # defaults, with a warning) rather than execute it.
+    if grep -qvE "^(#.*|[[:space:]]*|SAVED_[A-Z_]+=(''|[A-Za-z0-9_.,:/=@%+-]*))$" "$JDEBUG_TARGET_FILE" 2>/dev/null; then
         printf 'warning: ignoring %s — unexpected content (not a saved-target file); using defaults\n' \
             "$JDEBUG_TARGET_FILE" >&2
     else
@@ -211,10 +213,12 @@ resolve_one_pod() {
     n="$(printf '%s\n' "$pods" | grep -c .)"
     if [[ "$n" -gt 1 ]]; then
         if [[ -n "${JDEBUG_DESTRUCTIVE:-}" ]]; then
-            # pausing a production JVM must never hit a guessed replica —
+            # a destructive operation must never hit a guessed replica —
             # capturing from a healthy pod while the sick one sits next to it
             # is the classic wrong-diagnosis trap, and here it also HURTS.
-            err "$n pods match and this operation PAUSES the JVM — refusing to guess which replica."
+            # JDEBUG_DESTRUCTIVE_WHY lets each verb say what the harm is
+            # (heap: pauses the JVM; kill: deletes a pod; restart: re-rolls).
+            err "$n pods match and this operation ${JDEBUG_DESTRUCTIVE_WHY:-PAUSES the JVM} — refusing to guess which replica."
             err "  name the pod explicitly (e.g. the restarting one). Matching pods:"
             printf '%s\n' "$pods" | sed 's/^/    /' >&2
             exit 2
@@ -339,8 +343,13 @@ resolve_tui_binary() {
 
 # resolve_core_binary <kit-root> — the v2 capture engine (Go). Same discipline as
 # resolve_tui_binary: a local `make core` build wins; otherwise the vendored,
-# checksum-verified binary for this os/arch. Prints the path, or returns 1
-# (quietly — callers fall back to the v1 bash capture tiers).
+# checksum-verified binary for this os/arch. Prints the path.
+# Return codes — callers MUST distinguish them (a checksum gate that fails
+# open into the v1 bash tiers silently would defeat its own purpose):
+#   0  path printed, binary verified
+#   1  no binary for this platform (quiet — v1 bash tiers are a fair fallback)
+#   2  binary PRESENT but FAILED verification (loud — do NOT run it, do NOT
+#      silently fall back; the operator must decide)
 resolve_core_binary() {
     local root="${1:-${JDEBUG_KIT:-}}"
     if [[ -x "$root/core/jdebug-core" ]]; then
@@ -351,12 +360,23 @@ resolve_core_binary() {
     case "$(uname -m)" in x86_64|amd64) arch=amd64 ;; aarch64|arm64) arch=arm64 ;; *) arch="$(uname -m)" ;; esac
     f="$root/tools/core/jdebug-core-$os-$arch"
     sums="$root/tools/core/SHA256SUMS"
-    [[ -x "$f" && -f "$sums" ]] || return 1
+    [[ -x "$f" ]] || return 1
+    if [[ ! -f "$sums" ]]; then
+        err "vendored core has no SHA256SUMS ($sums) — refusing to run an unverified binary."
+        err "  → restore tools/core/ from git, or build fresh: make core"
+        return 2
+    fi
     want="$(awk -v f="$(basename "$f")" '$2==f {print $1}' "$sums")"
     if command -v sha256sum >/dev/null 2>&1; then got="$(sha256sum "$f" | awk '{print $1}')"
     elif command -v shasum >/dev/null 2>&1; then got="$(shasum -a 256 "$f" | awk '{print $1}')"
-    else return 1; fi
-    [[ -n "$want" && "$want" == "$got" ]] || return 1
+    else got=""; fi
+    if [[ -z "$want" || -z "$got" || "$want" != "$got" ]]; then
+        err "vendored core FAILED its checksum — refusing to run it."
+        err "  expected  ${want:-<no entry in SHA256SUMS>}"
+        err "  got       ${got:-<could not hash>}  ($f)"
+        err "  → restore tools/core/ from git, or build fresh: make core"
+        return 2
+    fi
     # provenance (non-fatal): same source-drift note as the TUI resolver.
     local bi="$root/tools/core/BUILDINFO" rec now
     if [[ -f "$bi" ]]; then
@@ -386,15 +406,34 @@ check_cluster() {
     local out ctx
     out="$(kubectl get --raw=/version --request-timeout=4s 2>&1 >/dev/null)" && return 0
     ctx="$(kubectl config current-context 2>/dev/null || true)"
+    # Expired credentials are NOT "unreachable": the cluster answered and
+    # rejected them. This is the single most common failure on managed clusters
+    # (EKS/GKE/AKS/OpenShift) — an expired SSO/OIDC/exec-plugin token — and it
+    # needs a different headline, because "switch context" won't fix it.
+    case "$out" in
+        *Unauthorized*|*"must be logged in"*|*"provide credentials"*|*"token has expired"*)
+            err "the cluster is UP but REJECTED your credentials  (context: ${ctx:-<none set>})"
+            err "  why: your login token has expired (typical on EKS/GKE/AKS/OpenShift:"
+            err "       SSO / OIDC / cloud-CLI tokens time out)."
+            err "  fix: re-authenticate for this cluster, then re-run. Common commands:"
+            err "         EKS: aws sso login  (or aws eks update-kubeconfig --name <cluster>)"
+            err "         GKE: gcloud auth login   ·   AKS: az login   ·   OpenShift: oc login"
+            err "       switching contexts will NOT fix expired credentials."
+            return 1 ;;
+    esac
     err "can't reach the Kubernetes cluster  (context: ${ctx:-<none set>})"
     case "$out" in
         *x509*|*certificate*)
-            err "  why: the cluster's TLS certificate isn't trusted. This almost always means the"
-            err "       cluster was recreated/restarted and your saved kubeconfig credentials went"
-            err "       stale — very common with Rancher Desktop, k3s, minikube, and kind."
-            err "  fix: restart the local cluster app (it rewrites the kubeconfig), or switch to a"
-            err "       working context:  kubectl config use-context <name>"
-            err "       (in the jdebug menu, press t — it lists your contexts and switches for you)" ;;
+            err "  why: the cluster's TLS certificate isn't trusted."
+            err "       LOCAL clusters (Rancher Desktop, k3s, minikube, kind): the cluster was"
+            err "       recreated/restarted and your saved kubeconfig credentials went stale —"
+            err "       fix: restart the local cluster app (it rewrites the kubeconfig)."
+            err "       MANAGED clusters (EKS/GKE/AKS/OpenShift): usually a corporate proxy"
+            err "       intercepting TLS, a rotated cluster CA, or a stale kubeconfig —"
+            err "       fix: re-fetch the kubeconfig (e.g. aws eks update-kubeconfig / gcloud"
+            err "       container clusters get-credentials), or ask about the proxy's CA."
+            err "       Either way you can also switch to a working context:"
+            err "       kubectl config use-context <name>  (jdebug menu: press t)" ;;
         *"connection refused"*|*"i/o timeout"*|*"no such host"*|*"Unable to connect"*|*"context deadline"*)
             err "  why: nothing answered at the cluster's address — it's off, asleep, or unreachable."
             err "  fix: start the cluster (Rancher/Docker Desktop, VPN for remote clusters), or"
@@ -416,6 +455,22 @@ check_cluster() {
 explain_kubectl_error() {
     local e="$1" what="${2:-that command}"
     case "$e" in
+        *Unauthorized*|*"must be logged in"*)
+            echo "  ✗ the cluster rejected your credentials while $what — they've expired."
+            echo "      $e"
+            echo "    → re-authenticate (EKS: aws sso login · GKE: gcloud auth login · AKS: az login"
+            echo "      · OpenShift: oc login), then re-run. Switching contexts won't fix this." ;;
+        *"not valid for pod"*|*"container name must be specified"*)
+            echo "  ✗ the pod has no container named '$APP_CONTAINER' — kubernetes' exact words:"
+            echo "      $e"
+            echo "    → jdebug defaults to the container name 'app'. Point it at the real one:"
+            echo "      --container <name>  (list them: kubectl -n $NAMESPACE get pod <pod> \\"
+            echo "      -o jsonpath='{.spec.containers[*].name}')" ;;
+        *'exec: "sh"'*|*'"sh": executable file not found'*)
+            echo "  ✗ the container has NO SHELL (a distroless/minimal image): $e"
+            echo "    → the pod exists and may be healthy — this is an image property, not a crash."
+            echo "      in-pod capture tiers need sh; use the ephemeral JDK tier instead:"
+            echo "      jdebug threads --via jdk   (runs in a debug container, no shell needed)" ;;
         *[Ff]orbidden*)
             echo "  ✗ your RBAC doesn't allow $what — kubernetes' exact words:"
             echo "      $e"

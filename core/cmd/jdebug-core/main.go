@@ -3,17 +3,23 @@
 // forces the bash implementations. Exit codes match v1 exactly:
 //
 //	0  capture succeeded
-//	1  every tier failed (cascade) or a forced tier failed
+//	1  every tier failed (cascade), a forced tier failed, an analyzed file
+//	   was unreadable as a dump, or fetch-heap found nothing to fetch
 //	2  target resolution failed (no pod / ambiguous destructive match)
 //	64 usage error or a missing --confirm gate
+//
+// (No other codes: 3 is the DISPATCHER's "environment problem" and must not
+// be reused here — `jdebug fetch-heap; echo $?` has one meaning per code.)
 package main
 
 import (
 	"context"
 	"fmt"
 	"os"
+	"os/signal"
 	"path/filepath"
 	"strings"
+	"syscall"
 	"time"
 
 	core "github.com/jamiegunn/jdebug/core"
@@ -171,8 +177,14 @@ func main() {
 			errf("%v", err)
 			os.Exit(1)
 		}
-		n := d.Analyze().Render(os.Stdout)
+		a := d.Analyze()
+		n := a.Render(os.Stdout)
 		fmt.Printf("__FLAGS__ %d\n", n)
+		// 0 parsed threads = this was not a readable thread dump; a clean
+		// exit here would let scripts mistake garbage for health (I.3).
+		if a.Total == 0 {
+			os.Exit(1)
+		}
 		return
 	case "diff-memory":
 		// offline: growth between two jdebug memory reports (F9)
@@ -213,7 +225,24 @@ func main() {
 	}
 
 	o.cfg.Announce()
-	ctx := context.Background()
+	// Ctrl-C (or a dispatcher SIGTERM) cancels the context: the running
+	// kubectl child is killed and the error path still prints its retry
+	// hints (e.g. where an in-pod heap copy survives). A second Ctrl-C
+	// force-kills (NotifyContext stops relaying once canceled).
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	// Optional global budget so no capture can hang an incident call:
+	// JDEBUG_TIMEOUT accepts Go durations ("90s", "5m"). Unset/0 = no limit
+	// (multi-GB heap dumps legitimately take minutes — do not guess one).
+	if v := os.Getenv("JDEBUG_TIMEOUT"); v != "" && v != "0" {
+		if d, derr := time.ParseDuration(v); derr == nil && d > 0 {
+			var cancel context.CancelFunc
+			ctx, cancel = context.WithTimeout(ctx, d)
+			defer cancel()
+		} else {
+			errf("ignoring invalid JDEBUG_TIMEOUT=%q (want a duration like 90s or 5m)", v)
+		}
+	}
 	cluster := core.Kubectl{}
 
 	t := o.cfg.Target
@@ -223,6 +252,9 @@ func main() {
 		errf("%v — pass -n/-l", err)
 		os.Exit(2)
 	}
+	// record the RESOLVED pod so artifact bookkeeping (remote-artifacts.tsv)
+	// can name it — cleanup needs the pod column to remove staged binaries.
+	o.cfg.Target.Pod = resolved.Pod
 	// destructive verbs refuse to guess among replicas (F8, typed)
 	var confirmed core.Confirmed
 	if o.verb == "heap" || o.verb == "snapshot" {
@@ -274,7 +306,9 @@ func main() {
 		}
 		if len(dumps) == 0 {
 			errf("%s", core.ExplainNoDumps(hint))
-			os.Exit(3)
+			// 1, not 3: the dispatcher already uses 3 for "environment
+			// problem" (cluster unreachable) — one meaning per exit code.
+			os.Exit(1)
 		}
 		infof("found %d on-crash dump(s); fetching the newest:", len(dumps))
 		for _, d := range dumps {
@@ -285,7 +319,7 @@ func main() {
 			errf("%v", err)
 			os.Exit(1)
 		}
-		infof("wrote %s (%d bytes, verified: hprof magic + size match)", art.Name, art.Bytes)
+		infof("wrote %s (%d bytes, verified: hprof magic + size match)", art.Path, art.Bytes)
 		infof("this is the heap AT THE MOMENT OF THE OOM — analyze: jdebug analyze, or Eclipse MAT 'Leak Suspects'")
 		return
 	}
@@ -327,12 +361,13 @@ func main() {
 			}
 			return err
 		}
-		// success — the epilogue v1 users know
-		path := art.Name
-		if o.cfg.OutDir != "" {
-			path = filepath.Join(o.cfg.OutDir, art.Name)
-		} else {
-			path = filepath.Join(o.cfg.DumpsRoot, "pods", resolved.Pod, art.CapturedAt.Format("20060102T150405Z"), art.Name)
+		// success — the epilogue v1 users know. art.Path is the file's REAL
+		// location (the pipeline's session dir); reconstructing it from
+		// CapturedAt printed a nonexistent path whenever the capture crossed
+		// a second boundary — i.e. on essentially every heap dump.
+		path := art.Path
+		if path == "" { // defensive: older Artifact without Path
+			path = filepath.Join(o.cfg.DumpsRoot, "pods", resolved.Pod, art.Name)
 		}
 		if o.verb == "heap" {
 			infof("wrote %s (%d bytes, verified: hprof magic + size match)", path, art.Bytes)
@@ -401,6 +436,11 @@ func (o opts) acquirer(tier string) (core.Acquirer, core.Validator) {
 	validate := core.ValidateThreadDump
 	if o.verb == "heap" {
 		validate = core.ValidateHprof
+	} else if o.json && tier == "actuator" {
+		// Spring's JSON thread dump has no "Full thread dump" marker — the
+		// text validator would fail EVERY valid JSON capture and blame the
+		// actuator for it. JSON gets a JSON-aware validator.
+		validate = core.ValidateThreadDumpJSON
 	}
 	switch tier {
 	case "actuator":
@@ -423,10 +463,13 @@ func parseMemFile(path string) (map[string]float64, error) {
 
 // recordArtifact appends to the same remote-artifacts.tsv v1's cleanup
 // command reads: owned \t ns \t pod \t container \t path \t note, deduped.
+// The POD column must be real — cleanup runs `kubectl exec <pod>` on it; an
+// empty pod strands the staged binary in production forever. And the dedup
+// key must include ns+pod, or staging into a SECOND pod goes unrecorded.
 func recordArtifact(cfg core.Config, owned bool, path, note string) {
 	mf := filepath.Join(cfg.DumpsRoot, "remote-artifacts.tsv")
 	_ = os.MkdirAll(cfg.DumpsRoot, 0o700)
-	key := "\t" + cfg.Target.Container + "\t" + path + "\t"
+	key := "\t" + cfg.Target.Namespace + "\t" + cfg.Target.Pod + "\t" + cfg.Target.Container + "\t" + path + "\t"
 	if b, err := os.ReadFile(mf); err == nil && strings.Contains(string(b), key) {
 		return
 	}
@@ -439,5 +482,5 @@ func recordArtifact(cfg core.Config, owned bool, path, note string) {
 		return
 	}
 	defer f.Close()
-	fmt.Fprintf(f, "%s\t%s\t\t%s\t%s\t%s\n", ownedStr, cfg.Target.Namespace, cfg.Target.Container, path, note)
+	fmt.Fprintf(f, "%s\t%s\t%s\t%s\t%s\t%s\n", ownedStr, cfg.Target.Namespace, cfg.Target.Pod, cfg.Target.Container, path, note)
 }

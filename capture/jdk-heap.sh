@@ -26,7 +26,7 @@
 # Usage:
 #   ./jdk-heap.sh --confirm [-n namespace] [-l selector] [--container name] [pod-name]
 #
-# Output: <kit>/dumps/heap/<pod>-jdk-heap-<ts>.hprof  (override: $OUT_DIR)
+# Output: <kit>/dumps/pods/<pod>/<ts>/heap-jdk.hprof  (override: $OUT_DIR)
 
 set -euo pipefail
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
