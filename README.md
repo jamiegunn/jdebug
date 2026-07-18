@@ -98,7 +98,8 @@ command from. Override per run with `$OUT_DIR`, or move the root with
 
 ## Target selection
 
-Defaults come from flags, then env, then built-ins:
+Precedence: flags → environment → the remembered target the menu's editor
+saves (`~/.config/jdebug/target` — delete it to forget) → built-ins:
 
 | | flag | env | default |
 |---|---|---|---|
@@ -143,7 +144,7 @@ sh /tmp/jdebug-local help             # comprehensive help; `help <cmd>` for det
 sh /tmp/jdebug-local memory
 sh /tmp/jdebug-local threads > /tmp/threads.txt
 sh /tmp/jdebug-local jcmd "GC.heap_info"      # needs jattach staged (jdebug install-jattach)
-sh /tmp/jdebug-local snapshot --heap
+sh /tmp/jdebug-local snapshot --heap --confirm
 ```
 The `jdk` tier isn't available in-pod (it needs `kubectl debug` from outside);
 the actuator + jattach + memory tiers all work.

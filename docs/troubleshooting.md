@@ -107,7 +107,8 @@ probes `/threaddump` and names this exact blocker.
 
 jdebug's default container name is `app`; real clusters usually name the
 container after the service. Pass `--container <name>` (or set
-`JDEBUG_CONTAINER`, or the menu's target editor `k`). List the real names:
+`JDEBUG_CONTAINER`, or the menu's target editor: `g`, then `o` container).
+List the real names:
 `kubectl -n <ns> get pod <pod> -o jsonpath='{.spec.containers[*].name}'`.
 
 ## "the container has NO SHELL (a distroless/minimal image)"

@@ -13,12 +13,23 @@ assert_rc  "cluster off: exits 3" 3
 assert_has "cluster off: says nothing answered" "nothing answered"
 assert_rc  "no context: exits 3" 3
 assert_has "no context: explains" "no context selected"
+assert_rc  "expired creds: exits 3" 3
+assert_has "expired creds: says rejected, not unreachable" "REJECTED your credentials"
+assert_has "expired creds: names the fix" "re-authenticate"
+assert_has "expired creds: warns off the wrong fix" "switching contexts will NOT fix"
+assert_not "expired creds: no 'can't reach' misdiagnosis" "can't reach the Kubernetes cluster"
 assert_rc  "dumps needs no cluster (no preflight)" 0
 assert_rc  "healthy setup exits 0" 0
 assert_has "checks kubectl" "kubectl on PATH"
 assert_has "checks the cluster answers" "answers"
 assert_has "checks pods match" "pod(s) match"
-assert_has "checks actuator tier" "tier 1 ready"
+assert_has "checks the container exists" "container 'app' exists"
+assert_has "checks the CAPTURE endpoint, not just /health" "tier 1 (actuator) ready"
+assert_not "unexposed endpoint: no tier-1 blessing" "tier 1 (actuator) ready"
+assert_has "unexposed endpoint: names the fix" "management.endpoints.web.exposure.include"
+assert_rc  "wrong container: doctor fails loudly" 1
+assert_has "wrong container: names the real containers" "no container named 'web'"
+assert_has "wrong container: gives the fix" "--container"
 assert_rc  "unreachable cluster exits 1" 1
 assert_has "unreachable cluster flagged" "cluster unreachable"
 assert_rc  "no matching pods exits 1" 1
@@ -186,6 +197,13 @@ assert_has "kill notes the managed respawn" "REPLACEMENT starts automatically"
 assert_has "kill deletes the pod" "deleted"
 assert_rc  "restart under RBAC denial exits 1" 1
 assert_has "restart RBAC denial explained, not masked" "your RBAC doesn't allow"
+assert_rc  "kill --confirm with ambiguous match REFUSES (exit 2)" 2
+assert_has "kill refusal says why" "refusing to guess which replica"
+assert_has "kill refusal names the harm" "DELETES a pod"
+assert_has "kill refusal lists the candidates" "pod-b"
+assert_rc  "restart --confirm with ambiguous match REFUSES (exit 2)" 2
+assert_has "restart refusal says why" "refusing to guess"
+assert_has "kill with explicit pod proceeds" "deleted"
 assert_rc  "actuator heap w/o --confirm exits 64" 64
 assert_has "actuator heap explains the pause" "pause the JVM"
 assert_rc  "jdk heap w/o --confirm exits 64" 64
@@ -242,6 +260,37 @@ assert_has "CLI layer uses the remembered namespace" "kubectl -n payments"
 assert_has "environment still outranks the remembered value" "kubectl -n zzz"
 assert_has "tampered target file is ignored with a warning" "ignoring"
 assert_has "tampered target file falls back to defaults" "kubectl -n default"
+assert_has "tamper via ';' is ignored with a warning" "ignoring"
+assert_has "tamper via assignment-prefix is ignored" "ignoring"
+assert_rc  "wrong container (v1): capture fails" 1
+assert_has "wrong container (v1): names the real cause" "no container named"
+assert_has "wrong container (v1): gives the fix" "--container"
+assert_not "wrong container (v1): not blamed on the actuator" "actuator fetch failed"
+assert_rc  "wrong container (core): capture fails" 1
+assert_has "wrong container (core): names the real cause" "no container named"
+assert_has "wrong container (core): gives the fix" "--container"
+assert_rc  "no shell (v1): capture fails" 1
+assert_has "no shell (v1): names the real cause" "NO SHELL"
+assert_has "no shell (v1): points at the tier that works" "--via jdk"
+assert_not "no shell (v1): no pod-replaced misdiagnosis" "REPLACED under a new name"
+assert_rc  "no shell (core): capture fails" 1
+assert_has "no shell (core): names the real cause" "NO SHELL"
+assert_has "no shell (core): points at the tier that works" "--via jdk"
+assert_rc  "status survives events RBAC denial" 0
+assert_has "status explains the missing events" "events not readable here"
+assert_has "status still prints its reading guide" "how to read this"
+assert_has "status still prints the bottom line" "Bottom line:"
+assert_rc  "v1 cascade: still fails overall (mock has no real JVM)" 1
+assert_has "v1 cascade: announces the jattach fallback" "auto-falling back to jattach"
+assert_has "v1 cascade: announces the jdk fallback" "falling back to an ephemeral JDK container"
+assert_has "v1 cascade: honest summary" "all capture tiers failed"
+assert_rc  "tampered vendored core: resolver returns 2" 2
+assert_has "tampered vendored core: loud refusal" "FAILED its checksum"
+assert_rc  "unverifiable vendored core (no SHA256SUMS): returns 2" 2
+assert_has "absent core: quiet fallback (rc=1, no error text)" "rc=1"
+assert_not "absent core: stays quiet" "FAILED"
+assert_rc  "$1: exits 0" 0
+assert_has "$1: reports the written file" "wrote "
 assert_has "tui: --version" "jdebug-tui"
 assert_rc  "heap analyzer rejects a non-hprof (exit 1)" 1
 assert_has "heap analyzer explains the rejection" "not an hprof"

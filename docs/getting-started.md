@@ -61,8 +61,8 @@ typed input — an access denial is never dressed up as "nothing to list".
 The header's one-line status always shows exactly what you're pointed at,
 with a live green/red reachability dot. Menu keys act instantly — no Enter;
 every key is a letter from the action's own name, risk shows as a colored
-dot per row, and the one dangerous action (`H` heap) confirms by asking for
-a second `H`.
+dot per row, and the dangerous actions (`H` heap, `R` re-roll, `K` kill)
+each confirm by asking for the same key a second time.
 
 ## 4. Look around — all safe, read-only
 

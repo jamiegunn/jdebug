@@ -1,6 +1,13 @@
 #!/bin/sh
 # Test double for kubectl. Behavior is driven by env vars so tests can script
-# every failure mode without a cluster:
+# every failure mode without a cluster.
+#
+# PATTERN ORDER MATTERS: the case-statement below is first-match-wins — put
+# specific patterns ABOVE generic ones ("-o jsonpath" also contains "-o json";
+# that swallowing bug has bitten before — see the pods-json branch).
+#
+# This header is the CANONICAL list of MOCK_* variables (docs/testing.md
+# carries a summary):
 #   MOCK_KUBECTL   ok (default) | x509 | refused | noctx | unauthorized
 #                                                          — /version probe result
 #   MOCK_EVENTS    forbidden — `get events` fails like restricted RBAC
@@ -10,10 +17,13 @@
 #   MOCK_EXEC_OUT  what an in-pod `exec` prints            — default "ok"
 #   MOCK_ACTUATOR  secured|absent|badpage                  — actuator fetch outcome
 #                  (secured→401, absent→404, badpage→200 HTML login on heapdump)
+#   MOCK_POD_GONE  1 — pod lookups/execs fail NotFound (pod replaced mid-incident)
+#   MOCK_TOP       absent — `kubectl top` fails like a missing metrics-server
+#   MOCK_CONTEXT   1 — `get pod -o json` returns the rich pod for `jdebug context`
+#   MOCK_RBAC      forbidden — namespace/pod enumeration fails like real RBAC
 #   MOCK_LOG       file to append every invocation to (for asserting calls)
 [ -n "${MOCK_LOG:-}" ] && printf '%s\n' "$*" >> "$MOCK_LOG"
 
-#   MOCK_RBAC      forbidden — namespace/pod enumeration fails like real RBAC
 if [ "${MOCK_RBAC:-}" = forbidden ]; then
     case "$*" in
         *"get namespaces"*|*"get pods"*|*" get pod "*)

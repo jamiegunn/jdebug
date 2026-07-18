@@ -1,6 +1,6 @@
 ---
 title: Orientation (for a new contributor or LLM session)
-nav_order: 1
+nav_order: 15
 ---
 
 # jdebug — orientation
@@ -61,7 +61,7 @@ These are the load-bearing principles. When in doubt, they win.
 verbs. Capture verbs run through the **v2 Go core** (`core/`) when a built or
 vendored `jdebug-core` is present, with the v1 bash tiers (`capture/*.sh`) as
 the `JDEBUG_V1` fallback; the observe/lifecycle verbs are still bash. See
-`docs/architecture.md` for the migration ledger — it is mid-migration, and
+[architecture](architecture) for the migration ledger — it is mid-migration, and
 that document is the honest status record.
 
 ```
@@ -87,7 +87,7 @@ tests/                      the mock suite + live-JVM + kind suites + pty driver
 
 **One interactive frontend.** The Go TUI (`tui/`, Bubble Tea + lipgloss +
 x/ansi only) is the only menu/wizard — the old bash menu was removed
-(architecture.md, Phase 0b). `jdebug` runs a local dev build when present,
+([architecture](architecture), Phase 0b). `jdebug` runs a local dev build when present,
 else the vendored binary for your platform — after verifying it against
 `vendor/tui/SHA256SUMS`. No TUI available → every command still works from
 the CLI, and error messages give the CLI route alongside any menu key they
@@ -113,8 +113,8 @@ debug container). This is why "no actuator" is never fatal.
 
 A full-screen dashboard that scales by terminal size (`layout.go` tiers):
 compact incident-checklist → menu+sidebar → a full grid (menu | live TARGET
-panel + sparkline trends + NEXT suggestions | PODS/EVENTS/CAPTURES | live log
-tail). Key pieces:
+panel + sparkline trends + NEXT suggestions | PODS/WORKLOAD | a tabbed
+WORK/LOGS/EVENTS/CAPTURES/TRENDS bottom pane). Key pieces:
 
 - `menu.go` — sections (START HERE / QUICK CHECKS / CAPTURE EVIDENCE /
   ADVANCED), risk rows (word + colour), the readiness gate, **click-to-run**
@@ -138,14 +138,17 @@ tail). Key pieces:
 
 ## How to work on it
 
-**Run everything:** `tests/run-tests.sh` from the repo root. It runs Go unit
-tests, bash CLI cases (driven by `tests/mocks/kubectl`, a case-statement fake),
-a real-pty drive of the built TUI, `shellcheck -S warning`, and `gofmt`. As of
-this writing the suite is ~390 assertions and must be green. Note its limits
-honestly: it proves messages, gates, and capture plumbing against a **mock**
-kubectl; the live-JVM (`tests/live/`) and kind (`tests/integration/`) suites
-prove real transport/JVM behavior but run manually, not in CI (see
-`docs/architecture.md`, Phase 5).
+**Run everything:** `tests/run-tests.sh` from the repo root. It runs the Go
+unit tests for BOTH modules (core — including the adversarial-review
+regression suite — and the TUI), bash CLI cases (driven by
+`tests/mocks/kubectl`, a case-statement fake), a real-pty drive of the built
+TUI, and a `gofmt` check. Shellcheck runs as a separate, advisory CI job
+(`.github/workflows/tests.yml`), not in the suite. As of this writing the
+suite is ~393 assertions and must be green. Note its limits honestly: it
+proves messages, gates, and capture plumbing against a **mock** kubectl; the
+live-JVM (`tests/live/`) and kind (`tests/integration/`) suites prove real
+transport/JVM behavior but run manually, not in CI (see
+[architecture](architecture), Phase 5).
 
 **Gotchas learned the hard way:**
 - `tests/mocks/kubectl` matches **first-case-wins** — anchor patterns
@@ -164,7 +167,7 @@ prove real transport/JVM behavior but run manually, not in CI (see
 **Where the design record lives:** `docs/ux-followups.md` is the per-item UX
 status record (most items there are marked SHIPPED, with the remaining
 refinements listed per item); `docs/roadmap.md` holds the larger unshipped
-ideas; `docs/architecture.md` is the v2-migration status ledger. When these
+ideas; [architecture](architecture) is the v2-migration status ledger. When these
 disagree with each other or with the code, the code wins — fix the doc.
 
 ## What's done vs. what's next

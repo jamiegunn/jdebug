@@ -24,7 +24,6 @@ OUT=""; RC=0
 ENV=(env "PATH=$MOCKS:$PATH" NO_COLOR=1 "JDEBUG_DUMPS=$TMP/dumps" "JDEBUG_CONFIG_DIR=$TMP/config" JDEBUG_QUIET=1)
 
 run_case()  { OUT="$("${ENV[@]}" "$@" 2>&1)"; RC=$?; }                       # capture out+err+rc
-run_input() { local in="$1"; shift; OUT="$(printf '%b' "$in" | "${ENV[@]}" "$@" 2>&1)"; RC=$?; }
 
 ok()  { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
 bad() { FAIL=$((FAIL+1)); FAILED+=("$1"); printf '  FAIL %s\n       %s\n' "$1" "$2"; }
@@ -763,6 +762,19 @@ fi
 
 JDEBUG_V1=1 MOCK_EXEC_OUT="$E2E_DUMP" run_case ./jdebug threads
 e2e_check "capture (v1 bash engine)"
+
+# --- Go core engine (runs when a Go toolchain is present) ----------------------------
+# The core's unit tests INCLUDE the adversarial-review regression suite
+# (core/trial_regression_test.go) — they must run wherever this suite runs,
+# or CI can go green while the deadlock detector is broken.
+if command -v go >/dev/null 2>&1 && [[ -f core/go.mod ]]; then
+    section "Go core engine"
+    if (cd core && go vet ./... >/dev/null 2>&1); then ok "core: go vet"; else bad "core: go vet" "see go vet ./core/..."; fi
+    if (cd core && go test ./... >"$TMP/gocore.out" 2>&1); then ok "core: go test (pipeline, validators, parsers, regressions)"
+    else bad "core: go test" "$(grep -nE '^(--- FAIL|FAIL|panic:)|_test\.go:[0-9]+' "$TMP/gocore.out" | head -12)"; fi
+    if fmtout="$(gofmt -l core tui 2>/dev/null)" && [[ -z "$fmtout" ]]; then ok "gofmt: all Go sources formatted"
+    else bad "gofmt: all Go sources formatted" "needs gofmt -w: $fmtout"; fi
+fi
 
 # --- Go TUI frontend (runs when a Go toolchain is present) ---------------------------
 if command -v go >/dev/null 2>&1 && [[ -f tui/go.mod ]]; then

@@ -13,9 +13,11 @@
 # uses helm/kind-action). The fixture pod is a stock temurin image running
 # tests/fixture/DebugFixture.java from a ConfigMap — no image build.
 #
-# NOTE: authored ahead of its first CI run — expect to shake out details
-# (image tags, timings) on the first execution; assertions are written to
-# fail loudly rather than hang.
+# STATUS: first real-cluster run was green (9/9, k3s v1.31, 2026-07 — see
+# docs/architecture.md Phase 5). Not yet running automatically in CI: the
+# workflow at .github/workflows/integration.yml is manual-only
+# (workflow_dispatch) until this job has run green across more images/arches.
+# Assertions are written to fail loudly rather than hang.
 
 set -uo pipefail
 cd "$(dirname "${BASH_SOURCE[0]}")/../.."

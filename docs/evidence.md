@@ -66,7 +66,7 @@ records, session tokens, credentials in flight. Expectations:
 |---|---|
 | status / health / top / metrics / memory / threads / logs / dumps / doctor | none — read-only |
 | snapshot (without `--heap`) | none, plus a small static helper binary staged in `/tmp` for the jcmd sections (skippable: `--no-jattach`) |
-| heap dump, `snapshot --heap` | **the JVM pauses** for the duration of the write — seconds on small heaps, minutes on multi-GB. Requires `--confirm` everywhere, plus an interactive y/N in the menu |
+| heap dump, `snapshot --heap` | **the JVM pauses** for the duration of the write — seconds on small heaps, minutes on multi-GB. Requires `--confirm` in every engine (CLI, core, and in-pod `jdebug-local`); the menu confirms with a second `H` (the bundle's include-heap question is y/N) |
 | log-level | log volume changes on every replica; not persistent across restarts |
 | install-jattach / push-local | a file placed in the container's `/tmp`; gone on restart |
 | tier 3 (jdk) | a terminated ephemeral container stays visible in the pod spec until restart — harmless |

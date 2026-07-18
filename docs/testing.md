@@ -25,7 +25,7 @@ transport (exec/cp over an API server), real JVM attach behavior, or real
 image quirks. Those live in two further layers that are **run manually, not
 in CI**: `tests/live/run-live-tests.sh` (real JVM, fake transport) and
 `tests/integration/run-kind-tests.sh` (real cluster — one green run against
-k3s so far). See `docs/architecture.md` Phase 5 for exact status.
+k3s so far). See [architecture](architecture) (Phase 5) for exact status.
 
 ## How it works
 
@@ -58,7 +58,8 @@ Coverage map:
 
 - syntax of every script (bash + POSIX sh)
 - CLI basics, exit codes, unknown-input handling
-- `check_cluster` translation of all three failure classes
+- `check_cluster` translation of all four failure classes (TLS, refused,
+  no-context, expired credentials)
 - `doctor` healthy / unreachable / no-pods verdicts
 - multi-pod announcement and listing
 - `dumps` listings, analyzer hints, data-handling warning
@@ -78,9 +79,18 @@ assert_rc  "my case: exits 3" 3
 assert_has "my case: says why" "nothing answered"
 ```
 
-`run_case` captures stdout+stderr+exit code; `run_input` feeds stdin for TUI
-flows; `assert_has` / `assert_not` / `assert_rc` do the checking. Mocks can
-grow new branches — keep them dumb and env-driven.
+`run_case` captures stdout+stderr+exit code; `assert_has` / `assert_not` /
+`assert_rc` do the checking. Mocks can grow new branches — keep them dumb and
+env-driven, and remember the mock's `case` matching is **first-case-wins**:
+put specific patterns above generic ones (the mock's own header says so too).
+
+Adding a whole new **verb**? The full path is: a new `section` in
+`run-tests.sh`, possibly a new mock branch (respect pattern order), and —
+easy to forget — regenerate the CLI-surface goldens once the verb appears in
+`--help`: `scripts/freeze-spec.sh`, then review the `spec/` diff.
+
+(The canonical list of `MOCK_*` variables is the header comment of
+`tests/mocks/kubectl` — the table above is a summary.)
 
 ## Manual verification drill
 

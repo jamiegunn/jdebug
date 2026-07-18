@@ -323,7 +323,9 @@ case "$cmd" in
         METRIC="${REMAINING_ARGS[0]:-}"
         POD="$(resolve_one_pod "${REMAINING_ARGS[1]:-}")" || exit $?
         mfetch() { kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- sh -c "$(pod_fetch "$1")"; }
-        mfail() { err "actuator metrics not reachable at $ACTUATOR_BASE in pod $POD (wrong port/path? secured?) — try --actuator-base"; exit 1; }
+        # exit 3, not 1: "target reachable but actuator not serving" is an
+        # environment problem — same class (and same code) as health/memory.
+        mfail() { err "actuator metrics not reachable at $ACTUATOR_BASE in pod $POD (wrong port/path? secured? not exposed?) — try --actuator-base"; exit 3; }
         if [[ -n "$METRIC" ]]; then
             show_cmd "kubectl -n $NAMESPACE exec $POD -c $APP_CONTAINER -- sh -c '<curl-or-wget> $ACTUATOR_BASE/metrics/$METRIC'"
             if command -v python3 >/dev/null 2>&1; then

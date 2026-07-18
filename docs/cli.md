@@ -60,7 +60,7 @@ announcing each fallback. Force one tier with `--via actuator|jattach|jdk`.
 | `jdebug analyze [path]` | first-pass triage of every capture: thread-state histogram (idle NIO/epoll selectors named, not mistaken for a busy loop), deadlocks, contended locks, real hot frames, DOWN health components, OOM-risk %, invalid dumps — with the right deep tool named per finding |
 | `jdebug analyze --deep <heap>` | heap dump **retained size** (dominator tree) + **path to GC roots** — which objects keep memory alive and why. No Eclipse MAT needed — but it DOES need the TUI binary (vendored in `vendor/tui/`, or `make tui`); without it, analyze points you at MAT instead |
 | `jdebug analyze --diff [before after]` | diff two heap dumps to see what **grew** (leak hunting); with no args it auto-picks the two newest valid dumps. Needs the TUI binary (vendored, or `make tui`) |
-| `jdebug cleanup` | prune old/empty captures and stale remote artifacts from `dumps/` |
+| `jdebug cleanup` | list — and with `--confirm`, remove — the files jdebug staged **inside pods** (jattach, jdebug-local); never touches your local `dumps/` evidence |
 | `jdebug install-jattach` | pre-stage the jattach binary in the pod |
 | `jdebug push-local` | copy the in-pod tool (`jdebug-local`) to `<pod>:/tmp` |
 | `jdebug wizard` | jump straight into guided diagnosis |

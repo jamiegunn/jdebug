@@ -12,8 +12,8 @@ wizard encodes the diagnostic playbooks so you don't have to remember them.
 ## One frontend, two ways to get it
 
 The menu is a single Go implementation (the old bash menu was removed —
-see architecture.md, Phase 0b). You either build it or use the vendored
-binary:
+see [architecture](architecture), Phase 0b). You either build it or use the
+vendored binary:
 
 - **Go (Bubble Tea)** — the frontend. Build once with `make tui`
   (needs a Go toolchain); `jdebug` automatically prefers the built binary at
@@ -21,17 +21,17 @@ binary:
   on a big window (≥140×34) it becomes a grid — menu on the left, a **live
   TARGET panel with sparkline TRENDS** (memory %, CPU, restart ▲ markers)
   and a **NEXT box** of concrete key-press suggestions in the middle,
-  **PODS, WORKLOAD and CAPTURES** on the right (the lists are clickable —
-  **click any pod to retarget everything at it**, **click any capture to
-  open it**, wheel scrolls; PODS shows the
-  selector's matches, or the whole namespace as fallback), and a
+  **PODS and WORKLOAD** on the right (the lists are clickable —
+  **click any pod to retarget everything at it**, wheel scrolls; PODS shows
+  the selector's matches, or the whole namespace as fallback), and a
   **tabbed work area** filling the bottom: **WORK** (the command you
   launched + its output), **LOGS** (the live tail — 5 s refresh, errors red;
   a crash-looping container that can't serve logs shows the **previous
   container's last words**, labeled as such; `f` expands it full-screen),
-  **EVENTS** (recent pod events), and **CAPTURES** (a roomy, full-width
-  evidence browser — its header always names the current scope: *this pod*,
-  *all pods*, or the drilled-in session). **Click a tab to switch**, or
+  **EVENTS** (recent pod events), **CAPTURES** (a roomy, full-width
+  evidence browser — click a capture to open it; its header always names the
+  current scope: *this pod*, *all pods*, or the drilled-in session), and
+  **TRENDS** (the sparkline history, full-width). **Click a tab to switch**, or
   cycle with `tab`/`shift-tab`. Commands **stream live into the WORK tab**
   while they run — the menu stays interactive, `esc`
   stops/dismisses, ↑↓ **or the mouse wheel** scrolls, `C` **copies the whole
@@ -75,8 +75,8 @@ rules, a footer with navigation keys and a risk legend, and a live `❯` prompt:
    h   health      is a dependency — db, queue — down?                   ●
    o   top         which pod is eating CPU or memory?                    ●
    m   memory      is the app near its memory limit?                     ●
-   e   context     services, env, probes, deps — how it's wired         ●
    W   workload    the tree + limits, probes, exit codes, autoscaling    ●
+   e   context     services, env, probes, deps — how it's wired         ●
    S   security    running as root? privileged? network policy?         ●
    l   logs        what did the app say? (live stream)                   ●
 
@@ -86,11 +86,11 @@ rules, a footer with navigation keys and a risk legend, and a live `❯` prompt:
    H   heap        every object in memory — for leak hunting  ● pauses app
 
  ADVANCED ─────────────────────────────────────────────────────────────────
-   j   jcmd        raw JVM commands — GC, profiling, native memory       ●
-   v   verbosity   change log level live, no restart                     ●
-   T   terminal    a shell inside the pod — exit returns here            ●
-   R   re-roll     rolling-restart the deployment       ● restarts app
-   K   kill pod    delete this pod (a managed one respawns) ● drops the pod
+   j   jcmd        raw JVM commands — GC, profiling, native memory ● caution
+   v   verbosity   change log level live, no restart               ● caution
+   T   terminal    a shell inside the pod — exit returns here      ● caution
+   R   re-roll     rolling-restart the pods                  ● restarts app
+   K   kill pod    delete one pod                            ● drops the pod
 
  ─────────────────────────────────────────────────────────────────────────
  more  [a] analyze  [c] check setup  [?] help  [q] quit   ●●● safe / caution / disruptive
@@ -111,16 +111,19 @@ recommended one). Mid-incident key-mashing is safe by design.
 
 Every key is a **letter mnemonic from the action's own name** — no numbered
 items. Risk is a colored dot down the right edge (green safe, yellow caution,
-red disruptive); **heap is the only row with inline text** (`pauses app`, red),
-so the one dangerous action is the loudest thing on screen.
+red disruptive); every non-safe row also carries inline risk text — `caution`
+on the yellow rows, and per-action words on the red ones (`pauses app`,
+`restarts app`, `drops the pod`) — so the dangerous actions are the loudest
+things on screen.
 
 The palette is GitHub-dark truecolor with a 16-color fallback (`NO_COLOR`
 strips everything), **readability-tuned**: the spec's literal grey ramp reads
 as mud on real terminals, so every text tier is lifted about two steps
 (descriptions `#b6c2cf`, dim `#9ea7b1`, faint `#8b949e`) and the keys, command
 names, and section labels are bold. The hierarchy survives; the squinting
-doesn't. The panel fills the terminal up to 120 columns (min 78) — the
-description column flexes, risk dots stay pinned to the right edge. Font
+doesn't. In remote mode the panel fills the full terminal width (min 78);
+local mode caps at 132 columns — the description column flexes, risk dots
+stay pinned to the right edge. Font
 *size* is your terminal's setting (⌘+ / Ctrl+ in most emulators); the app
 compensates with weight and contrast.
 
@@ -168,9 +171,11 @@ suite (~10 s, mocked, touches nothing of yours) to prove the install works.
 
 Line 1: title + mode. Line 2: a single status line — a **live reachability
 dot** (green = cluster answering, red + "unreachable — [c] explains why"),
-the kube context, `namespace / container · pod` (long pod names truncate to
-their unique tail), the actuator port/path, and the `[g] retarget [M] mode`
-hints. You always know exactly what a keypress will hit.
+the kube context, `namespace / pod / container` (never truncated — this is
+the one line that must stay copy-pasteable, so on narrow terminals it wraps
+to its own line instead), the actuator port/path, and the
+`[g] retarget [M] mode` hints. You always know exactly what a keypress will
+hit.
 
 ## Targeting (`g`) — the field editor
 

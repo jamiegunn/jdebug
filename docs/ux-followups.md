@@ -1,6 +1,6 @@
 ---
 title: UX follow-ups
-nav_order: 12
+nav_order: 16
 ---
 
 # UX follow-ups
@@ -10,7 +10,7 @@ marked **SHIPPED**, each with its remaining refinements listed inline —
 "SHIPPED" means the feature exists and is covered by the mock suite, not that
 it is beyond improvement. Items that never shipped live in `docs/roadmap.md`.
 (Historical note: some entries were written when a bash menu frontend existed;
-that frontend has been removed — architecture.md Phase 0b — and the "bash
+that frontend has been removed — [architecture](architecture), Phase 0b — and the "bash
 side" of any feature now means the plain CLI verb, not a bash menu.)
 
 ## Click-to-run menu rows — SHIPPED

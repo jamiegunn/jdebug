@@ -189,7 +189,16 @@ cmd_jcmd() {
 
 cmd_snapshot() {
     need_http
-    heap=0; [ "${1:-}" = "--heap" ] && heap=1
+    heap=0; confirmed=0
+    for a in "$@"; do
+        [ "$a" = "--heap" ] && heap=1
+        [ "$a" = "--confirm" ] && confirmed=1
+    done
+    # same gate as cmd_heap: a JVM-pausing capture never runs un-confirmed
+    if [ "$heap" = 1 ] && [ "$confirmed" != 1 ]; then
+        err "--heap PAUSES the JVM (destructive in prod). Re-run: jdebug-local snapshot --heap --confirm"
+        exit 2
+    fi
     dir="$OUT_DIR/jdebug-snapshot-$(ts)"; mkdir -p "$dir"
     echo "collecting into $dir ..."
     http_get "$ACTUATOR_BASE/health"                          >"$dir/health.json"   2>/dev/null || true
@@ -259,7 +268,7 @@ COMMANDS
   memory              container RSS vs JVM heap / non-heap (cgroup + actuator)
   metrics [name]      list JVM/process/system metrics, or print one metric
   jcmd <command>      any jcmd via jattach, e.g. "GC.heap_info"     [needs jattach]
-  snapshot [--heap]   bundle health+threads+memory+jcmd into /tmp for offline use
+  snapshot [--heap --confirm]  bundle health+threads+memory+jcmd into /tmp for offline use
   dumps               list captures made so far + exactly how to pull them out
   help [command]      comprehensive help, or per-command detail
 
@@ -271,7 +280,7 @@ CAPTURE TIERS
 ENVIRONMENT
   ACTUATOR_BASE   actuator base URL          (default http://localhost:8080/actuator)
   JATTACH_BIN     path to the jattach binary (default /tmp/jattach)
-  JVM_PID         target pid                 (default: pgrep java, else /proc scan, else 1)
+  JVM_PID         target pid                 (default: pgrep java, else /proc scan; errors if none)
   OUT_DIR         where dumps/bundles go      (default /tmp)
 
 EXAMPLES
@@ -279,7 +288,7 @@ EXAMPLES
   jdebug-local threads > /tmp/threads.txt        # then open in VisualVM (locally)
   jdebug-local memory                            # heap<limit but OOMKilled? start here
   jdebug-local jcmd "VM.native_memory summary"   # needs NMT + jattach
-  jdebug-local snapshot --heap                   # everything, zipped, in /tmp
+  jdebug-local snapshot --heap --confirm         # everything, zipped, in /tmp
 EOF
 }
 
@@ -340,7 +349,7 @@ jdebug-local jcmd <command> — the full jcmd surface via jattach
   jattach attaches as the same uid as the JVM — run as that user.
 EOF
     ;; snapshot) cat <<'EOF'
-jdebug-local snapshot [--heap] — one offline-analysis bundle
+jdebug-local snapshot [--heap --confirm] — one offline-analysis bundle
 
   Collects health + thread dump + memory report + actuator metrics (and, if
   jattach is staged, GC.heap_info / VM.flags / Compiler.codecache / NMT) into

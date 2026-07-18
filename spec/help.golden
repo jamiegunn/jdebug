@@ -56,13 +56,14 @@ straight into a guided, symptom-driven capture flow.
 
   Setup
     doctor            check everything BEFORE an incident: host tools, cluster
-                      reachability, target pods, actuator, jattach cache
+                      reachability, target pods, container name, actuator
+                      capture endpoint, vendored jattach/core/TUI binaries
     install-jattach   pre-stage jattach into the pod before an incident
     push-local        copy the in-pod tool (jdebug-local) into the pod, for
                       when you'll have a shell but no kubectl (JRE-only image)
 
 Examples:
-  jdebug threads                        # actuator, this repo's app
+  jdebug threads                        # thread dump via the actuator tier
   jdebug heap --confirm --via jattach
   jdebug snapshot -n prod -l app=payments
   jdebug jcmd "VM.native_memory summary"

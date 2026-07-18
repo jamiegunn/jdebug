@@ -27,7 +27,7 @@ Then, inside:
 sh /tmp/jdebug-local help          # full help; `help <cmd>` for per-command detail
 sh /tmp/jdebug-local memory
 sh /tmp/jdebug-local threads > /tmp/threads.txt
-sh /tmp/jdebug-local snapshot --heap
+sh /tmp/jdebug-local snapshot --heap --confirm
 ```
 
 ## Commands
@@ -40,7 +40,7 @@ sh /tmp/jdebug-local snapshot --heap
 | `threads` | jstack-format thread dump → stdout | same; auto-falls back to jattach |
 | `heap --confirm` | hprof → `$OUT_DIR` — **pauses the JVM** | same; auto-falls back to jattach |
 | `jcmd "<cmd>"` | full jcmd surface | jattach staged at `/tmp/jattach` |
-| `snapshot [--heap]` | offline bundle in `$OUT_DIR`, tarred | best-effort per section |
+| `snapshot [--heap --confirm]` | offline bundle in `$OUT_DIR`, tarred | best-effort per section; `--heap` pauses the JVM and requires `--confirm` |
 | `dumps` | list captures **with a ready-to-paste extraction command** | — |
 
 ## Getting evidence out
@@ -62,7 +62,7 @@ On bare metal it just prints the path — the file is already on your machine.
 |---|---|---|
 | `ACTUATOR_BASE` | `http://localhost:8080/actuator` | also `-a/--actuator-base` |
 | `JATTACH_BIN` | `/tmp/jattach` | also `--jattach-bin` |
-| `JVM_PID` | auto: pgrep java → `/proc` scan → PID 1 | set it when several JVMs run on the box |
+| `JVM_PID` | auto: pgrep java → `/proc` comm scan → libjvm map scan; **errors if none found** (no PID-1 guess) | set it when several JVMs run on the box |
 | `OUT_DIR` | `/tmp` | where dumps and bundles land |
 
 The `jdk` tier is not available in-pod (it needs `kubectl debug` from
