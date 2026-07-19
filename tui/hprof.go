@@ -48,6 +48,7 @@ type heapHistogram struct {
 	truncated   bool
 	fileBytes   int64 // full dump size on disk (0 = unknown)
 	walkedBytes int64 // how many bytes of records we actually walked
+	desynced    bool  // a record ran past its segment → parse gave up (numbers partial)
 }
 
 var primArrayName = map[byte]string{
@@ -74,6 +75,7 @@ type hprofParser struct {
 	dup         map[uint64]*dupStat // content hash → occurrences (dup-string detect)
 	consumed    int64
 	truncated   bool
+	desynced    bool  // set when a length field runs past its segment (parse desync)
 	fileBytes   int64 // total dump size on disk, to honestly frame a truncated walk
 }
 
@@ -264,7 +266,7 @@ func (p *hprofParser) arrayStat(name string) *classStat {
 }
 
 func (p *hprofParser) result() *heapHistogram {
-	h := &heapHistogram{truncated: p.truncated, fileBytes: p.fileBytes, walkedBytes: p.consumed}
+	h := &heapHistogram{truncated: p.truncated, desynced: p.desynced, fileBytes: p.fileBytes, walkedBytes: p.consumed}
 	add := func(cs *classStat) {
 		if cs.count == 0 {
 			return
@@ -350,12 +352,22 @@ func (p *hprofParser) walkHeap(r *bufio.Reader, length int64) error {
 				return err
 			}
 			remaining -= 4
+			// desync tripwire: an instance can't carry more field bytes than the
+			// segment has left. If it claims to, we've lost sync with the record
+			// stream — bail honestly instead of accumulating garbage as "the heap".
+			if int64(nbytes) > remaining {
+				p.desynced = true
+				return fmt.Errorf("desync: instance nbytes %d > %d left in segment", nbytes, remaining)
+			}
 			if err := skip(int(nbytes)); err != nil {
 				return err
 			}
 			cs := p.statFor(classObjId)
 			cs.count++
-			b := int64(nbytes) + int64(id)*2 // header estimate
+			// shallow size = object header (mark word 8 + klass ptr idSize) + field
+			// bytes, rounded up to 8-byte alignment — matches how the JVM/MAT size
+			// an object far better than the old flat idSize*2 header guess.
+			b := objShallow(int64(nbytes), int64(id))
 			cs.bytes += b
 			p.noteObj(cs.name, b, "")
 		case 0x22: // OBJ_ARRAY_DUMP: id, u4 stack, u4 n, id arrClass, [n ids]
@@ -372,6 +384,10 @@ func (p *hprofParser) walkHeap(r *bufio.Reader, length int64) error {
 				return err
 			}
 			remaining -= int64(id)
+			if int64(n)*int64(id) > remaining { // desync tripwire (see INSTANCE_DUMP)
+				p.desynced = true
+				return fmt.Errorf("desync: obj-array of %d refs exceeds %d left in segment", n, remaining)
+			}
 			if err := skip(int(n) * id); err != nil {
 				return err
 			}
@@ -381,7 +397,7 @@ func (p *hprofParser) walkHeap(r *bufio.Reader, length int64) error {
 			}
 			cs := p.arrayStat(name)
 			cs.count++
-			b := int64(n)*int64(id) + 16
+			b := arrShallow(int64(n)*int64(id), int64(id))
 			cs.bytes += b
 			p.noteObj(name, b, humanCount(int64(n))+" refs")
 		case 0x23: // PRIM_ARRAY_DUMP: id, u4 stack, u4 n, u1 type, [n*sz]
@@ -399,6 +415,10 @@ func (p *hprofParser) walkHeap(r *bufio.Reader, length int64) error {
 			}
 			remaining--
 			sz := int64(basicTypeSize(etype, id))
+			if sz == 0 || int64(n)*sz > remaining { // bad element type or desync
+				p.desynced = true
+				return fmt.Errorf("desync: prim-array (type=%d n=%d) exceeds %d left in segment", etype, n, remaining)
+			}
 			content := int(int64(n) * sz)
 			// duplicate detection: hash small char[]/byte[] (≈ String backing);
 			// everything else (and big arrays) is skipped, cost-free
@@ -414,7 +434,7 @@ func (p *hprofParser) walkHeap(r *bufio.Reader, length int64) error {
 			}
 			cs := p.arrayStat(primArrayName[etype])
 			cs.count++
-			b := int64(n)*sz + 16
+			b := arrShallow(int64(n)*sz, int64(id))
 			cs.bytes += b
 			p.noteObj(primArrayName[etype], b, humanCount(int64(n))+" elems")
 		case 0x20: // CLASS_DUMP — variable length
@@ -430,13 +450,32 @@ func (p *hprofParser) walkHeap(r *bufio.Reader, length int64) error {
 		case 0x04, 0x06: // NATIVE_STACK / THREAD_BLOCK: id, u4
 			err = skip(id + 4)
 		default:
-			return fmt.Errorf("unknown heap sub-record 0x%02x", sub)
+			// an unrecognized sub-record tag means we're reading field/element
+			// bytes as if they were a tag — i.e. desynced. Stop; don't invent data.
+			p.desynced = true
+			return fmt.Errorf("unknown heap sub-record 0x%02x (parse desync)", sub)
 		}
 		if err != nil {
 			return err
 		}
+		if remaining < 0 { // any record that overran the segment → desync
+			p.desynced = true
+			return fmt.Errorf("desync: read %d bytes past the segment", -remaining)
+		}
 	}
 	return nil
+}
+
+// objShallow / arrShallow size an object the way the JVM/MAT do: an 8-byte mark
+// word + a klass pointer (idSize), plus field/element bytes, padded to 8-byte
+// alignment. Arrays carry an extra 4-byte length. Far closer than a flat header
+// guess, and identical across the common compressed-oops layouts.
+func align8(n int64) int64 { return (n + 7) &^ 7 }
+func objShallow(fieldBytes, idSize int64) int64 {
+	return align8(8 + idSize + fieldBytes)
+}
+func arrShallow(elemBytes, idSize int64) int64 {
+	return align8(8 + idSize + 4 + elemBytes)
 }
 
 func (p *hprofParser) skipClassDump(r *bufio.Reader, remaining *int64) error {
@@ -538,8 +577,15 @@ func javaClassName(n string) string {
 // renderHistogram formats the top consumers for the analyze output.
 func renderHistogram(h *heapHistogram, top int) string {
 	var b strings.Builder
-	fmt.Fprintf(&b, "heap histogram — %s across %s objects (top consumers first)\n",
+	fmt.Fprintf(&b, "heap histogram (shallow size) — %s across %s objects (top consumers first)\n",
 		fmtSize(h.totalBytes), humanCount(h.totalObjs))
+	if h.desynced {
+		// A wrong-but-confident histogram is the worst outcome. If the record
+		// stream desynced (an unfamiliar hprof variant), say so loudly — these
+		// numbers are partial and possibly skewed; MAT is the source of truth.
+		b.WriteString("  ⚠ parse ended early — this hprof has a record shape jdebug doesn't fully recognize.\n")
+		b.WriteString("    the numbers below are PARTIAL and may be skewed; trust Eclipse MAT for this dump.\n")
+	}
 	if h.truncated {
 		// Be honest: this is the START of the file, not a random sample, and not
 		// the whole heap. A leak living past the walked window is invisible here.

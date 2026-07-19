@@ -121,9 +121,11 @@ install_jattach() {
     if ! kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- tar --version >/dev/null 2>&1; then
         err "can't stage jattach: no 'tar' in $POD/$APP_CONTAINER (distroless or scratch image?)."
         err "  kubectl cp needs tar in the container, which these images don't ship."
-        err "  → use the tiers that need no in-pod binary:"
-        err "        jdebug threads -n $NAMESPACE $POD                    # actuator over HTTP"
-        err "        jdebug heap --confirm --via jdk -n $NAMESPACE $POD   # ephemeral JDK container"
+        err "  → use the tiers that inject an ephemeral debug container instead (no in-pod binary):"
+        err "        jdebug threads --via jdk -n $NAMESPACE $POD               # jstack via a JDK debug container"
+        err "        jdebug heap --confirm --via jdk -n $NAMESPACE $POD        # jmap via a JDK debug container"
+        err "        jdebug jcmd \"VM.native_memory summary\" --via jdk -n $NAMESPACE $POD   # any jcmd"
+        err "  (needs the EphemeralContainers feature + pods/ephemeralcontainers RBAC.) actuator over HTTP also works if exposed."
         exit 1
     fi
 

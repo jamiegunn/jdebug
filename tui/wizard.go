@@ -129,7 +129,11 @@ func (m model) wizardView() string {
 	if m.mode != 1 {
 		tgt = "this machine (localhost)"
 	}
-	b.WriteString("\n  " + cFaint.Render("target: "+tgt+" · anything that could hurt the app asks you first"))
+	// honesty: these flows (and the NEXT panel) are rules of thumb matched to the
+	// live signals, not a measured diagnosis — they run SAFE reads first and gate
+	// anything destructive, but the read of the evidence is still yours to make.
+	b.WriteString("\n  " + cFaint.Render("rules of thumb from the live signals — safe checks first, disruptive ones ask; verify before you conclude") + "\n")
+	b.WriteString("  " + cFaint.Render("target: "+tgt+" · anything that could hurt the app asks you first"))
 	return b.String() + prompt()
 }
 

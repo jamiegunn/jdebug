@@ -5,6 +5,34 @@ nav_order: 14
 
 # Architecture — v2 direction and migration status
 
+## What jdebug is, in one sentence
+
+**jdebug points a stressed on-call engineer at the right JVM in Kubernetes and
+runs the safe diagnostic — capture-first, destructive-actions-gated — without
+making them remember `jcmd` from `jmap`.** Everything else is in service of that
+one job.
+
+## The pieces — and which one to debug when it breaks
+
+Five artifacts, but the split is deliberate (a strangler migration from bash to a
+Go core, tracked in the ledger below), not accident. When something misbehaves,
+this table says where to look and in what language:
+
+| artifact | language | its job | you debug it when… |
+|---|---|---|---|
+| `jdebug` | bash | the dispatcher: parse verb + `--via`/target flags, route to a tier or the core | a verb routes wrong, a flag isn't parsed, the tier cascade misbehaves |
+| `core/` → `jdebug-core` | Go (stdlib-only) | the v2 engine: cluster boundary, Target→Resolved→Confirmed, capture pipeline + validators, evidence manifest | a capture validates wrong, provenance is off, a ported verb misbehaves with `JDEBUG_V1` unset |
+| `tui/` → `jdebug-tui` | Go (Bubble Tea) | the only interactive frontend: dashboard, wizard, heap reader | anything visual/interactive, click geometry, the `-analyze-heap` histogram |
+| `jdebug-local` | POSIX sh | the in-pod / bare-metal / SSH tool: one file, no kubectl, actuator + jattach + `/proc` | a capture run *inside* a pod or over SSH, the native-jcmd-vs-jattach route |
+| `vendor/jattach` | C (vendored, pinned, checksummed) | the tiny attach binary for the jcmd/threads/heap surface | attach fails; almost always a uid/policy issue, not jattach itself |
+
+Rule of thumb: **interactive → `tui/`; a capture's correctness → `core/`; routing
+and flags → `jdebug`; inside a pod or over SSH → `jdebug-local`.** The bash
+`capture/*.sh` are the `JDEBUG_V1` safety net for verbs not yet ported to the
+core; they are retired verb-by-verb (see the ledger), never in a big bang.
+
+---
+
 This document records the re-architecture decided after the adversarial
 review (see the review's finding numbers referenced below): consolidate four
 implementations into **one Go core with thin frontends**, shelling out to

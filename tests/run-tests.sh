@@ -7,6 +7,16 @@
 # driven by MOCK_* env vars (see the mocks' headers). Each case runs a real
 # entry point and asserts on exit code + output, so the user-facing text —
 # error explanations, hints, safety warnings — is what's under test.
+#
+# SCOPE — this is the MOCK layer. It proves contracts and user-facing text, not
+# real-cluster/real-JVM behavior. Two further suites prove the rest (run them
+# when you have the environment; CI runs all three):
+#   tests/live/run-live-tests.sh        — against a REAL HotSpot JVM on this host
+#                                         (authentic jcmd/hprof, the vendored
+#                                         jattach actually speaking the protocol)
+#   tests/integration/run-kind-tests.sh — against a REAL cluster (kubectl exec/cp
+#                                         over an API server, a genuine ephemeral
+#                                         `kubectl debug` attach)
 
 set -u
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -503,6 +513,19 @@ assert_has "actuator heap explains the pause" "pause the JVM"
 run_case ./capture/jdk-heap.sh
 assert_rc  "jdk heap w/o --confirm exits 64" 64
 
+# jcmd via an ephemeral JDK container — the distroless path (no in-pod binary).
+run_case ./capture/jdk-jcmd.sh
+assert_rc  "jdk-jcmd w/o a command exits 64" 64
+assert_has "jdk-jcmd names the missing command" "needs a command string"
+run_case ./jdebug jcmd "VM.version" --via jdk pod-a
+assert_has "jcmd --via jdk routes to an ephemeral JDK container" "via ephemeral JDK container"
+
+# distroless (no tar) staging must detect it and offer the ephemeral jcmd path.
+MOCK_EXEC=noshell run_case ./capture/jattach.sh install pod-a
+assert_rc  "distroless staging refused" 1
+assert_has "distroless staging: detects the missing tar" "no 'tar' in"
+assert_has "distroless staging: offers the ephemeral jcmd path" "jcmd \"VM.native_memory summary\" --via jdk"
+
 run_case ./observe/snapshot.sh --heap
 assert_rc  "snapshot --heap w/o --confirm exits 64" 64
 
@@ -977,7 +1000,10 @@ run_case ./install.sh --prefix "$TMP/bin" --uninstall
 [[ ! -e "$TMP/bin/jdebug" ]] && ok "uninstall removes symlink" || bad "uninstall removes symlink" "still there"
 
 # --- summary --------------------------------------------------------------------------
-printf '\n%d passed, %d failed\n' "$PASS" "$FAIL"
+printf '\n%d passed, %d failed  (MOCK layer — contracts + text, not real-cluster behavior)\n' "$PASS" "$FAIL"
+printf 'for real-JVM/real-cluster proof, also run:\n'
+printf '  tests/live/run-live-tests.sh        (a real HotSpot JVM on this host)\n'
+printf '  tests/integration/run-kind-tests.sh (a real cluster: exec/cp + ephemeral debug attach)\n'
 if [[ $FAIL -gt 0 ]]; then
     printf 'failed:\n'; printf '  - %s\n' "${FAILED[@]}"
     exit 1

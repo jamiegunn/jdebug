@@ -125,6 +125,68 @@ func synthHeapBytes(n, arrLen int) []byte {
 	return buf.Bytes()
 }
 
+// desyncedHprof builds a dump whose INSTANCE_DUMP claims far more field bytes
+// than the heap segment actually contains — the classic "we lost sync with the
+// record stream" shape. The parser must catch it, not accumulate garbage.
+func desyncedHprof() []byte {
+	var buf bytes.Buffer
+	buf.WriteString("JAVA PROFILE 1.0.2\x00")
+	binary.Write(&buf, binary.BigEndian, uint32(8))
+	binary.Write(&buf, binary.BigEndian, uint64(0))
+	id := func(v uint64) []byte { b := make([]byte, 8); binary.BigEndian.PutUint64(b, v); return b }
+	u4 := func(v uint32) []byte { b := make([]byte, 4); binary.BigEndian.PutUint32(b, v); return b }
+	var hd bytes.Buffer
+	hd.WriteByte(0x21)   // INSTANCE_DUMP
+	hd.Write(id(200))    // obj id
+	hd.Write(u4(0))      // stack
+	hd.Write(id(100))    // class obj id
+	hd.Write(u4(999999)) // nbytes — but no payload follows and the segment ends here
+	buf.WriteByte(0x0C)  // HEAP_DUMP
+	buf.Write(u4(0))     // time delta
+	buf.Write(u4(uint32(hd.Len())))
+	buf.Write(hd.Bytes())
+	return buf.Bytes()
+}
+
+// KS-A: a desynced parse must be caught and DISCLOSED, never rendered as a
+// confident histogram.
+func TestHprofDesyncIsFlaggedNotSilent(t *testing.T) {
+	dir := t.TempDir()
+	p := filepath.Join(dir, "desync.hprof")
+	if err := os.WriteFile(p, desyncedHprof(), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	h, err := analyzeHprof(p)
+	if err != nil {
+		t.Fatalf("a desync should yield a partial result, not a hard error: %v", err)
+	}
+	if !h.desynced {
+		t.Fatal("a record overrunning its segment must set desynced")
+	}
+	out := renderHistogram(h, 10)
+	if !strings.Contains(out, "doesn't fully recognize") || !strings.Contains(out, "PARTIAL") {
+		t.Fatalf("a desynced parse must be disclosed loudly:\n%s", out)
+	}
+}
+
+// shallow sizing: header (8 mark + idSize klass) + fields, 8-aligned.
+func TestObjShallowSizing(t *testing.T) {
+	cases := []struct {
+		fields, idSize, want int64
+	}{
+		{16, 8, 32},   // 8+8+16 = 32
+		{16, 4, 32},   // 8+4+16 = 28 → align8 → 32
+		{20, 4, 32},   // 8+4+20 = 32
+		{0, 4, 16},    // 8+4+0 = 12 → align8 → 16
+		{100, 8, 120}, // 8+8+100 = 116 → 120
+	}
+	for _, c := range cases {
+		if got := objShallow(c.fields, c.idSize); got != c.want {
+			t.Errorf("objShallow(%d,%d)=%d want %d", c.fields, c.idSize, got, c.want)
+		}
+	}
+}
+
 func TestHeapDiffGrowth(t *testing.T) {
 	dir := t.TempDir()
 	before := filepath.Join(dir, "before.hprof")

@@ -370,6 +370,12 @@ case "$cmd" in
         err "fetch-heap needs the v2 engine — build it once: make core (needs Go)"
         exit 1 ;;
     jcmd)
+        # --via jdk: run jcmd through an ephemeral JDK container (no in-pod binary
+        # — the path for distroless/scratch images where jattach can't be staged).
+        if [[ "$VIA_EXPLICIT" == 1 && "$VIA" == jdk ]]; then
+            fwd "$D/capture/jdk-jcmd.sh" ${ARGS[@]+"${ARGS[@]}"}
+            exit $?
+        fi
         require_core_ok
         if [[ -z "${JDEBUG_V1:-}" && -n "$CORE_BIN" ]]; then
             JDEBUG_KIT="$D" exec "$CORE_BIN" jcmd ${ARGS[@]+"${ARGS[@]}"}
