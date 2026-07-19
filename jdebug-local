@@ -24,10 +24,15 @@ ts()   { date -u +%Y%m%dT%H%M%SZ 2>/dev/null || date +%s; }
 
 # out_hint <path> — tell the user exactly how to get a capture off this box.
 # In a pod we can fill in the kubectl cp for them: hostname = pod name, and
-# the namespace is mounted at the serviceaccount path. On bare metal the file
-# is already on this machine.
+# the namespace is mounted at the serviceaccount path. When jdebug drove us over
+# SSH ($JDEBUG_SSH_BACK = the user@host it used), we hand back the scp. On bare
+# metal the file is already on this machine.
 out_hint() {
-    if [ -r /var/run/secrets/kubernetes.io/serviceaccount/namespace ]; then
+    if [ -n "${JDEBUG_SSH_BACK:-}" ]; then
+        echo "saved on $JDEBUG_SSH_BACK: $1"
+        echo "pull it to your machine — run this on your side:"
+        echo "    scp $JDEBUG_SSH_BACK:$1 ./${1##*/}"
+    elif [ -r /var/run/secrets/kubernetes.io/serviceaccount/namespace ]; then
         _ns=$(cat /var/run/secrets/kubernetes.io/serviceaccount/namespace 2>/dev/null)
         _pod=$(hostname 2>/dev/null || cat /etc/hostname 2>/dev/null || echo '<pod>')
         echo "pull it to your machine — run this OUTSIDE the pod:"
@@ -54,6 +59,32 @@ jvm_pid() {
     return 3
 }
 
+# cmd_jvms — list EVERY JVM on this host as "PID<TAB>command", so a caller (the
+# jdebug menu) can pick which one to debug when several run here. Same detection
+# as jvm_pid (comm == java, or maps libjvm), but every match — not just the
+# first. Falls back to `ps` where there's no /proc (e.g. macOS bare metal).
+cmd_jvms() {
+    _tmp=$(mktemp 2>/dev/null || echo "${TMPDIR:-/tmp}/jdebug-jvms.$$")
+    if [ -d /proc ]; then
+        for d in /proc/[0-9]*; do
+            [ -r "$d/comm" ] || continue
+            _pid=${d#/proc/}
+            if [ "$(cat "$d/comm" 2>/dev/null)" = java ] || grep -q libjvm "$d/maps" 2>/dev/null; then
+                _cl=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null | sed 's/[[:space:]]*$//')
+                [ -z "$_cl" ] && _cl="java (pid $_pid)"
+                printf '%s\t%s\n' "$_pid" "$_cl" >> "$_tmp"
+            fi
+        done
+    elif have ps; then
+        ps -eo pid=,comm=,args= 2>/dev/null | awk '
+            $2 ~ /(^|\/)java$/ { pid=$1; $1=""; $2=""; sub(/^[ \t]+/,""); print pid "\t" $0 }' >> "$_tmp"
+    fi
+    if [ -s "$_tmp" ]; then sort -n "$_tmp"; rm -f "$_tmp"; return 0; fi
+    rm -f "$_tmp"
+    err "no JVM processes found on this host (nothing is named java or maps libjvm)"
+    return 3
+}
+
 need_http()   { have curl || have wget || { err "need curl or wget in this container for the actuator tiers"; exit 127; }; }
 # http_get <url> [outfile] — GET via curl, else busybox wget (stock alpine has wget,
 # not curl). $HTTP_ACCEPT sets the Accept header (curl always; wget on modern builds).
@@ -76,8 +107,38 @@ need_jattach() {
     err "jattach not found at $JATTACH_BIN."
     err "Stage it first:"
     err "  in a pod      → from OUTSIDE: jdebug install-jattach  (or kubectl cp a binary to $JATTACH_BIN)"
-    err "  bare metal    → github.com/jattach/jattach releases → $JATTACH_BIN  (the jdebug menu can do this: option i)"
+    err "  bare metal    → jdebug menu option i (installs the vendored, checksum-verified binary)"
     exit 3
+}
+
+# _jvm_uid <pid> — the uid that owns the target JVM. ($JDEBUG_JVM_UID_OVERRIDE
+# is a test seam only.)
+_jvm_uid() {
+    if [ -n "${JDEBUG_JVM_UID_OVERRIDE:-}" ]; then printf '%s' "$JDEBUG_JVM_UID_OVERRIDE"; return; fi
+    awk '/^Uid:/{print $2; exit}' "/proc/$1/status" 2>/dev/null && return
+    stat -c %u "/proc/$1" 2>/dev/null || printf ''
+}
+
+# run_jattach <pid> <jattach-args…> — invoke jattach and, on failure, diagnose
+# the single most common (and most confusing) cause: jattach's dynamic-attach
+# protocol requires running as the SAME uid as the target JVM. A generic
+# "attach failed" sends people down the wrong path; naming the uid gap is the fix.
+run_jattach() {
+    _p=$1; shift
+    "$JATTACH_BIN" "$_p" "$@" && return 0
+    _rc=$?
+    _me=$(id -u 2>/dev/null || printf '')
+    _ju=$(_jvm_uid "$_p")
+    if [ -n "$_ju" ] && [ -n "$_me" ] && [ "$_me" != "$_ju" ]; then
+        err "jattach couldn't attach — it must run as the SAME user as the JVM."
+        err "  the JVM (pid $_p) runs as uid $_ju; you are uid $_me."
+        err "  → run as that user (e.g. sudo -u '#$_ju' …, or exec/ssh in as them), or as root."
+    else
+        err "jattach failed (exit $_rc) on pid $_p — the message above says why."
+        err "  common causes: the JVM disabled attach (-XX:+DisableAttachMechanism),"
+        err "  a uid mismatch, or a stale attach socket in /tmp."
+    fi
+    return "$_rc"
 }
 
 # metric_value <name> [tag] — pull one number out of actuator /metrics (no python).
@@ -113,13 +174,19 @@ cmd_threads() {
     # jstack-format (text/plain) to stdout — redirect to a file for VisualVM
     if HTTP_ACCEPT=text/plain http_get "$ACTUATOR_BASE/threaddump"; then return 0; fi
     err "⚠ actuator threaddump unreachable at $ACTUATOR_BASE — auto-falling back to jattach…"
-    if [ -x "$JATTACH_BIN" ]; then p=$(jvm_pid) || exit 3; "$JATTACH_BIN" "$p" jcmd "Thread.print -l"
+    if [ -x "$JATTACH_BIN" ]; then p=$(jvm_pid) || exit 3; run_jattach "$p" jcmd "Thread.print -l"
     else actuator_fail "Thread.print -l"; fi
 }
 
 cmd_heap() {
     need_http
     [ "${1:-}" = "--confirm" ] || { err "heap dump PAUSES the JVM (destructive in prod). Re-run: jdebug-local heap --confirm"; exit 2; }
+    # data governance: a heap dump is a full copy of live memory (secrets/PII).
+    err "⚠ heap dump = a copy of live memory — may contain secrets, tokens, and PII; handle per policy."
+    if [ -n "${JDEBUG_REQUIRE_DATA_ACK:-}" ] && [ -z "${JDEBUG_DATA_ACK:-}" ]; then
+        err "  this environment requires sign-off: set JDEBUG_DATA_ACK=1 to acknowledge and proceed."
+        exit 65
+    fi
     out="$OUT_DIR/heap-$(ts).hprof"
     if http_get "$ACTUATOR_BASE/heapdump" "$out"; then
         echo "wrote $out  ($(wc -c <"$out" 2>/dev/null || echo '?') bytes)"
@@ -130,7 +197,7 @@ cmd_heap() {
     err "⚠ actuator heapdump unreachable at $ACTUATOR_BASE — auto-falling back to jattach…"
     if [ -x "$JATTACH_BIN" ]; then
         p=$(jvm_pid) || exit 3
-        "$JATTACH_BIN" "$p" jcmd "GC.heap_dump $out"
+        run_jattach "$p" jcmd "GC.heap_dump $out" || exit $?
         echo "wrote $out (via jattach)"
         out_hint "$out"
         echo "analyze: Eclipse MAT -> File -> Open Heap Dump -> 'Leak Suspects' (or VisualVM)"
@@ -184,7 +251,7 @@ cmd_jcmd() {
     [ -n "${1:-}" ] || { err 'jcmd needs a command string, e.g.  jdebug-local jcmd "GC.heap_info"'; exit 2; }
     need_jattach
     p=$(jvm_pid) || exit 3
-    "$JATTACH_BIN" "$p" jcmd "$*"
+    run_jattach "$p" jcmd "$*"
 }
 
 cmd_snapshot() {
@@ -269,6 +336,7 @@ COMMANDS
   metrics [name]      list JVM/process/system metrics, or print one metric
   jcmd <command>      any jcmd via jattach, e.g. "GC.heap_info"     [needs jattach]
   snapshot [--heap --confirm]  bundle health+threads+memory+jcmd into /tmp for offline use
+  jvms                list every JVM on this host as "PID<TAB>command" (pick one with JVM_PID)
   dumps               list captures made so far + exactly how to pull them out
   help [command]      comprehensive help, or per-command detail
 
@@ -381,6 +449,7 @@ case "$cmd" in
     metrics)  cmd_metrics "$@" ;;
     jcmd)     cmd_jcmd "$@" ;;
     snapshot) cmd_snapshot "$@" ;;
+    jvms)     cmd_jvms ;;
     dumps|captures) cmd_dumps ;;
     help)     [ $# -gt 0 ] && help_cmd "$1" || usage_full ;;
     -h|--help|"") usage_full ;;

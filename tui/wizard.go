@@ -116,7 +116,11 @@ func (m model) openWizard() (tea.Model, tea.Cmd) {
 
 func (m model) wizardView() string {
 	var b strings.Builder
-	b.WriteString("\n  " + cTitle.Render("Guided diagnosis — what are you seeing?") + "\n\n")
+	b.WriteString("\n  " + cTitle.Render("guided diagnosis — what are you seeing?") + "\n")
+	// several symptoms overlap for a restarting pod (1 memory, 4 leak, 7 crash),
+	// so give the one tiebreak that matters: start at the crash flow, which hands
+	// you to the memory flow if that's the actual cause.
+	b.WriteString("  " + cFaint.Render("keeps restarting? start at 7 — it routes you to 1 if it's memory") + "\n\n")
 	for _, f := range wizardFlows {
 		b.WriteString("   " + cKey.Render(f.key) + "  " + cMuted.Render(f.label) + "\n")
 	}
@@ -208,7 +212,10 @@ func (m model) wizRun(st wstep) (tea.Model, tea.Cmd) {
 		}
 	} else {
 		verb = "jdebug-local " + strings.Join(st.args, " ")
-		words = append([]string{"sh", filepath.Join(m.kit, "jdebug-local")}, st.args...)
+		if m.t.SSH != "" {
+			verb += " · ssh " + m.t.SSH
+		}
+		words = localWords(m.kit, m.t, st.args...)
 	}
 	return m.startPane("guided diagnosis — "+verb, targetEnv(m.t), prefix, true, words...)
 }

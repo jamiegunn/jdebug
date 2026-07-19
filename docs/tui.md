@@ -154,10 +154,10 @@ any other key cancels"* and only fires on the second `H`. Quitting asks y/N.
 A capture can never be fired at nothing or at the wrong thing: the action
 menu only appears once the target is verified —
 
-- **remote:** cluster answering **and** a specific pod pinned **and** the
+- **Kubernetes:** cluster answering **and** a specific pod pinned **and** the
   container actually present in that pod's spec
-- **in-pod / bare metal:** at least one working route to the JVM (actuator
-  answering, or jattach staged)
+- **bare metal:** at least one working route to the JVM (the actuator
+  answering — locally or on the SSH host — or jattach staged)
 
 Until then the menu shows a checklist panel with ✓/✗ per requirement and the
 exact key to press for each missing piece (Enter opens the target editor
@@ -227,10 +227,23 @@ and falls back to auto with a visible notice.
 
 The opening question is *where is the JVM?*
 
-1. **Remote** — drives `kubectl exec` from your machine (full feature set)
-2. **In-pod** — you have a shell inside the container; drives `jdebug-local`
-3. **Bare metal** — a JVM on this host, no Kubernetes; also `jdebug-local`
+1. **Kubernetes (kubectl)** — drives `kubectl exec` from your machine (full
+   feature set, the live dashboard)
+2. **Bare metal** — a JVM with no Kubernetes, driven by `jdebug-local`. After
+   you pick it, jdebug asks *where*: leave the host blank to debug **this
+   machine**, or enter `user@host` (optionally `user@host:port`) to run every
+   check **over SSH** on a remote VM or box. SSH uses your own keys/agent and
+   `~/.ssh/config` only (BatchMode — it never prompts for a password and jdebug
+   stores no secret); the self-contained script is piped to the remote's shell,
+   so nothing has to be installed there. Change the host any time with `g`.
 
-The wizard, help, capture browser, and jattach staging work in every mode;
-kubectl-only steps (status, top) are skipped in local modes *with an
+   Over SSH, captures are written on the remote host and each one prints the
+   exact `scp user@host:… .` to pull it back; `i` stages jattach on the remote
+   (its own architecture, into `/tmp`) using the **vendored, checksum-verified**
+   binary — nothing is downloaded at runtime, the same integrity gate the in-pod
+   path enforces. If the JVM runs as a different user than your SSH login, jattach
+   can't attach (it must match uid); jdebug names the uid gap when that happens.
+
+The wizard, help, capture browser, and jattach staging work in both modes;
+kubectl-only steps (status, top) are skipped in bare-metal mode *with an
 explanation*, never silently.

@@ -19,18 +19,18 @@ import (
 func rule(w int) string { return " " + cRule.Render(strings.Repeat("─", w-2)) }
 
 func (m model) modeLabel() string {
-	switch m.mode {
-	case 2:
-		return "in-pod · localhost"
-	case 3:
-		return "bare metal · localhost"
+	if m.mode == 2 { // bare metal
+		if m.t.SSH != "" {
+			return "bare metal · ssh " + m.t.SSH
+		}
+		return "bare metal · this host"
 	}
-	return "remote · kubectl → pod"
+	return "kubernetes · kubectl → pod"
 }
 
 func (m model) headerRemote(reachable bool) string {
 	w := m.tw()
-	title := " jvm debug kit"
+	title := " jdebug"
 	right := m.modeLabel() + " "
 	pad := w - lipgloss.Width(title) - lipgloss.Width(right)
 	if pad < 1 {
@@ -39,7 +39,8 @@ func (m model) headerRemote(reachable bool) string {
 	var b strings.Builder
 	b.WriteString(cTitle.Render(title) + strings.Repeat(" ", pad) + cDim.Render(right) + "\n")
 
-	dot := cOK.Render("●")
+	// reachability reads without colour too: green dot + "ok", or red + why
+	dot := cOK.Render("●") + cFaint.Render(" ok")
 	extra := ""
 	if !reachable {
 		dot = cDisr.Render("●")
@@ -70,6 +71,13 @@ func (m model) headerRemote(reachable bool) string {
 			sep + actSeg + sep + hints + "\n")
 		b.WriteString("   " + cMuted.Render(tgt) + "\n")
 	}
+	if m.autoPod > 0 {
+		note := "auto-picked the only matching pod — [g] to change target"
+		if m.autoPod > 1 {
+			note = fmt.Sprintf("showing 1 of %d pods the selector matches — [g] p to pick another", m.autoPod)
+		}
+		b.WriteString("   " + cFaint.Render(note) + "\n")
+	}
 	if m.staleP != "" {
 		b.WriteString("   " + cWarn.Render("your previous pin "+m.staleP+" no longer exists — back to auto ([g] to re-pick)") + "\n")
 	}
@@ -87,7 +95,7 @@ func (m model) headerH() int {
 
 func (m model) headerLocal(jattachOK bool) string {
 	w := m.tw()
-	title := " jvm debug kit"
+	title := " jdebug"
 	right := m.modeLabel() + " "
 	pad := w - lipgloss.Width(title) - lipgloss.Width(right)
 	if pad < 1 {
@@ -97,11 +105,22 @@ func (m model) headerLocal(jattachOK bool) string {
 	if jattachOK {
 		jat = cMuted.Render("jattach ok")
 	}
+	if m.t.SSH != "" {
+		jat = cFaint.Render("jattach on " + m.t.SSH) // staged remotely; can't stat from here
+	}
 	act := strings.TrimPrefix(m.t.Actuator, "http://localhost")
+	where := cMuted.Render(act)
+	if m.t.SSH != "" {
+		where = cMuted.Render(act) + cFaint.Render(" on "+m.t.SSH)
+	}
+	jvm := cFaint.Render("jvm auto")
+	if m.t.JVMPid != "" {
+		jvm = cMuted.Render("jvm " + m.t.JVMPid)
+	}
 	sep := cFaint.Render("  ·  ")
 	return cTitle.Render(title) + strings.Repeat(" ", pad) + cDim.Render(right) + "\n" +
-		" " + cOK.Render("●") + " " + cMuted.Render(act) + sep + jat +
-		sep + cFaint.Render("[s] settings  [M] mode") + "\n" + rule(w)
+		" " + cOK.Render("●") + " " + where + sep + jat + sep + jvm +
+		sep + cFaint.Render("[p] jvm  [g] host  [s] settings  [M] mode") + "\n" + rule(w)
 }
 
 func (m model) banner() string {
@@ -145,15 +164,17 @@ func (m model) row(a action) string {
 		dot = cDisr
 	}
 	// risk must read WITHOUT colour (NO_COLOR, screenshots, colour-blind):
-	// safe = bare dot, caution/disruptive = dot + a word. An explicit
-	// riskText wins; otherwise fall back to the risk level's name.
+	// caution/disruptive = dot + a word. SAFE rows show NOTHING — a wall of
+	// green "safe" dots on the 13 read-only rows only dilutes the 5 that carry
+	// real danger; the section header ("read-only — can't hurt anything")
+	// already says the quick checks are safe. An explicit riskText wins.
 	rt := a.riskText
 	if rt == "" && a.risk != "safe" {
 		rt = a.risk
 	}
-	right := "●"
-	if rt != "" {
-		right += " " + rt
+	right := ""
+	if a.risk != "safe" {
+		right = "● " + rt
 	}
 	// truncate the description so a long row never wraps at any width
 	prefix := fmt.Sprintf("   %s   %-12s", a.key, a.name)
@@ -217,6 +238,30 @@ func (m model) menuRowClick(x, y int) (string, bool) {
 	return "", false
 }
 
+// hasLiveWarning reports whether the panel is currently showing a real problem
+// signal (not just an info nudge) — the same signal that populates NEXT.
+func (m model) hasLiveWarning() bool {
+	for _, s := range m.suggestionRows() {
+		if s.conf != "" { // likely / possible / unknown — a genuine signal
+			return true
+		}
+	}
+	return false
+}
+
+// dashNav is the dashboard footer's key legend. When a live warning is firing it
+// leads with the "I'm stuck" trio ([n] what this means, [E] escalate) so the
+// paged junior discovers the runbook + senior-handoff without first pressing ?.
+func (m model) dashNav() string {
+	nav := "[a] analyze  [c] check setup  [?] help  [q] quit"
+	// only on wide terminals — narrower footers can't take the extra keys without
+	// wrapping, and the runbook/escalate keys still work (and show under ?) there.
+	if m.mode == 1 && m.tw() >= 140 && m.hasLiveWarning() {
+		nav = "[n] what's wrong  [E] escalate  " + nav
+	}
+	return nav
+}
+
 func (m model) footer(nav string) string {
 	w := m.tw()
 	// keys are shown per row; on wide terminals (mouse territory) also tell
@@ -225,10 +270,22 @@ func (m model) footer(nav string) string {
 	if w >= 140 {
 		lead = "press a key or click a row · "
 	}
-	if n := m.ownedArtifacts(); n > 0 { // the staged-in-pod indicator takes priority
-		lead = fmt.Sprintf("⚠ %d file(s) staged in the pod · u cleanup · ", n)
+	staged := m.ownedArtifacts()
+	if staged > 0 { // the staged-in-pod indicator takes priority
+		lead = fmt.Sprintf("⚠ %d file(s) staged in the pod · u cleanup · ", staged)
 	}
 	legendPlain := "●●● safe / caution / disruptive"
+	// drop the optional mouse hint if a long nav (e.g. the stuck-help keys) would
+	// otherwise push the footer past the terminal width and wrap. The staged-file
+	// warning is a safety notice, so it's never dropped.
+	if staged == 0 && 1+5+lipgloss.Width(lead)+lipgloss.Width(nav)+lipgloss.Width(legendPlain)+1 > w {
+		lead = ""
+	}
+	// esc at the root flashes how to actually leave, replacing the lead until the
+	// next keypress — esc is "back" everywhere else, so this explains the no-op.
+	if m.escHint {
+		lead = "you're at the top — q quits · g retargets · "
+	}
 	pad := w - 1 - 5 - lipgloss.Width(lead) - lipgloss.Width(nav) - lipgloss.Width(legendPlain) - 1
 	if pad < 2 {
 		pad = 2
@@ -267,7 +324,7 @@ var remoteActions = struct {
 		{"j", "jcmd", "raw JVM commands — GC, profiling, native memory", "caution", ""},
 		{"v", "verbosity", "change log level live, no restart", "caution", ""},
 		{"T", "terminal", "a shell inside the pod — exit returns here", "caution", ""},
-		{"R", "re-roll", "rolling-restart the pods", "disruptive", "restarts app"},
+		{"R", "restart", "rolling-restart the pods", "disruptive", "restarts app"},
 		{"K", "kill pod", "delete one pod", "disruptive", "drops the pod"},
 	},
 }
@@ -339,7 +396,7 @@ func (m model) menuView() string {
 			}
 		}
 		b.WriteString("\n" + m.withPanel(m.remoteBody()))
-		suffix := "\n" + m.footer("[a] analyze  [c] check setup  [?] help  [q] quit") + prompt()
+		suffix := "\n" + m.footer(m.dashNav()) + prompt()
 		if m.showLogPane() {
 			logH := m.height - m.overlayLines() - (strings.Count(b.String(), "\n") + 1) - strings.Count(suffix, "\n") - 1
 			if logH >= 6 {
@@ -395,6 +452,9 @@ func (m model) withPanel(body string) string {
 func (m model) menuKey(key string) (tea.Model, tea.Cmd) {
 	if key == "ctrl+c" {
 		return m, tea.Quit
+	}
+	if key != "esc" {
+		m.escHint = false // any other key clears the "you're at the top" hint
 	}
 	if m.capsFocus {
 		return m.capsFocusKey(key)
@@ -455,7 +515,8 @@ func (m model) menuKey(key string) (tea.Model, tea.Cmd) {
 		case "enter", "s", "S":
 			return m.openLocalSettings()
 		case "i", "I":
-			return m.openQuick("stage jattach", nil, "bash", "-c", jattachScript())
+			title, words := m.stageJattachWords()
+			return m.openQuick(title, nil, words...)
 		case "?":
 			m.scr = scHelp
 			return m, nil
@@ -481,6 +542,9 @@ func (m model) menuKey(key string) (tea.Model, tea.Cmd) {
 func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 	m.prev = scMenu
 	switch key {
+	case "esc": // the menu is the root: flash how to leave instead of doing nothing
+		m.escHint = true
+		return m, nil
 	case "w": // lowercase only — W is workload (shifted, like S/H/T)
 		return m.openWizard()
 	case "s":
@@ -507,11 +571,13 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 			return m, nil
 		}
 		return m, m.podTerminal()
-	case "R": // re-roll: shifted, disruptive — confirm with a second R
-		return m.askConfirm("re-roll the deployment? this rolling-restarts EVERY pod (in-flight requests + in-memory state on each are lost) — press R again to confirm, any other key cancels", "R",
+	case "R": // restart: shifted, disruptive — confirm with a distinct key so a
+		// key-repeat of R can't fire it; pressing R again cancels
+		return m.askConfirm("restart the deployment? this rolling-restarts EVERY pod (in-flight requests + in-memory state on each are lost) — press y to confirm; esc or any other key (including R) cancels", "y",
 			func(mm *model) tea.Cmd { return mm.quickTo(true, "restart", "--confirm") })
-	case "K": // kill pod: shifted, disruptive — confirm with a second K
-		return m.askConfirm("delete this pod? a managed pod respawns under a new name; an unmanaged one is gone — press K again to confirm, any other key cancels", "K",
+	case "K": // kill pod: shifted, disruptive — confirm with a distinct key so a
+		// key-repeat of K can't fire it; pressing K again cancels
+		return m.askConfirm("delete this pod? a managed pod respawns under a new name; an unmanaged one is gone — press y to confirm; esc or any other key (including K) cancels", "y",
 			func(mm *model) tea.Cmd { return mm.quickTo(true, "kill", "--confirm") })
 	case "f", "F":
 		if m.showLogPane() {
@@ -523,7 +589,7 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 		m.scr = scJcmd
 		return m, nil
 	case "H":
-		return m.askConfirm("heap dump pauses the app while it runs — press H again to confirm, any other key cancels", "H",
+		return m.askConfirm("heap dump pauses the JVM while it runs and can contain real user data — press H again to confirm, any other key cancels", "H",
 			func(mm *model) tea.Cmd { mm.viaFlag = ""; mm.scr = scVia; mm.pendHeap = true; return nil })
 	case "x", "X":
 		return m.askConfirm2("include a heap dump in the bundle? (PAUSES the JVM) [y/N]", "",
@@ -588,6 +654,9 @@ func (m model) remoteKey(key string) (tea.Model, tea.Cmd) {
 func (m model) localKey(key string) (tea.Model, tea.Cmd) {
 	m.prev = scMenu
 	switch key {
+	case "esc":
+		m.escHint = true
+		return m, nil
 	case "w", "W":
 		return m.openWizard()
 	case "h":
@@ -602,7 +671,7 @@ func (m model) localKey(key string) (tea.Model, tea.Cmd) {
 		m.scr = scJcmd
 		return m, nil
 	case "H":
-		return m.askConfirm("heap dump pauses the app while it runs — press H again to confirm, any other key cancels", "H",
+		return m.askConfirm("heap dump pauses the JVM while it runs and can contain real user data — press H again to confirm, any other key cancels", "H",
 			func(mm *model) tea.Cmd { return mm.quickToLocal("heap", "--confirm") })
 	case "x", "X":
 		return m.askConfirm2("include a heap dump in the bundle? (PAUSES the JVM) [y/N]", "",
@@ -626,9 +695,14 @@ func (m model) localKey(key string) (tea.Model, tea.Cmd) {
 	case "d", "D":
 		return m.quickLocal("dumps")
 	case "i", "I":
-		return m.openQuick("stage jattach", nil, "bash", "-c", jattachScript())
+		title, words := m.stageJattachWords()
+		return m.openQuick(title, nil, words...)
 	case "s", "S":
 		return m.openLocalSettings()
+	case "g", "G": // change where we're debugging: this host, or a host to SSH to
+		return m.openSSHHost()
+	case "p", "P": // pick which JVM to debug when several run on this host
+		return m.openJVMPicker()
 	case "M":
 		m.scr = scChooser
 		return m, nil

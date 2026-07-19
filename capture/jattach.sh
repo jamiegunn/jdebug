@@ -102,6 +102,23 @@ install_jattach() {
         return
     fi
 
+    # Pre-flight: restricted PodSecurity / readOnlyRootFilesystem makes the
+    # staging dir unwritable, and the `kubectl cp` would then fail opaquely. Use
+    # a FUNCTIONAL write probe (the truth — /tmp is often a writable emptyDir even
+    # when the root FS is read-only, so a securityContext guess would be wrong)
+    # and steer to the actuator tier, which needs no jattach at all.
+    local stage_dir; stage_dir="$(dirname "$JATTACH_REMOTE_PATH")"
+    if ! kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- \
+            sh -c "touch '$stage_dir/.jdebug-wtest' 2>/dev/null && rm -f '$stage_dir/.jdebug-wtest' 2>/dev/null"; then
+        err "can't stage jattach: '$stage_dir' is not writable in $POD"
+        err "  (readOnlyRootFilesystem / restricted PodSecurity?) — jattach needs a writable path."
+        err "  → for thread/heap dumps, use the actuator tier — it needs no jattach:"
+        err "        jdebug threads -n $NAMESPACE $POD          # /actuator/threaddump"
+        err "        jdebug heap --confirm -n $NAMESPACE $POD   # /actuator/heapdump"
+        err "  → or point jattach at a writable volume: JATTACH_REMOTE_PATH=/writable/jattach"
+        exit 1
+    fi
+
     # 1. Explicit binary the caller handed us
     if [[ -n "$LOCAL_BINARY" ]]; then
         if [[ ! -f "$LOCAL_BINARY" ]]; then
@@ -116,58 +133,14 @@ install_jattach() {
     fi
 
     # 2. Auto-detect the pod arch and install the jattach binary VENDORED in
-    #    this repo (pinned $JATTACH_VERSION). No runtime download.
-    local arch tarball_arch
+    #    this repo (pinned $JATTACH_VERSION). No runtime download. The integrity
+    #    gate (resolve the right binary + verify it against SHA256SUMS before it
+    #    runs next to a JVM) is shared with the bare-metal/SSH staging path via
+    #    lib/common.sh's jattach_verified_path — one source of truth.
+    local arch cache_file
     arch="$(kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- uname -m)"
-    case "$arch" in
-        x86_64|amd64)  tarball_arch="x64"   ;;
-        aarch64|arm64) tarball_arch="arm64" ;;
-        *) err "unsupported pod arch: $arch (provide --binary instead)"; exit 1 ;;
-    esac
-
-    local cache_file="$JATTACH_VENDOR_DIR/jattach-linux-${tarball_arch}"
-    if [[ ! -f "$cache_file" ]]; then
-        err "no vendored jattach for arch '$arch' at: $cache_file"
-        err "  expected a repo-local binary (pinned $JATTACH_VERSION, see vendor/jattach/)."
-        err "  → provide one with --binary <path> or \$JATTACH_BINARY."
-        exit 1
-    fi
-    info "using vendored jattach ($JATTACH_VERSION, linux-${tarball_arch}): $cache_file"
-
-    # Integrity gate: verify the vendored binary against SHA256SUMS BEFORE it
-    # ships into a production pod. A corrupted or tampered local file must
-    # never run next to the JVM. --binary/$JATTACH_BINARY (an explicit operator
-    # choice) bypasses this; the vendored default does not.
-    local sums="$JATTACH_VENDOR_DIR/SHA256SUMS" want got
-    if [[ ! -f "$sums" ]]; then
-        err "missing $sums — refusing to install an unverified binary into the pod."
-        err "  → restore it from git, or pass an explicit --binary <path>."
-        exit 1
-    fi
-    want="$(awk -v f="jattach-linux-${tarball_arch}" '$2==f {print $1}' "$sums")"
-    if [[ -z "$want" ]]; then
-        err "no entry for jattach-linux-${tarball_arch} in $sums — refusing to install unverified."
-        err "  → restore SHA256SUMS from git, or pass an explicit --binary <path>."
-        exit 1
-    fi
-    if command -v sha256sum >/dev/null 2>&1; then
-        got="$(sha256sum "$cache_file" | awk '{print $1}')"
-    elif command -v shasum >/dev/null 2>&1; then       # stock macOS
-        got="$(shasum -a 256 "$cache_file" | awk '{print $1}')"
-    else
-        err "neither sha256sum nor shasum on this host — can't verify the vendored binary."
-        err "  → install coreutils/perl, or pass an explicit --binary <path> to skip verification."
-        exit 1
-    fi
-    if [[ "$got" != "$want" ]]; then
-        err "vendored jattach FAILED its checksum — refusing to install it into the pod."
-        err "  expected  $want  (SHA256SUMS)"
-        err "  got       $got  ($cache_file)"
-        err "  → the file was modified or corrupted; restore vendor/jattach/ from git,"
-        err "    or pass an explicit --binary <path>."
-        exit 1
-    fi
-    info "checksum verified (sha256 ${got:0:12}…)"
+    cache_file="$(jattach_verified_path Linux "$arch")" || exit 1
+    info "vendored jattach verified ($JATTACH_VERSION): $cache_file"
 
     info "kubectl cp $cache_file $POD:$JATTACH_REMOTE_PATH"
     kubectl -n "$NAMESPACE" cp "$cache_file" "$POD:$JATTACH_REMOTE_PATH" -c "$APP_CONTAINER"

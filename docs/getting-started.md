@@ -24,9 +24,8 @@ jdebug
 
 The first question is **where the JVM is**:
 
-1. **Remote** — you're on your laptop, reaching a pod via kubectl (the usual case; *not sure? pick this*)
-2. **In-pod** — you already have a shell inside the container
-3. **Bare metal** — the JVM runs on this very machine
+1. **Kubernetes (kubectl)** — you're on your laptop, reaching a pod via kubectl (the usual case; *not sure? pick this*)
+2. **Bare metal** — a JVM with no Kubernetes: this machine, or a remote VM/box you reach over SSH (`user@host`, using your own keys/agent)
 
 ## 3. Point it at your app — the menu insists
 

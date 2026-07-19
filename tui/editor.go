@@ -10,6 +10,7 @@ import (
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 type editorState struct{ note string }
@@ -42,8 +43,10 @@ func (m model) editorView() string {
 	// every field carries a plain-language gloss — nobody should need the
 	// glossary mid-incident
 	row := func(k, name, val, gloss string) string {
+		// clip (not just pad) the value: a pod name / actuator URL longer than
+		// the column must truncate with an ellipsis, never run into the gloss
 		return "   " + cKey.Render(k) + "  " + cBody.Render(fmt.Sprintf("%-11s", name)) +
-			cMuted.Render(fmt.Sprintf("%-34s", val)) + cFaint.Render(gloss)
+			cMuted.Render(clip(val, 34)) + cFaint.Render(gloss)
 	}
 	sel := m.t.Selector
 	if sel == "" {
@@ -53,7 +56,7 @@ func (m model) editorView() string {
 	if pod == "" {
 		pod = "<auto: first match>"
 	}
-	out := "\n  " + cTitle.Render("TARGET") + cMuted.Render(" — press a letter to change a field · ") +
+	out := "\n  " + cTitle.Render("target") + cMuted.Render(" — press a letter to change a field · ") +
 		cKey.Render("Enter") + cMuted.Render("/") + cKey.Render("b") + cMuted.Render(" back to the menu") + "\n" +
 		row("c", "context", currentContext(), "which cluster kubectl talks to") + "\n" +
 		row("n", "namespace", m.t.Namespace, "the app's folder in the cluster") + "\n" +
@@ -185,6 +188,55 @@ func (m model) openLocalSettings() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// openSSHHost prompts for the bare-metal host: blank = this machine, "user@host"
+// (optionally ":port") = run everything over SSH. Launched from the chooser
+// right after picking Bare metal, and from the local menu (g) to change it.
+func (m model) openSSHHost() (tea.Model, tea.Cmd) {
+	cur := "this machine"
+	if m.t.SSH != "" {
+		cur = m.t.SSH
+	}
+	m.input = inputBox{title: "host to debug [" + cur + "] — blank = this machine, or user@host to SSH (keys/agent):", val: "", then: inputSSHHost}
+	m.prev = scMenu
+	m.scr = scInput
+	return m, nil
+}
+
+// openJVMPicker lists the JVMs on the bare-metal target and lets the user pin
+// one (bare-metal `p`), so a host running several apps doesn't silently debug
+// whichever `java` happens to be first. Typed fallback (a bare pid) when the
+// listing fails.
+func (m model) openJVMPicker() (tea.Model, tea.Cmd) {
+	items, errMsg := jvmsFn(m.kit, m.t)
+	m.prev = scMenu
+	if errMsg != "" && len(items) == 0 {
+		m.input = inputBox{title: "couldn't list JVMs (" + errMsg + ") — type a pid, or 'auto' to let jdebug detect:", then: inputJVMPid}
+		m.scr = scInput
+		return m, nil
+	}
+	where := "this host"
+	if m.t.SSH != "" {
+		where = m.t.SSH
+	}
+	return m.openPicker("Which JVM on "+where+"? (pid · command)", items, m.t.JVMPid, true, pickJVM)
+}
+
+// applySSHHost records the bare-metal host (blank/"local"/"-" = this machine),
+// then lands on the menu with a fresh probe of the chosen route.
+func (m model) applySSHHost(v string) (tea.Model, tea.Cmd) {
+	switch v {
+	case "local", "-", "this machine":
+		v = ""
+	}
+	m.t.SSH = v
+	m.t.JVMPid = "" // a pid on the old host is meaningless on the new one
+	saveTarget(m.t)
+	m.mode = 2 // bare metal
+	m.scr = scMenu
+	m.local = localProbe(m.kit, m.t)
+	return m, nil
+}
+
 // --- generic picker -------------------------------------------------------------
 
 type pickKind int
@@ -195,7 +247,18 @@ const (
 	pickSelector
 	pickPod
 	pickContainer
+	pickJVM
 )
+
+// pickReturnScreen is where a picker/typed-input lands when done: the k8s field
+// pickers all live inside the target editor, but the bare-metal JVM picker is
+// launched straight from the menu, so it returns there.
+func pickReturnScreen(k pickKind) screen {
+	if k == pickJVM {
+		return scMenu
+	}
+	return scEditor
+}
 
 type picker struct {
 	title   string
@@ -210,12 +273,12 @@ func (m model) openPicker(title string, items []string, current string, typed bo
 	if len(items) == 0 {
 		if typed {
 			m.input = inputBox{title: title + " (nothing to list — no permission to enumerate? type the value):", then: inputForPick(kind)}
-			m.prev = scEditor
+			m.prev = pickReturnScreen(kind)
 			m.scr = scInput
 			return m, nil
 		}
 		m.editor.note = "nothing to list"
-		m.scr = scEditor
+		m.scr = pickReturnScreen(kind)
 		return m, nil
 	}
 	m.pick = picker{title: title, items: items, current: current, typed: typed, kind: kind}
@@ -235,7 +298,9 @@ func (m model) pickerView() string {
 	b.WriteString("\n  " + cTitle.Render(m.pick.title) + "\n")
 	for i, it := range m.pick.items {
 		mark := "  "
-		line := "   " + cKey.Render(fmt.Sprintf("%d", i+1)) + "  " + cMuted.Render(it)
+		// clip so a long "pod-name  Running  restarts=34" row can't wrap on a
+		// narrow terminal (the picker is the width of the target editor)
+		line := "   " + cKey.Render(fmt.Sprintf("%d", i+1)) + "  " + cMuted.Render(ansi.Truncate(it, m.tw()-8, "…"))
 		if it == m.pick.current || strings.Fields(it)[0] == m.pick.current {
 			line += cFaint.Render("  (current)")
 		}
@@ -295,7 +360,8 @@ func (m model) pickerKey(key string) (tea.Model, tea.Cmd) {
 }
 
 func (m model) applyPick(val string) (tea.Model, tea.Cmd) {
-	m.scr = scEditor
+	m.scr = pickReturnScreen(m.pick.kind)
+	m.autoPod = 0 // any target edit re-derives the auto-picked pod on the next probe
 	switch m.pick.kind {
 	case pickContext:
 		if val != currentContext() {
@@ -324,6 +390,9 @@ func (m model) applyPick(val string) (tea.Model, tea.Cmd) {
 		m.staleP = ""
 	case pickContainer:
 		m.t.Container = val
+	case pickJVM:
+		// rows are "PID   <command>" — the pid is the first field
+		m.t.JVMPid = strings.Fields(val)[0]
 	}
 	return m, nil
 }
@@ -342,6 +411,8 @@ const (
 	inputContainer
 	inputPod
 	inputActuatorAuth
+	inputSSHHost
+	inputJVMPid
 )
 
 // authDisplay shows the auth REFERENCE (never a secret) — the value is a pod
@@ -361,6 +432,8 @@ func inputForPick(k pickKind) inputTarget {
 		return inputSelector
 	case pickContainer:
 		return inputContainer
+	case pickJVM:
+		return inputJVMPid
 	}
 	return inputActuator
 }
@@ -380,6 +453,11 @@ func (m model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 	switch k.String() {
 	case "enter":
 		v := strings.TrimSpace(m.input.val)
+		// the SSH host is the one field where empty is MEANINGFUL (empty = run on
+		// this machine), so it's handled before the generic "empty keeps current".
+		if m.input.then == inputSSHHost {
+			return m.applySSHHost(v)
+		}
 		back := m.prev
 		m.scr = back
 		if v == "" {
@@ -424,6 +502,13 @@ func (m model) inputKey(k tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.t.Pod = strings.Fields(v)[0]
 			m.staleP = ""
 			m.scr = scEditor
+		case inputJVMPid:
+			if v == "auto" || v == "-" {
+				m.t.JVMPid = "" // back to auto-detect
+			} else if f := strings.Fields(v); len(f) > 0 {
+				m.t.JVMPid = f[0] // a bare pid (first token)
+			}
+			m.scr = scMenu
 		}
 		return m, nil
 	case "esc":

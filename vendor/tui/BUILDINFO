@@ -1,4 +1,4 @@
 # vendored jdebug-tui — written by scripts/vendor-tui.sh (pre-commit hook)
 go_version: go1.24.7
-source_sha256: ca11aebd14809565b2556288a68bf528eb9a42b26c12b1d652bcf721199264b6
-built_at: 2026-07-18T18:13:54Z
+source_sha256: 6a3280a2eeace74dcf034389e64c463e2fe154aee328b77fe66998fa03cb99bb
+built_at: 2026-07-19T04:21:26Z

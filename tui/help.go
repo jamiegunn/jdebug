@@ -39,7 +39,7 @@ func (m model) helpView() string {
 		h("THE SAFETY RULES") +
 		"    " + cMuted.Render("· most actions are read-only. The ones that CHANGE things ask first:") + "\n" +
 		"        " + cDisr.Render("H heap / x --heap") + cMuted.Render("  PAUSE the JVM while they write (H asks for a second H)") + "\n" +
-		"        " + cDisr.Render("R re-roll") + cMuted.Render("          rolling-restarts every pod in the deployment (second R)") + "\n" +
+		"        " + cDisr.Render("R restart") + cMuted.Render("          rolling-restarts every pod in the deployment (y confirms)") + "\n" +
 		"        " + cDisr.Render("K kill pod") + cMuted.Render("         deletes this pod; a managed one respawns (second K)") + "\n" +
 		"        " + cCaut.Render("v verbosity") + cMuted.Render("        changes log volume live on every replica") + "\n" +
 		"    " + cMuted.Render("· anything risky asks you first — cancelling is always safe") + "\n" +

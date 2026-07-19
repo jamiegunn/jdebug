@@ -86,7 +86,9 @@ func (m model) cleanupView() string {
 }
 
 func (m model) cleanupKey(key string) (tea.Model, tea.Cmd) {
-	if (key == "y" || key == "Y" || key == "enter") && m.ownedArtifacts() > 0 {
+	// y/Y only — NOT enter: this runs `rm -f` inside the pod, and enter is the
+	// benign "dismiss" key everywhere else, so a habitual enter must not fire it
+	if (key == "y" || key == "Y") && m.ownedArtifacts() > 0 {
 		m.scr = scMenu
 		return m.quickCLI(false, "cleanup", "--confirm")
 	}

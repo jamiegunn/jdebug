@@ -181,7 +181,7 @@ func TestMenuParityStrings(t *testing.T) {
 	out := v.menuView()
 	for _, want := range []string{"START HERE", "QUICK CHECKS", "CAPTURE EVIDENCE", "ADVANCED",
 		"guided diagnosis", "pauses app", "safe / caution / disruptive", "❯", "[?] help",
-		"workload", "security", "terminal", "re-roll", "kill pod"} {
+		"workload", "security", "terminal", "restart", "kill pod"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("menu missing %q", want)
 		}
@@ -649,7 +649,7 @@ func TestClickDisruptiveRowStillConfirms(t *testing.T) {
 	m.width, m.height = 200, 50
 	// clicking a disruptive row must open the SAME second-key confirm as the
 	// shortcut — a click can't bypass the gate
-	if mm, _ := clickMenuRow(t, m, "kill pod"); mm.scr != scConfirm || !strings.Contains(mm.confirmMsg, "K again") {
+	if mm, _ := clickMenuRow(t, m, "kill pod"); mm.scr != scConfirm || mm.confirmKey != "y" {
 		t.Fatalf("clicking 'kill pod' must ask to confirm, got screen %v", mm.scr)
 	}
 	if mm, _ := clickMenuRow(t, readyModel200(), "heap"); mm.scr != scConfirm || !strings.Contains(mm.confirmMsg, "H again") {
@@ -1299,9 +1299,8 @@ func TestClickSwitchesPod(t *testing.T) {
 	m := readyModel()
 	m.width, m.height = 200, 50
 	menuW, midW, _ := m.cols()
-	x := menuW + midW + 4 + 2 // inside the right column
-	y := 3 + 2                // pods pane: title row +1 → second pod row... row 1 is first pod
-	// row y=4 is the first pod row (y0=3 title); click the second pod
+	x := menuW + midW + 4 + 2                // inside the right column
+	y := m.headerH() + m.dashBandH() + 1 + 1 // pods title row + first pod + 1 → second pod
 	res, cmd := m.Update(tea.MouseMsg{X: x, Y: y, Action: tea.MouseActionPress, Button: tea.MouseButtonLeft})
 	mm := res.(model)
 	want := "app-debug-demo-app-6c6c4b5769-x7k2p"
@@ -1310,6 +1309,104 @@ func TestClickSwitchesPod(t *testing.T) {
 	}
 	if cmd == nil {
 		t.Fatal("switching pods must refetch the live panes")
+	}
+}
+
+// H4: a target with only a selector (no exact pod) must not wall off the
+// read-only checks — jdebug auto-picks the first matching pod and discloses it,
+// instead of forcing a chooser→g→p→picker detour before any signal shows.
+func TestSelectorOnlyAutoPicksFirstPod(t *testing.T) {
+	saved := podsFn
+	defer func() { podsFn = saved }()
+	podsFn = func(ns, sel string) enum {
+		return enum{items: []string{"pod-a  Running  restarts=0", "pod-b  Running  restarts=1"}}
+	}
+	m := readyModel()
+	m.t.Pod = ""
+	m.t.Selector = "app=demo"
+	m.probeRemote(true)
+	if m.t.Pod != "pod-a" {
+		t.Fatalf("a selector with no pod must auto-pick the first match, got %q", m.t.Pod)
+	}
+	if m.autoPod != 2 {
+		t.Fatalf("autoPod must record the match count, got %d", m.autoPod)
+	}
+	// the auto-pick is disclosed in the header, never a silent guess
+	if h := ansiStrip(m.headerRemote(true)); !strings.Contains(h, "pods the selector matches") {
+		t.Fatalf("the header must disclose the auto-pick:\n%s", h)
+	}
+	// an explicit pod pick supersedes the auto-pick and clears the note
+	sw, _ := m.switchPod("pod-b")
+	if mm := sw.(model); mm.autoPod != 0 || mm.t.Pod != "pod-b" {
+		t.Fatalf("an explicit pick must supersede the auto-pick, got pod=%q autoPod=%d", mm.t.Pod, mm.autoPod)
+	}
+}
+
+// H2: the tier-2 dashboard must lead with a full-width fault band naming the
+// emergency + the next keystroke, in red, before the tool catalogue.
+func TestFaultBandLeadsDashboard(t *testing.T) {
+	m := readyModel200() // crash-loop + OOM demo panel → a real fault
+	v := ansiStrip(m.dashboardView())
+	lines := strings.Split(v, "\n")
+	band := -1
+	for i, ln := range lines {
+		if strings.Contains(ln, "▲") && strings.Contains(ln, "CrashLoopBackOff") {
+			band = i
+			break
+		}
+	}
+	if band < 0 {
+		t.Fatalf("a faulting dashboard must show a fault band:\n%s", v)
+	}
+	// it names the best next keystroke, and sits above the menu catalogue
+	if !strings.Contains(lines[band], "w flow 7") {
+		t.Errorf("the band must point at the next action: %q", lines[band])
+	}
+	start := strings.Index(v, "START HERE")
+	if start >= 0 && strings.Index(v, "▲") > start {
+		t.Error("the fault band must sit above the tool catalogue, not below it")
+	}
+	// a healthy panel shows no band (no noise)
+	h := readyModel200()
+	h.panel = panelData{When: time.Now(), Phase: "Running", ActuatorOK: true}
+	if h.faultBand(h.tw()) != "" {
+		t.Error("a healthy panel must show no fault band")
+	}
+}
+
+// M5: when a live warning is firing, the wide footer surfaces the stuck-help
+// keys so the paged junior finds the runbook + escalation without pressing ?.
+func TestStuckHelpKeysInFooterWhenWarning(t *testing.T) {
+	m := readyModel200() // faulting demo → hasLiveWarning
+	if !m.hasLiveWarning() {
+		t.Fatal("the demo panel must register a live warning")
+	}
+	foot := ansiStrip(m.footer(m.dashNav()))
+	if !strings.Contains(foot, "[n]") || !strings.Contains(foot, "[E] escalate") {
+		t.Fatalf("a warning footer must offer the stuck-help keys:\n%s", foot)
+	}
+	// a healthy dashboard keeps the footer clean
+	h := readyModel200()
+	h.panel = panelData{When: time.Now(), Phase: "Running", ActuatorOK: true}
+	if strings.Contains(ansiStrip(h.footer(h.dashNav())), "[E] escalate") {
+		t.Error("a healthy dashboard must not clutter the footer with escalate")
+	}
+}
+
+// P6: esc at the menu root is a no-op everywhere else it means "back", so it
+// flashes a one-line hint on how to actually leave, cleared by the next key.
+func TestEscAtMenuRootFlashesHint(t *testing.T) {
+	m := readyModel200()
+	out := press(t, m, "esc").(model)
+	if !out.escHint {
+		t.Fatal("esc at the menu root must arm the top-of-tree hint")
+	}
+	if !strings.Contains(ansiStrip(out.menuView()), "you're at the top") {
+		t.Fatal("the hint must render in the footer")
+	}
+	// any other key clears it
+	if cleared := press(t, out, "s").(model); cleared.escHint {
+		t.Fatal("a subsequent key must clear the hint")
 	}
 }
 
@@ -1494,7 +1591,7 @@ func TestNoRowWrapsAtMinTierTwoWidth(t *testing.T) {
 func TestHelpListsStateChangingActions(t *testing.T) {
 	m := readyModel()
 	help := ansiStrip(m.helpView())
-	for _, want := range []string{"R re-roll", "K kill pod", "PAUSE the JVM", "changes log volume"} {
+	for _, want := range []string{"R restart", "K kill pod", "PAUSE the JVM", "changes log volume"} {
 		if !strings.Contains(help, want) {
 			t.Errorf("safety rules must mention %q", want)
 		}
@@ -1526,41 +1623,46 @@ func TestHighCPUFlowSeparatesTheTwoDumps(t *testing.T) {
 	t.Fatal("flow 3 (high CPU) missing")
 }
 
-func TestReRollNeedsSecondPress(t *testing.T) {
+func TestRestartConfirmsWithDistinctKey(t *testing.T) {
 	m := readyModel()
 	m.width, m.height = 200, 50
 	out := press(t, m, "R")
 	mm := out.(model)
-	if mm.scr != scConfirm || !strings.Contains(mm.confirmMsg, "R again") {
-		t.Fatalf("R must ask for a second R, got %q on %v", mm.confirmMsg, mm.scr)
+	if mm.scr != scConfirm || mm.confirmKey != "y" {
+		t.Fatalf("R must ask for a distinct y, got key %q on %v", mm.confirmKey, mm.scr)
 	}
 	if !strings.Contains(mm.confirmMsg, "rolling-restarts") {
-		t.Fatal("the re-roll confirm must spell out the risk")
+		t.Fatal("the restart confirm must spell out the risk")
 	}
-	// a non-R key cancels
-	if got := press(t, mm, "z").(model); got.scr != scMenu || got.out.running {
-		t.Fatal("a non-R key must cancel the re-roll")
+	// a key-repeat of the trigger (R) must CANCEL, not fire — the whole point of
+	// requiring a distinct key is that holding R can't rolling-restart the fleet
+	if got := press(t, mm, "R").(model); got.scr != scMenu || got.out.running {
+		t.Fatal("a second R must cancel the restart, not confirm it")
 	}
-	// second R runs the guarded restart
-	res, cmd := mm.Update(key("R"))
+	// y runs the guarded restart
+	res, cmd := mm.Update(key("y"))
 	rm := res.(model)
 	if cmd == nil || !rm.out.running || !strings.Contains(rm.out.title, "restart --confirm") {
-		t.Fatalf("R,R must run the confirmed re-roll, got title %q", rm.out.title)
+		t.Fatalf("R,y must run the confirmed restart, got title %q", rm.out.title)
 	}
 }
 
-func TestKillNeedsSecondPress(t *testing.T) {
+func TestKillConfirmsWithDistinctKey(t *testing.T) {
 	m := readyModel()
 	m.width, m.height = 200, 50
 	out := press(t, m, "K")
 	mm := out.(model)
-	if mm.scr != scConfirm || !strings.Contains(mm.confirmMsg, "K again") {
-		t.Fatalf("K must ask for a second K, got %q on %v", mm.confirmMsg, mm.scr)
+	if mm.scr != scConfirm || mm.confirmKey != "y" {
+		t.Fatalf("K must ask for a distinct y, got key %q on %v", mm.confirmKey, mm.scr)
 	}
-	res, cmd := mm.Update(key("K"))
+	// a key-repeat of the trigger (K) must cancel
+	if got := press(t, mm, "K").(model); got.scr != scMenu || got.out.running {
+		t.Fatal("a second K must cancel the kill, not confirm it")
+	}
+	res, cmd := mm.Update(key("y"))
 	km := res.(model)
 	if cmd == nil || !km.out.running || !strings.Contains(km.out.title, "kill --confirm") {
-		t.Fatalf("K,K must run the confirmed kill, got title %q", km.out.title)
+		t.Fatalf("K,y must run the confirmed kill, got title %q", km.out.title)
 	}
 }
 

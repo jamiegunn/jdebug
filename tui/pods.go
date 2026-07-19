@@ -116,7 +116,7 @@ func (m model) podsHit(x, y int) (bool, int) {
 	if x < x0 || x >= x0+evW {
 		return false, 0
 	}
-	y0 := m.headerH() // header height varies (target line wrap / stale pin)
+	y0 := m.headerH() + m.dashBandH() // header height varies; a fault band adds a row
 	if y < y0 || y >= y0+m.podsPaneH() {
 		return false, 0
 	}
@@ -155,7 +155,8 @@ func (m model) panelHit(x, y int) bool {
 		return false
 	}
 	topH := strings.Count(m.remoteBody(), "\n") + 1
-	return y >= 3 && y < 3+topH // the mid column (TARGET LIVE + TRENDS + NEXT)
+	y0 := m.headerH() + m.dashBandH() // columns start below the header + any fault band
+	return y >= y0 && y < y0+topH     // the mid column (TARGET LIVE + TRENDS + NEXT)
 }
 
 // switchPod retargets everything at the clicked pod.
@@ -165,6 +166,7 @@ func (m model) switchPod(pod string) (tea.Model, tea.Cmd) {
 	}
 	m.t.Pod = pod
 	m.staleP = ""
+	m.autoPod = 0 // an explicit pick supersedes the auto-picked pod
 	m.logs = logState{}
 	m.hist = nil
 	m.capsCwd = "" // un-pin the captures browser from the previous pod

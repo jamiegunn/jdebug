@@ -18,6 +18,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
@@ -47,8 +48,20 @@ type outState struct {
 	notice   string // transient feedback, e.g. "copied to clipboard ✓"
 	filePath string // a capture is being VIEWED — `a` analyzes this file
 	show     bool   // rendering in the bottom strip (vs scOutput fallback)
+	spin     int    // spinner frame, advanced by spinTick while running
 	ch       chan tea.Msg
 	cancel   context.CancelFunc
+}
+
+// spinTickMsg advances the streaming spinner. It carries the stream id so a
+// tick from a superseded/finished stream stops the loop instead of spinning
+// forever. spinFrames is a smooth braille cycle.
+type spinTickMsg struct{ id int }
+
+var spinFrames = []string{"⣾", "⣽", "⣻", "⢿", "⡿", "⣟", "⣯", "⣷"}
+
+func spinCmd(id int) tea.Cmd {
+	return tea.Tick(120*time.Millisecond, func(time.Time) tea.Msg { return spinTickMsg{id} })
 }
 
 // copyTranscript puts the pane's ANSI-free transcript on the system
@@ -88,10 +101,15 @@ func (m model) quickCLI(withPod bool, args ...string) (tea.Model, tea.Cmd) {
 	return m.openQuick("jdebug "+strings.Join(args, " "), targetEnv(m.t), words...)
 }
 
-// quickLocal streams `sh <kit>/jdebug-local <args...>`.
+// quickLocal streams jdebug-local <args...> — on this machine, or piped over
+// SSH to the bare-metal remote when one is set.
 func (m model) quickLocal(args ...string) (tea.Model, tea.Cmd) {
-	words := append([]string{"sh", filepath.Join(m.kit, "jdebug-local")}, args...)
-	return m.openQuick("jdebug-local "+strings.Join(args, " "), targetEnv(m.t), words...)
+	words := localWords(m.kit, m.t, args...)
+	title := "jdebug-local " + strings.Join(args, " ")
+	if m.t.SSH != "" {
+		title += " · ssh " + m.t.SSH
+	}
+	return m.openQuick(title, targetEnv(m.t), words...)
 }
 
 // quickTo/quickToLocal: pointer-receiver adapters for confirm closures,
@@ -140,7 +158,7 @@ func (m model) startPane(title string, env []string, prefix []byte, keep bool, w
 		m.scr = scOutput
 	}
 	go streamCmd(ctx, id, env, ch, words...)
-	return m, waitStream(ch)
+	return m, tea.Batch(waitStream(ch), spinCmd(id))
 }
 
 // streamCmd runs the command with stdout+stderr on one pipe and forwards
@@ -223,7 +241,7 @@ func (m model) outStatus(strip bool) string {
 	}
 	switch {
 	case m.out.running:
-		return cFaint.Render("⣾ streaming · esc stops")
+		return cFaint.Render(spinFrames[m.out.spin%len(spinFrames)] + " streaming · esc stops")
 	case m.out.errStr == "stopped":
 		return cWarn.Render("◼ stopped") + cFaint.Render(" · "+back)
 	case m.out.ok:

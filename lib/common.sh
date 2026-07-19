@@ -281,6 +281,65 @@ record_artifact() {
         "$owned" "${NAMESPACE:-}" "${POD:-}" "${APP_CONTAINER:-}" "$path" "$note" >> "$mf"
 }
 
+# heap_data_gate — a heap dump is a full copy of LIVE process memory: it can
+# contain credentials, tokens, session data, and customer PII. Always print that
+# notice. In a governed environment the org sets JDEBUG_REQUIRE_DATA_ACK=1 (via a
+# wrapper, CI, or admission policy); the operator must then acknowledge with
+# JDEBUG_DATA_ACK=1, or the dump is refused (exit 65). Off by default, so casual
+# use is unchanged — this is the opt-in hook regulated environments asked for.
+heap_data_gate() {
+    err "⚠ a heap dump is a full copy of live memory — it may contain secrets, tokens, and PII."
+    err "  store and delete it per your data-retention/PII policy."
+    if [ -n "${JDEBUG_REQUIRE_DATA_ACK:-}" ] && [ -z "${JDEBUG_DATA_ACK:-}" ]; then
+        err "  this environment requires sign-off: set JDEBUG_DATA_ACK=1 to acknowledge and proceed."
+        exit 65
+    fi
+}
+
+# jattach_verified_path <uname-s> <uname-m> — echo the path to the vendored
+# jattach matching that OS/arch, AFTER verifying it against
+# vendor/jattach/SHA256SUMS. Prints nothing and returns non-zero (reason on
+# stderr) when no vendored binary covers the platform or the checksum fails.
+#
+# This is the SINGLE integrity gate for staging jattach anywhere — into a pod
+# (capture/jattach.sh), onto this host, or onto an SSH target
+# (capture/stage-jattach.sh). Nothing is downloaded at runtime; a tampered or
+# corrupt vendored binary is refused before it can run next to a JVM. An
+# operator who sets $JATTACH_BINARY makes an explicit choice and bypasses this.
+jattach_verified_path() {
+    local os="$1" arch="$2" dir plat ta file sums want got
+    dir="${JATTACH_VENDOR_DIR:-${SCRIPTS_ROOT:-.}/vendor/jattach}"
+    case "$os" in
+        Linux) plat="linux" ;;
+        *) err "no vendored jattach for OS '$os' (only Linux is vendored)."
+           err "  → use the actuator tier (needs no jattach), or set \$JATTACH_BINARY to your own copy."
+           return 1 ;;
+    esac
+    case "$arch" in
+        x86_64|amd64)  ta="x64"   ;;
+        aarch64|arm64) ta="arm64" ;;
+        *) err "unsupported arch '$arch' for the vendored jattach — set \$JATTACH_BINARY to your own copy."
+           return 1 ;;
+    esac
+    file="$dir/jattach-${plat}-${ta}"
+    [ -f "$file" ] || { err "no vendored jattach at $file — restore vendor/jattach/ from git, or set \$JATTACH_BINARY."; return 1; }
+    sums="$dir/SHA256SUMS"
+    [ -f "$sums" ] || { err "missing $sums — refusing to stage an unverified binary."; return 1; }
+    want="$(awk -v f="jattach-${plat}-${ta}" '$2==f {print $1}' "$sums")"
+    [ -n "$want" ] || { err "no SHA256SUMS entry for jattach-${plat}-${ta} — refusing to stage unverified."; return 1; }
+    if command -v sha256sum >/dev/null 2>&1; then got="$(sha256sum "$file" | awk '{print $1}')"
+    elif command -v shasum >/dev/null 2>&1; then got="$(shasum -a 256 "$file" | awk '{print $1}')"
+    else err "no sha256sum/shasum on this host to verify the binary — install coreutils, or set \$JATTACH_BINARY."; return 1; fi
+    if [ "$got" != "$want" ]; then
+        err "vendored jattach FAILED its checksum — refusing to stage it."
+        err "  expected  $want  (SHA256SUMS)"
+        err "  got       $got  ($file)"
+        err "  → the file was modified or corrupted; restore vendor/jattach/ from git."
+        return 1
+    fi
+    printf '%s\n' "$file"
+}
+
 # resolve_tui_binary <kit-root> — the Go TUI carries the interactive frontend AND
 # the heap reader (histogram / retained-size / two-dump diff). EVERY entry point
 # that needs it (this CLI's menu/wizard, observe/analyze.sh) resolves through here

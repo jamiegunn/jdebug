@@ -88,51 +88,88 @@ kubectl -n %s debug -it %s --image=busybox:1.36 --target=%s -- sh
 	return tea.ExecProcess(c, func(err error) tea.Msg { return execDoneMsg{err} })
 }
 
+// sshBase builds the ssh invocation prefix for a bare-metal remote: keys/agent
+// only (BatchMode, so it never blocks on a password prompt), a short connect
+// timeout so an unreachable host fails fast, and an explicit port when the host
+// is written "user@host:port". Auth relies entirely on the user's ~/.ssh/config
+// and agent — jdebug stores no secret.
+func sshBase(host string) string {
+	h := host
+	port := ""
+	if i := strings.LastIndex(host, ":"); i >= 0 {
+		// "user@host:port" — only treat a trailing all-digit segment as a port
+		if p := host[i+1:]; p != "" && strings.IndexFunc(p, func(r rune) bool { return r < '0' || r > '9' }) < 0 {
+			h, port = host[:i], p
+		}
+	}
+	cmd := "ssh -o BatchMode=yes -o ConnectTimeout=8"
+	if port != "" {
+		cmd += " -p " + shq(port)
+	}
+	return cmd + " " + shq(h)
+}
+
+// localWords builds the argv that runs the self-contained jdebug-local script
+// for a bare-metal target. Against this machine it's just `sh <kit>/jdebug-local
+// <args>`. Against a remote host (t.SSH set) the POSIX script is piped to `sh
+// -s` on the far side over SSH, so nothing has to be installed there; the
+// actuator/out/jattach settings and an scp-back hint are prepended as shell
+// assignments the remote sh reads before the script's own defaults.
+func localWords(kit string, t target, args ...string) []string {
+	script := filepath.Join(kit, "jdebug-local")
+	if t.SSH == "" {
+		return append([]string{"sh", script}, args...)
+	}
+	var qa []string
+	for _, a := range args {
+		qa = append(qa, shq(a))
+	}
+	// remote env: actuator base (the app's localhost on the far side), where
+	// captures land, the jattach path, and the host so out_hint can print the
+	// scp-back command. Values are single-quoted for the REMOTE shell.
+	rq := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
+	envLines := fmt.Sprintf("ACTUATOR_BASE=%s OUT_DIR=%s JATTACH_BIN=%s JDEBUG_SSH_BACK=%s",
+		rq(t.Actuator), rq("/tmp"), rq("/tmp/jattach"), rq(t.SSH))
+	if t.JVMPid != "" { // pin the chosen JVM on the remote host too
+		envLines += " JVM_PID=" + rq(t.JVMPid)
+	}
+	// forward the heap data-governance policy so it enforces on the remote host too
+	for _, k := range []string{"JDEBUG_REQUIRE_DATA_ACK", "JDEBUG_DATA_ACK"} {
+		if v := os.Getenv(k); v != "" {
+			envLines += " " + k + "=" + rq(v)
+		}
+	}
+	// { printf '<env> '; cat <script>; } | ssh <host> sh -s -- <args>
+	cmd := fmt.Sprintf("{ printf %s; cat %s; } | %s sh -s -- %s",
+		shq(envLines+"\n"), shq(script), sshBase(t.SSH), strings.Join(qa, " "))
+	return []string{"sh", "-c", cmd}
+}
+
 // targetEnv exports the current target the way the bash TUI does, so the CLI
 // children inherit it (flags still win inside the CLI).
 func targetEnv(t target) []string {
-	return []string{
+	env := []string{
 		"NAMESPACE=" + t.Namespace,
 		"SELECTOR=" + t.Selector,
 		"APP_CONTAINER=" + t.Container,
 		"ACTUATOR_BASE=" + t.Actuator,
 		"ACTUATOR_AUTH=" + t.ActuatorAuth, // a reference, not a secret
 	}
+	if t.JVMPid != "" { // bare metal: the specific JVM the user picked on this host
+		env = append(env, "JVM_PID="+t.JVMPid)
+	}
+	return env
 }
 
-// jattachScript downloads the arch-matched jattach for THIS machine into
-// the shared cache and copies it to $JATTACH_BIN (mirrors the bash helper).
-// Runs through the streaming output pane.
-func jattachScript() string {
-	cache := os.Getenv("JDEBUG_CACHE_DIR")
-	if cache == "" {
-		if x := os.Getenv("XDG_CACHE_HOME"); x != "" {
-			cache = filepath.Join(x, "jdebug")
-		} else {
-			home, _ := os.UserHomeDir()
-			cache = filepath.Join(home, ".cache", "jdebug")
-		}
+// stageJattachWords builds the argv that stages jattach for a bare-metal
+// target. Both routes go through capture/stage-jattach.sh, which installs the
+// VENDORED, checksum-verified binary (same integrity gate as the in-pod path)
+// — nothing is downloaded at runtime, so a tampered/corrupt binary is refused
+// before it can run next to the JVM.
+func (m model) stageJattachWords() (title string, words []string) {
+	script := filepath.Join(m.kit, "capture", "stage-jattach.sh")
+	if m.t.SSH == "" {
+		return "stage jattach", []string{"bash", script, "local"}
 	}
-	ver := os.Getenv("JATTACH_VERSION")
-	if ver == "" {
-		ver = "v2.2"
-	}
-	return fmt.Sprintf(`set -e
-BIN=%s; CACHE=%s; VER=%s
-[ -x "$BIN" ] && { echo "jattach already staged at $BIN"; exit 0; }
-case "$(uname -s)-$(uname -m)" in
-  Linux-x86_64|Linux-amd64)  ASSET="jattach-linux-x64.tgz" ;;
-  Linux-aarch64|Linux-arm64) ASSET="jattach-linux-arm64.tgz" ;;
-  Darwin-*)                  ASSET="jattach-macos.zip" ;;
-  *) echo "no prebuilt jattach for $(uname -s)/$(uname -m) — place one at $BIN yourself" >&2; exit 1 ;;
-esac
-F="$CACHE/jattach-$(uname -s)-$(uname -m)-$VER"
-if [ ! -f "$F" ]; then
-  mkdir -p "$CACHE"; T=$(mktemp -d)
-  echo "downloading https://github.com/jattach/jattach/releases/download/$VER/$ASSET"
-  curl -fsSL -o "$T/$ASSET" "https://github.com/jattach/jattach/releases/download/$VER/$ASSET"
-  tar -xf "$T/$ASSET" -C "$T" && mv "$T/jattach" "$F" && chmod +x "$F"; rm -rf "$T"
-fi
-cp "$F" "$BIN" && chmod +x "$BIN" && echo "staged jattach at $BIN"`,
-		shq(jattachBin()), shq(cache), shq(ver))
+	return "stage jattach on " + m.t.SSH, []string{"bash", script, "ssh", m.t.SSH}
 }

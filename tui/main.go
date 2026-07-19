@@ -14,9 +14,11 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	"github.com/charmbracelet/x/ansi"
 )
 
 const version = "1.0.0"
@@ -45,14 +47,16 @@ const (
 )
 
 type model struct {
-	kit    string
-	mode   int // 0 = ask, 1 remote, 2 in-pod, 3 bare metal
-	t      target
-	scr    screen
-	prev   screen // where PostRun / pickers return to
-	width  int
-	height int    // 0 = never measured: render content-height
-	staleP string // remembered pod that vanished at startup
+	kit     string
+	mode    int // 0 = ask, 1 kubernetes (kubectl), 2 bare metal (this host or SSH)
+	t       target
+	scr     screen
+	prev    screen // where PostRun / pickers return to
+	width   int
+	height  int    // 0 = never measured: render content-height
+	staleP  string // remembered pod that vanished at startup
+	autoPod int    // >0: pod was auto-picked from a selector; value = pods matched
+	escHint bool   // flash "you're at the top" after esc at the menu root
 
 	// cached probes (20s, like bash)
 	remote probe
@@ -189,6 +193,18 @@ func autoStatusCmd() tea.Cmd {
 
 func (m *model) probeRemote(force bool) probe {
 	if force || time.Since(m.remote.When) > 20*time.Second {
+		// when the operator set only a selector, auto-pick the first matching pod
+		// so the read-only checks (status/top/logs) light up immediately instead
+		// of walling everything off behind an exact-pod pick — the worst 3am
+		// papercut. It's surfaced in the header ("showing 1 of 3 pods"), never a
+		// silent guess, and `g p` still overrides it. podsFn returns an error when
+		// the cluster is unreachable, so a down cluster simply doesn't auto-pick.
+		if m.t.Pod == "" && m.t.Selector != "" {
+			if res := podsFn(m.t.Namespace, m.t.Selector); res.err == "" && len(res.items) > 0 {
+				m.t.Pod = strings.Fields(res.items[0])[0]
+				m.autoPod = len(res.items)
+			}
+		}
 		m.remote = remoteProbe(m.t)
 	}
 	return m.remote
@@ -236,6 +252,15 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			return m.quickCLI(false, "status")
 		}
 		return m, nil
+	case spinTickMsg:
+		// keep the streaming spinner animating even when no output chunk has
+		// arrived (a stalled command must not look frozen). Stops when the
+		// stream is superseded or finishes.
+		if v.id != m.out.id || !m.out.running {
+			return m, nil
+		}
+		m.out.spin++
+		return m, spinCmd(v.id)
 	case streamChunkMsg:
 		if v.id != m.out.id {
 			return m, nil // superseded stream
@@ -373,6 +398,13 @@ func (m model) handleMouse(v tea.MouseMsg) (tea.Model, tea.Cmd) {
 			return m.openDetail(key)
 		}
 	case v.Action == tea.MouseActionPress && v.Button == tea.MouseButtonLeft:
+		if m.scr == scConfirm {
+			// a click on [ confirm ] fires; a click anywhere else cancels.
+			if m.confirmButtonHit(v.X, v.Y) {
+				return m.confirmKeyPress(m.confirmLabel())
+			}
+			return m.confirmKeyPress("esc")
+		}
 		if id, ok := m.workTabHit(v.X, v.Y); ok {
 			m.workTab = id
 			if id == tabCaptures {
@@ -478,7 +510,7 @@ func (m model) View() string {
 	case scHelp:
 		return m.helpView()
 	case scConfirm:
-		return m.baseView() + "\n  " + cWarn.Render(m.confirmMsg) + " "
+		return m.baseView() + "\n  " + cWarn.Render(m.confirmMsg) + "\n" + m.confirmButtons()
 	case scVia:
 		return m.viaView()
 	case scJcmd:
@@ -545,6 +577,38 @@ func (m model) baseView() string {
 	}
 }
 
+// confirmLabel is the key that confirms the current prompt: an explicit
+// same-key (H), a distinct affirmative (y) for the irreversible actions so a
+// key-repeat of the trigger can't fire them, or y for the plain y/N prompts.
+func (m model) confirmLabel() string {
+	if m.confirmKey != "" {
+		return m.confirmKey
+	}
+	return "y"
+}
+
+// confirmButtons renders the clickable confirm/cancel affordances under a
+// prompt, so the choice is legible (not just "[y/N]") and reachable by MOUSE
+// as well as keyboard — a click anywhere else on the confirm screen cancels.
+func (m model) confirmButtons() string {
+	lbl := m.confirmLabel()
+	return "     " + cOK.Render("[ "+lbl+" confirm ]") + "    " +
+		cFaint.Render("[ esc cancel ]")
+}
+
+// confirmButtonHit reports whether a left-click at (x,y) landed on the
+// [ confirm ] affordance of the confirm screen.
+func (m model) confirmButtonHit(x, y int) bool {
+	lines := strings.Split(m.View(), "\n")
+	if y != len(lines)-1 {
+		return false
+	}
+	plain := ansi.Strip(m.confirmButtons())
+	tok := "[ " + m.confirmLabel() + " confirm ]"
+	i := strings.Index(plain, tok)
+	return i >= 0 && x >= i && x < i+len(tok)
+}
+
 func (m model) confirmKeyPress(key string) (tea.Model, tea.Cmd) {
 	ok := false
 	if m.confirmKey != "" {
@@ -569,7 +633,7 @@ func (m model) confirmKeyPress(key string) (tea.Model, tea.Cmd) {
 // --- entry ---------------------------------------------------------------------
 
 func main() {
-	renderFlag := flag.String("render", "", "print a screen with canned demo state and exit (menu|dashboard|focus|output|gate|local|help|chooser|editor|wizard)")
+	renderFlag := flag.String("render", "", "print a screen with canned demo state and exit (menu|dashboard|focus|output|gate|local|ssh|help|chooser|editor|wizard)")
 	heapFlag := flag.String("analyze-heap", "", "print a class histogram for an hprof heap dump and exit")
 	deepFlag := flag.Bool("deep", false, "with -analyze-heap: also build the dominator tree for retained sizes")
 	diffA := flag.String("diff-a", "", "BEFORE hprof for a two-dump growth diff (with -diff-b)")
@@ -627,10 +691,8 @@ func main() {
 	switch os.Getenv("JDEBUG_MODE") {
 	case "1":
 		m.mode = 1
-	case "2":
+	case "2", "3": // 2 = bare metal; 3 kept as a back-compat alias (was "bare metal")
 		m.mode = 2
-	case "3":
-		m.mode = 3
 	}
 	if m.mode == 0 {
 		m.scr = scChooser
@@ -657,7 +719,7 @@ func main() {
 	switch m.mode {
 	case 1:
 		m.remote = remoteProbe(m.t)
-	case 2, 3:
+	case 2:
 		m.local = localProbe(kit, m.t)
 	}
 

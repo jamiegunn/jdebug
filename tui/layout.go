@@ -26,6 +26,34 @@ func mini(a, b int) int {
 	return b
 }
 
+// sevIf returns sev[0] when cond, else sev[1] (or 0 if no fallback given) —
+// a compact way to map a boolean signal to a panel severity level.
+func sevIf(cond bool, sev ...int) int {
+	if cond {
+		return sev[0]
+	}
+	if len(sev) > 1 {
+		return sev[1]
+	}
+	return 0
+}
+
+// clip fits s into exactly w display cells: truncated with an ellipsis when too
+// long, right-padded with spaces when short. Every fixed-column field (editor
+// rows, the TARGET panel, pickers) routes through this so a long real-world
+// value (pod names, actuator URLs) can never collide with the next column or
+// wrap and break the fixed-height frame.
+func clip(s string, w int) string {
+	if w < 1 {
+		w = 1
+	}
+	s = ansi.Truncate(s, w, "…")
+	if pad := w - lipgloss.Width(s); pad > 0 {
+		s += strings.Repeat(" ", pad)
+	}
+	return s
+}
+
 // tw is the rendering width: never squeeze below 78. Remote/incident mode
 // (mode 1) fills the WHOLE terminal — no cap — so wide monitors get every
 // column and long values (pod names, actuator URLs) stop truncating. Local
@@ -83,8 +111,14 @@ func (m model) leftW() int {
 func (m model) cols() (menuW, midW, evW int) {
 	inner := m.tw() - 4 // two 2-col gutters between the three columns
 	menuW = inner * 36 / 100
-	midW = inner * 32 / 100
-	evW = inner - menuW - midW
+	// the right column (PODS + WORKLOAD) needs ~56 cols at most; on very wide
+	// monitors the extra space reads as a dead right gutter, so cap it and fold
+	// the slack into the mid column where NEXT/trends actually use the room.
+	evW = inner * 32 / 100
+	if evW > 56 {
+		evW = 56
+	}
+	midW = inner - menuW - evW
 	return
 }
 
@@ -94,7 +128,7 @@ func (m model) cols() (menuW, midW, evW int) {
 func (m model) overlayLines() int {
 	switch m.scr {
 	case scConfirm:
-		return 1
+		return 2
 	case scVia:
 		return 2
 	case scLevel:
@@ -134,7 +168,7 @@ func paneTitle(w int, label, sub, right string) string {
 func (m model) dashboardView() string {
 	w := m.tw()
 	prefix := m.dashPrefix()
-	suffix := "\n" + m.footer("[a] analyze  [c] check setup  [?] help  [q] quit") + prompt()
+	suffix := "\n" + m.footer(m.dashNav()) + prompt()
 	logH := m.height - m.overlayLines() - (strings.Count(prefix, "\n") + 1) - strings.Count(suffix, "\n") - 1
 	if m.showLogPane() && logH >= 6 {
 		return prefix + "\n" + rule(w) + "\n" + m.bottomPane(w, logH) + suffix
@@ -153,7 +187,21 @@ func (m model) dashPrefix() string {
 	mid := lipgloss.NewStyle().Width(midW).Render(m.panelView(midW, topH, true))
 	right := lipgloss.NewStyle().Width(evW).Render(strings.Join(m.rightColumn(evW, topH), "\n"))
 	top := lipgloss.JoinHorizontal(lipgloss.Top, left, "  ", mid, "  ", right)
-	return m.headerRemote(m.remote.Cluster) + "\n" + top
+	head := m.headerRemote(m.remote.Cluster)
+	if band := m.faultBand(m.tw()); band != "" {
+		head += "\n" + band
+	}
+	return head + "\n" + top
+}
+
+// dashBandH is the number of rows the tier-2 fault band occupies (0 or 1). The
+// band sits between the header and the three columns, so every hit-tester that
+// anchors the columns to the header height must add it, or clicks land a row off.
+func (m model) dashBandH() int {
+	if m.faultBand(m.tw()) == "" {
+		return 0
+	}
+	return 1
 }
 
 // bottomGeom returns the screen row of the WORK/LOGS/EVENTS/CAPTURES tab strip,
@@ -172,7 +220,7 @@ func (m model) bottomGeom() (stripY, paneH int, ok bool) {
 		prefix = m.headerRemote(m.remote.Cluster) + "\n" + m.withPanel(m.remoteBody())
 	}
 	prefixLines := strings.Count(prefix, "\n") + 1
-	suffix := "\n" + m.footer("[a] analyze  [c] check setup  [?] help  [q] quit") + prompt()
+	suffix := "\n" + m.footer(m.dashNav()) + prompt()
 	logH := m.height - m.overlayLines() - prefixLines - strings.Count(suffix, "\n") - 1
 	if logH < 6 {
 		return 0, 0, false

@@ -131,6 +131,7 @@ capture() {
             err "heap dumps pause the JVM (destructive in production). Re-run with --confirm."
             exit 64
         fi
+        heap_data_gate   # PII/secrets notice + optional org acknowledgment gate
     fi
     if [[ "$VIA_EXPLICIT" == 1 ]]; then run_tier "$VIA" "$1"; return $?; fi
     # exit 2 = target resolution failed (no pod matched, or an ambiguous match

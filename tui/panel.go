@@ -618,17 +618,95 @@ func (m model) compactStatus() string {
 	return out
 }
 
+// faultBand is a full-width banner drawn directly under the header on the tier-2
+// dashboard, so the "what's wrong + what to press" answer is the first thing the
+// eye lands on instead of being buried mid-grid under the tool catalogue. It
+// names the active fault signals (most-severe first) and the single best next
+// keystroke, red-bold when any signal is critical and amber when only cautions
+// are firing. Empty when the panel is healthy — a clean dashboard shows no band.
+func (m model) faultBand(w int) string {
+	d := m.panel
+	if m.mode != 1 || d.When.IsZero() {
+		return ""
+	}
+	var parts []string
+	crit := false
+	if d.Waiting == "CrashLoopBackOff" {
+		parts = append(parts, "CrashLoopBackOff")
+		crit = true
+	} else if d.Phase != "" && d.Phase != "Running" {
+		parts = append(parts, strings.ToLower(d.Phase))
+	}
+	if d.LastReason == "OOMKilled" {
+		parts = append(parts, "OOMKilled last exit")
+		crit = true
+	} else if d.Restarts > 3 {
+		parts = append(parts, fmt.Sprintf("%d restarts", d.Restarts))
+	}
+	if d.HPAFailing {
+		parts = append(parts, "autoscale blind")
+	} else if d.HPAMax > 0 && d.HPACur >= d.HPAMax {
+		parts = append(parts, "at max replicas")
+	}
+	if d.MemPct >= 90 {
+		parts = append(parts, fmt.Sprintf("mem %d%% of limit", d.MemPct))
+		crit = true
+	} else if d.MemPct >= 75 {
+		parts = append(parts, fmt.Sprintf("mem %d%% of limit", d.MemPct))
+	}
+	if len(parts) == 0 {
+		return ""
+	}
+	// the single best next action is the top NEXT suggestion's keystroke
+	next := ""
+	if rows := m.suggestionRows(); len(rows) > 0 {
+		next = rows[0].key
+	}
+	marker := cWarn
+	if crit {
+		marker = cDisr
+	}
+	right := ""
+	if next != "" {
+		head, rest, found := strings.Cut(next, " ")
+		right = cFaint.Render("→ ") + cKey.Render(head)
+		if found {
+			right += cMuted.Render(" " + rest)
+		}
+	}
+	left := "▲ " + strings.Join(parts, " · ")
+	avail := w - lipgloss.Width(right) - 3
+	if avail < 8 {
+		avail = 8
+	}
+	left = ansi.Truncate(left, avail, "…")
+	pad := w - lipgloss.Width(left) - lipgloss.Width(right) - 2
+	if pad < 1 {
+		pad = 1
+	}
+	return " " + marker.Render(left) + strings.Repeat(" ", pad) + right
+}
+
 // panelView renders the TARGET LIVE column at width w, padded to h rows.
 // trends adds the sparkline section (tier-2 only; tier 1 keeps the classic
 // 38-col layout byte-identical for frontend-parity tests).
 func (m model) panelView(w, h int, trends bool) string {
 	d := m.panel
-	line := func(k, v string, warn bool) string {
+	// sev: 0 = normal (grey), 1 = caution (amber), 2 = critical (red bold).
+	// The dashboard's emergency (CrashLoopBackOff / OOMKilled / mem≥90%) must
+	// read as red, not the same amber as a minor caution — the compact view
+	// already escalates, so the flagship grid must too.
+	line := func(k, v string, sev int) string {
 		vs := cMuted
-		if warn {
+		switch sev {
+		case 1:
 			vs = cWarn
+		case 2:
+			vs = cDisr
 		}
-		return " " + cFaint.Render(fmt.Sprintf("%-10s", k)) + vs.Render(v)
+		// truncate the value so a long field (a metrics-server note, an HPA
+		// reason) can't wrap and grow the fixed-height grid by a row
+		return " " + cFaint.Render(fmt.Sprintf("%-10s", k)) + vs.Render(clip(v, w-11))
 	}
 	dash := func(s string) string {
 		if s == "" {
@@ -652,20 +730,33 @@ func (m model) panelView(w, h int, trends bool) string {
 		if len(pod) > 24 {
 			pod = "…" + pod[len(pod)-22:]
 		}
-		rows = append(rows, line("pod", dash(pod), false))
+		rows = append(rows, line("pod", dash(pod), 0))
 		phase := dash(d.Phase)
-		if d.Waiting != "" {
+		phaseSev := 0
+		if d.Waiting == "CrashLoopBackOff" {
 			phase = d.Waiting // the waiting reason is the real story
+			phaseSev = 2      // crash-loop is critical, not a caution
+		} else if d.Waiting != "" {
+			phase = d.Waiting
+			phaseSev = 1
+		} else if d.Phase != "" && d.Phase != "Running" {
+			phaseSev = 1
 		}
-		rows = append(rows, line("phase", phase, d.Waiting != "" || (d.Phase != "" && d.Phase != "Running")))
-		rows = append(rows, line("restarts", fmt.Sprintf("%d", d.Restarts), d.Restarts > 3))
+		rows = append(rows, line("phase", phase, phaseSev))
+		rows = append(rows, line("restarts", fmt.Sprintf("%d", d.Restarts), sevIf(d.Restarts > 3, 1)))
 		if d.LastReason != "" {
-			rows = append(rows, line("last exit", d.LastReason, d.LastReason == "OOMKilled"))
+			// OOMKilled is a critical exit; other non-zero exits are a caution
+			rows = append(rows, line("last exit", d.LastReason, sevIf(d.LastReason == "OOMKilled", 2, 1)))
 		}
 		// two groups, each labelled with where the number comes from, so a
 		// junior doesn't conflate container memory with JVM heap
 		groupRule := func(label, from string) string {
+			// drop the "· from where" sublabel when the column is too narrow to
+			// hold it, so the group header never overflows its own panel
 			head := " " + cFaint.Render(label) + " " + cFaint.Render(from) + " "
+			if lipgloss.Width(head) > w-3 {
+				head = " " + cFaint.Render(label) + " "
+			}
 			fill := w - lipgloss.Width(head)
 			if fill < 3 {
 				fill = 3
@@ -686,7 +777,13 @@ func (m model) panelView(w, h int, trends bool) string {
 		} else if d.MemUse != "" {
 			mem = d.MemUse + " used · no limit set"
 		}
-		rows = append(rows, line("mem", mem, d.MemPct >= 90))
+		memSev := 0
+		if d.MemPct >= 90 {
+			memSev = 2 // near the limit → OOM imminent → critical
+		} else if d.MemPct >= 75 {
+			memSev = 1
+		}
+		rows = append(rows, line("mem", mem, memSev))
 		cpu := dash(d.CPUUse)
 		if d.NoMetrics && d.CPUUse == "" {
 			cpu = "no metrics-server · limit " + dash(d.CPULimit)
@@ -696,9 +793,9 @@ func (m model) panelView(w, h int, trends bool) string {
 		} else if d.CPUUse != "" {
 			cpu = d.CPUUse + " used · no limit set"
 		}
-		rows = append(rows, line("cpu", cpu, false))
+		rows = append(rows, line("cpu", cpu, 0))
 		hpaStr, hpaWarn := hpaLine(d)
-		rows = append(rows, line("autoscale", hpaStr, hpaWarn))
+		rows = append(rows, line("autoscale", hpaStr, sevIf(hpaWarn, 1)))
 
 		rows = append(rows, groupRule("jvm", "· inside the process"))
 		heap := d.HeapUsed
@@ -714,14 +811,14 @@ func (m model) panelView(w, h int, trends bool) string {
 		default:
 			heap = "– no route (stage jattach: i)"
 		}
-		rows = append(rows, line("heap", heap, false))
+		rows = append(rows, line("heap", heap, 0))
 	} else {
-		rows = append(rows, line("actuator", strings.TrimPrefix(m.t.Actuator, "http://localhost"), false))
+		rows = append(rows, line("actuator", strings.TrimPrefix(m.t.Actuator, "http://localhost"), 0))
 		jat := "missing"
 		if m.local.Jattach {
 			jat = "staged"
 		}
-		rows = append(rows, line("jattach", jat, !m.local.Jattach))
+		rows = append(rows, line("jattach", jat, sevIf(!m.local.Jattach, 1)))
 	}
 	rows = append(rows, "")
 	nextHdr := " " + cDim.Render("NEXT")

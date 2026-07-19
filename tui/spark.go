@@ -130,12 +130,29 @@ func dashOr(s, alt string) string {
 
 // metricRow renders one full-width line: an 8-col label, a wide sparkline
 // scaled lo..hi, and the current value (right-aligned) in the row's style.
+// stretchTo widens a short series to n points by nearest-neighbour repeat, so a
+// full-width TRENDS bar reads as one solid band across the row instead of a stub
+// with a wide dead gap before the value (the ~120-col empty middle on a 200-col
+// monitor). Series already at/above n points are returned untouched.
+func stretchTo(vals []int, n int) []int {
+	if len(vals) == 0 || n <= len(vals) {
+		return vals
+	}
+	out := make([]int, n)
+	for i := range out {
+		out[i] = vals[i*len(vals)/n]
+	}
+	return out
+}
+
 func metricRow(w int, label string, vals []int, lo, hi int, cur string, st lipgloss.Style) string {
 	chartW := w - 10 - lipgloss.Width(cur) - 3
 	if chartW < 8 {
 		chartW = 8
 	}
-	left := " " + cFaint.Render(fmt.Sprintf("%-8s", label)) + st.Render(spark(vals, lo, hi, chartW))
+	// fill the whole chart width so the bar is a continuous band right up to the
+	// value, instead of a short stub with dead space between it and the number
+	left := " " + cFaint.Render(fmt.Sprintf("%-8s", label)) + st.Render(spark(stretchTo(vals, chartW), lo, hi, chartW))
 	pad := w - lipgloss.Width(left) - lipgloss.Width(cur) - 1
 	if pad < 1 {
 		pad = 1

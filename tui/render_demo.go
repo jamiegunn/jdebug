@@ -153,7 +153,7 @@ func renderDemo(what string) string {
 	case "cleanup":
 		m.scr = scCleanup
 		m.artifacts = []artifact{
-			{owned: true, pod: "app-debug-demo-app-6c6c4b5769-s9jdg", path: "/tmp/jattach", note: "jattach staged by jdebug"},
+			{owned: true, pod: "app-debug-demo-app-6c6c4b5769-s9jdg", path: "/tmp/jattach", note: "jattach"},
 			{owned: true, pod: "app-debug-demo-app-6c6c4b5769-s9jdg", path: "/tmp/jdebug-local", note: "in-pod tool"},
 			{owned: false, pod: "app-debug-demo-app-6c6c4b5769-s9jdg", path: "/tmp/jattach", note: "was already present"},
 		}
@@ -174,6 +174,16 @@ func renderDemo(what string) string {
 		return m.blockedView()
 	case "local":
 		m.mode = 2
+		return m.menuView()
+	case "ssh":
+		m.mode = 2
+		m.t.SSH = "ops@vm-prod-1"
+		// canned probe (no real ssh in the demo): route up, jattach staged remotely
+		m.local = probe{When: time.Now(), OK: true,
+			Lines: []string{
+				cSafe.Render("   ✓") + cMuted.Render(" actuator answering at http://localhost:8080/actuator on ops@vm-prod-1"),
+				cFaint.Render("   · jattach — staged on ops@vm-prod-1 at /tmp/jattach when you press ") + cKey.Render("i"),
+			}}
 		return m.menuView()
 	case "help":
 		return m.helpView()

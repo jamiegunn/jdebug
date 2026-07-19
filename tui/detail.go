@@ -71,12 +71,12 @@ var cmdCatalog = []cmdInfo{
 	{"T", "terminal", "kubectl exec -it (or kubectl debug)", "an interactive shell inside the pod",
 		"poke around by hand; falls back to a busybox debug container on distroless images", "caution — you're live in the pod",
 		"kubectl exec; ephemeralcontainers for the debug fallback", "—"},
-	{"R", "re-roll", "jdebug restart --confirm", "kubectl rollout restart on the owning Deployment",
+	{"R", "restart", "jdebug restart --confirm", "kubectl rollout restart on the owning Deployment",
 		"cycle every pod to clear a wedged process or pick up a rotated Secret", "⚠ state-changing · restarts every pod",
 		"kubectl patch/rollout on the Deployment", "kill one pod instead, to cycle a single sick replica"},
 	{"K", "kill pod", "jdebug kill --confirm", "kubectl delete pod",
 		"delete one sick pod; a managed pod respawns under a new name", "⚠ state-changing · drops in-flight requests",
-		"kubectl delete on the pod", "re-roll to cycle the whole deployment"},
+		"kubectl delete on the pod", "restart to cycle the whole deployment"},
 }
 
 func infoFor(key string) (cmdInfo, bool) {

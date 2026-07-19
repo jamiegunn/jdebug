@@ -513,6 +513,47 @@ run_case ./capture/jattach.sh jcmd
 assert_rc  "jcmd w/o command exits 64" 64
 assert_has "jcmd error shows an example" "GC.heap_info"
 
+# --- jattach integrity gate (shared by in-pod, bare-metal, and SSH staging) ----
+# The bare-metal/SSH path must NOT download an unverified binary — it installs
+# the vendored, checksum-verified one, same gate as the in-pod path. Build a
+# fake vendor dir so verify/tamper/unsupported are deterministic and offline.
+JV="$TMP/vendor-jattach"; mkdir -p "$JV"
+_ta=x64; case "$(uname -m)" in aarch64|arm64) _ta=arm64 ;; esac
+printf 'FAKE-JATTACH\n' > "$JV/jattach-linux-$_ta"
+( cd "$JV" && { sha256sum "jattach-linux-$_ta" 2>/dev/null || shasum -a 256 "jattach-linux-$_ta"; } > SHA256SUMS )
+
+JATTACH_VENDOR_DIR="$JV" JATTACH_BIN="$TMP/staged-jattach" run_case bash ./capture/stage-jattach.sh local
+assert_rc  "stage-jattach local: verified binary installs" 0
+assert_has "stage-jattach local: says it's checksum-verified" "checksum-verified"
+
+# tamper the vendored binary → the gate must refuse (no silent install)
+printf 'EVIL\n' >> "$JV/jattach-linux-$_ta"
+JATTACH_VENDOR_DIR="$JV" JATTACH_BIN="$TMP/staged-jattach2" run_case bash ./capture/stage-jattach.sh local
+assert_rc  "stage-jattach local: tampered binary is refused" 1
+assert_has "stage-jattach local: names the checksum failure" "FAILED its checksum"
+
+# an OS with no vendored binary must refuse and point at the actuator tier —
+# never fall back to an unverified download
+run_case env JATTACH_VENDOR_DIR="$JV" bash -c '
+  source lib/common.sh
+  jattach_verified_path Darwin arm64'
+assert_rc  "no vendored binary for the platform → refuse" 1
+assert_has "unsupported platform points at the actuator tier" "actuator tier"
+
+# read-only / restricted target: an unwritable staging dir must be caught up
+# front and steered to the actuator tier, not fail opaquely mid-copy. (Parent
+# dir doesn't exist → the write probe fails deterministically, even as root.)
+JATTACH_VENDOR_DIR="$JV" JATTACH_BIN="$TMP/no-such-dir/jattach" run_case bash ./capture/stage-jattach.sh local
+assert_rc  "stage-jattach: unwritable staging dir refused" 1
+assert_has "stage-jattach: names the writability limit" "not writable"
+
+# heap data-governance gate (shared by every heap tier via jdebug's central path)
+run_case env JDEBUG_REQUIRE_DATA_ACK=1 bash -c 'source lib/common.sh; heap_data_gate'
+assert_rc  "heap_data_gate: governed w/o ack refuses (65)" 65
+assert_has "heap_data_gate: warns about secrets/PII" "secrets"
+run_case env JDEBUG_REQUIRE_DATA_ACK=1 JDEBUG_DATA_ACK=1 bash -c 'source lib/common.sh; heap_data_gate'
+assert_rc  "heap_data_gate: acknowledged proceeds" 0
+
 run_case ./jdebug threads --via bogus
 assert_rc  "unknown --via exits 64" 64
 assert_has "unknown --via lists valid tiers" "actuator|jattach|jdk"
@@ -579,6 +620,21 @@ assert_rc  "heap --confirm succeeds" 0
 assert_has "heap says where it wrote" "wrote $LOCAL_OUT/heap-"
 assert_has "heap bare-metal hint (already local)" "saved on this machine"
 assert_has "heap analyzer hint" "Leak Suspects"
+assert_has "heap prints the data-governance notice" "may contain secrets"
+
+# governed environment: without acknowledgment the dump is refused BEFORE it runs;
+# with acknowledgment it proceeds.
+JDEBUG_REQUIRE_DATA_ACK=1 OUT_DIR="$LOCAL_OUT" run_case sh ./jdebug-local heap --confirm
+assert_rc  "heap governed w/o ack: refused (65)" 65
+assert_has "heap governed w/o ack: names the ack var" "JDEBUG_DATA_ACK=1"
+JDEBUG_REQUIRE_DATA_ACK=1 JDEBUG_DATA_ACK=1 OUT_DIR="$LOCAL_OUT" run_case sh ./jdebug-local heap --confirm
+assert_rc  "heap governed w/ ack: proceeds" 0
+
+# when jdebug drove us over SSH ($JDEBUG_SSH_BACK), the capture hint hands back
+# the exact scp to pull the dump to the operator's machine.
+OUT_DIR="$LOCAL_OUT" JDEBUG_SSH_BACK="ops@vm1" run_case sh ./jdebug-local heap --confirm
+assert_has "heap over-ssh hint names the host" "saved on ops@vm1"
+assert_has "heap over-ssh hint gives the scp" "scp ops@vm1:$LOCAL_OUT/heap-"
 
 OUT_DIR="$LOCAL_OUT" run_case sh ./jdebug-local dumps
 assert_has "dumps lists the heap file" "heap-"
@@ -590,6 +646,29 @@ run_case sh ./jdebug-local jcmd "GC.heap_info"
 assert_rc  "jcmd w/o jattach exits 3" 3
 assert_has "jcmd missing-jattach covers in-pod" "jdebug install-jattach"
 assert_has "jcmd missing-jattach covers bare metal" "bare metal"
+
+# cross-UID attach: jattach must run as the JVM's user. When it fails and the
+# uids differ, say so precisely instead of a generic "attach failed".
+printf '#!/bin/sh\necho "cannot open socket" >&2\nexit 1\n' > "$TMP/fakejattach"; chmod +x "$TMP/fakejattach"
+JATTACH_BIN="$TMP/fakejattach" JVM_PID=$$ JDEBUG_JVM_UID_OVERRIDE=1000 run_case sh ./jdebug-local jcmd "GC.heap_info"
+assert_rc  "jattach uid-mismatch: non-zero exit" 1
+assert_has "jattach uid-mismatch: names the same-user requirement" "SAME user as the JVM"
+assert_has "jattach uid-mismatch: shows both uids" "uid 1000"
+# same uid (no override) must NOT fabricate a uid gap
+JATTACH_BIN="$TMP/fakejattach" JVM_PID=$$ run_case sh ./jdebug-local jcmd "GC.heap_info"
+assert_has "jattach same-uid failure: falls back to the generic cause list" "common causes"
+
+# jvms lists every JVM on the host (pid<TAB>cmd) so the menu can pick one when
+# several run. Plant a fake `java` process to exercise the listing path.
+run_case sh ./jdebug-local help
+assert_has "usage lists the jvms command" "jvms"
+cp /bin/sleep "$TMP/java" 2>/dev/null
+"$TMP/java" 5 & FAKEJVM=$!   # $! is now the java process itself, not a subshell
+sleep 0.3
+run_case sh ./jdebug-local jvms
+assert_rc  "jvms finds the running JVM" 0
+assert_has "jvms lists the fake JVM's pid" "$FAKEJVM"
+kill "$FAKEJVM" 2>/dev/null; wait "$FAKEJVM" 2>/dev/null; rm -f "$TMP/java"
 
 MOCK_HTTP=fail run_case sh ./jdebug-local health
 assert_rc  "actuator down: health fails" 1

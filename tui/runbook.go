@@ -107,9 +107,12 @@ func (m model) runbookView() string {
 		field("means    ", c.means)
 		field("why      ", c.why)
 		field("check    ", c.check)
-		b.WriteString("      " + cFaint.Render("safe     ") + cOK.Render(c.safeCmd) + "\n")
+		// vocabulary matches the menu's risk scale (safe / caution / disruptive)
+		// so a junior cross-referencing a warning card against a menu row sees
+		// the same word for the same danger.
+		b.WriteString("      " + cFaint.Render("safe        ") + cOK.Render(c.safeCmd) + "\n")
 		if c.riskyCmd != "" {
-			b.WriteString("      " + cFaint.Render("risky    ") + cDisr.Render(c.riskyCmd) + "\n")
+			b.WriteString("      " + cDisr.Render("disruptive  ") + cDisr.Render(c.riskyCmd) + "\n")
 		}
 		field("tell next", c.tellNext)
 	}

@@ -52,7 +52,7 @@ func (m model) blockers() []blocker {
 				"press g, then p, and pick the exact pod (e.g. the restarting one)"})
 		}
 		if rbacBlocked(m.podsErr, m.eventsErr, m.logs.err) {
-			b = append(b, blocker{"blocked by RBAC",
+			b = append(b, blocker{"blocked by RBAC (your kube permissions)",
 				"your kube context is denied a read it needs (a Forbidden reply)",
 				"ask for get/list on pods, events, and pods/log in this namespace — nothing more"})
 		}
@@ -62,7 +62,7 @@ func (m model) blockers() []blocker {
 				"install metrics-server; requests/limits still show, and JVM heap still comes from actuator/jattach"})
 		}
 		if !m.panel.When.IsZero() && !m.panel.ActuatorOK {
-			b = append(b, blocker{"blocked by no actuator",
+			b = append(b, blocker{"blocked by no actuator (the app's health/metrics HTTP endpoint)",
 				"the app's health URL didn't answer (secured, wrong path, or not exposed)",
 				"if it's secured set auth with k; check the URL in g; or capture with no HTTP via jattach (t → jattach)"})
 		}

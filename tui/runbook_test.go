@@ -20,7 +20,7 @@ func TestRunbookActiveSignals(t *testing.T) {
 		}
 	}
 	v := ansiStrip(m.runbookView())
-	for _, want := range []string{"OOMKilled", "safe", "risky", "tell next"} {
+	for _, want := range []string{"OOMKilled", "safe", "disruptive", "tell next"} {
 		if !strings.Contains(v, want) {
 			t.Fatalf("runbook view missing %q:\n%s", want, v)
 		}

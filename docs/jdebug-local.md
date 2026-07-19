@@ -55,6 +55,9 @@ pull it to your machine — run this OUTSIDE the pod:
 ```
 
 On bare metal it just prints the path — the file is already on your machine.
+When jdebug drove it over SSH (it sets `JDEBUG_SSH_BACK` to the `user@host` it
+used), it instead prints the exact `scp user@host:… .` to pull the capture back
+to your machine.
 
 ## Environment
 
@@ -64,6 +67,9 @@ On bare metal it just prints the path — the file is already on your machine.
 | `JATTACH_BIN` | `/tmp/jattach` | also `--jattach-bin` |
 | `JVM_PID` | auto: pgrep java → `/proc` comm scan → libjvm map scan; **errors if none found** (no PID-1 guess) | set it when several JVMs run on the box |
 | `OUT_DIR` | `/tmp` | where dumps and bundles land |
+| `JDEBUG_SSH_BACK` | *(unset)* | set by jdebug to the `user@host` when it runs this script over SSH, so capture hints print the `scp` to pull files back |
+| `JDEBUG_REQUIRE_DATA_ACK` | *(unset)* | when set, a heap dump requires `JDEBUG_DATA_ACK=1` (governance opt-in for regulated environments) |
+| `JDEBUG_DATA_ACK` | *(unset)* | acknowledges the heap-dump data-handling notice when governance is required |
 
 The `jdk` tier is not available in-pod (it needs `kubectl debug` from
 outside); actuator, jattach, and the memory report all work.

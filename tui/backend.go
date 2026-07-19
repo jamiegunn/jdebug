@@ -28,6 +28,14 @@ type target struct {
 	// ("bearer:VAR" / "basic:USERVAR:PASSVAR"), never a secret value.
 	ActuatorAuth string
 	Pod          string
+	// SSH is the bare-metal remote host ("user@host", optionally "user@host:port").
+	// Empty = run against this machine. Auth is your ssh keys/agent + ~/.ssh/config
+	// only (BatchMode); jdebug stores no secret, just the host reference.
+	SSH string
+	// JVMPid pins one JVM by pid on a host running several (bare-metal `p`).
+	// Empty = let jdebug-local auto-detect. Deliberately NOT persisted: a pid is
+	// ephemeral and would be stale next session.
+	JVMPid string
 }
 
 func defaultTarget() target {
@@ -106,6 +114,8 @@ func loadTarget() target {
 			t.ActuatorAuth = v
 		case "SAVED_POD":
 			t.Pod = v
+		case "SAVED_SSH":
+			t.SSH = v
 		}
 	}
 	// environment outranks saved, matching the CLI's precedence
@@ -129,8 +139,8 @@ func saveTarget(t target) {
 	_ = os.MkdirAll(dir, 0o755)
 	q := func(s string) string { return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'" }
 	body := fmt.Sprintf(
-		"# written by jdebug's target editor — delete this file to forget\nSAVED_NAMESPACE=%s\nSAVED_SELECTOR=%s\nSAVED_CONTAINER=%s\nSAVED_ACTUATOR=%s\nSAVED_ACTUATOR_AUTH=%s\nSAVED_POD=%s\n",
-		q(t.Namespace), q(t.Selector), q(t.Container), q(t.Actuator), q(t.ActuatorAuth), q(t.Pod))
+		"# written by jdebug's target editor — delete this file to forget\nSAVED_NAMESPACE=%s\nSAVED_SELECTOR=%s\nSAVED_CONTAINER=%s\nSAVED_ACTUATOR=%s\nSAVED_ACTUATOR_AUTH=%s\nSAVED_POD=%s\nSAVED_SSH=%s\n",
+		q(t.Namespace), q(t.Selector), q(t.Container), q(t.Actuator), q(t.ActuatorAuth), q(t.Pod), q(t.SSH))
 	_ = os.WriteFile(filepath.Join(dir, "target"), []byte(body), 0o644)
 }
 
@@ -409,24 +419,71 @@ func remoteProbe(t target) probe {
 	return p
 }
 
+// localHealthFn runs the jdebug-local health check (locally or over SSH) and
+// reports whether the actuator answered. Swappable so tests never shell out.
+var localHealthFn = func(kit string, t target) bool {
+	words := localWords(kit, t, "health")
+	return exec.Command(words[0], words[1:]...).Run() == nil
+}
+
+// jvmsFn lists the JVMs on the bare-metal target (this host or the SSH one) as
+// picker rows "PID   <command>", or an error string when none/failed. Swappable
+// so tests exercise the parse + pick without a real host.
+var jvmsFn = func(kit string, t target) (items []string, errMsg string) {
+	words := localWords(kit, t, "jvms")
+	out, err := exec.Command(words[0], words[1:]...).CombinedOutput()
+	for _, ln := range strings.Split(strings.TrimRight(string(out), "\n"), "\n") {
+		pid, cmd, ok := strings.Cut(ln, "\t")
+		if !ok || strings.TrimSpace(pid) == "" {
+			continue // skip blank lines and any stderr the shell interleaved
+		}
+		items = append(items, fmt.Sprintf("%-8s %s", strings.TrimSpace(pid), strings.TrimSpace(cmd)))
+	}
+	if len(items) == 0 {
+		msg := strings.TrimSpace(string(out))
+		if msg == "" {
+			msg = "no JVM processes found on this host"
+		}
+		if err != nil && msg == "" {
+			msg = err.Error()
+		}
+		return nil, msg
+	}
+	return items, ""
+}
+
 func localProbe(kit string, t target) probe {
 	p := probe{When: time.Now()}
-	act := exec.Command("sh", filepath.Join(kit, "jdebug-local"), "health").Run() == nil
+	act := localHealthFn(kit, t)
+	where := t.Actuator
+	if t.SSH != "" {
+		where = t.Actuator + " on " + t.SSH
+	}
+	// against a remote host jattach lives on that host (/tmp/jattach), so we
+	// can't stat it locally; the health probe is the reliable route signal.
 	jat := false
-	if fi, err := os.Stat(jattachBin()); err == nil && fi.Mode()&0o111 != 0 {
-		jat = true
+	if t.SSH == "" {
+		if fi, err := os.Stat(jattachBin()); err == nil && fi.Mode()&0o111 != 0 {
+			jat = true
+		}
 	}
 	p.Jattach = jat
 	if act {
-		p.Lines = append(p.Lines, cSafe.Render("   ✓")+cMuted.Render(" actuator answering at "+t.Actuator))
+		p.Lines = append(p.Lines, cSafe.Render("   ✓")+cMuted.Render(" actuator answering at "+where))
+	} else if t.SSH != "" {
+		p.Lines = append(p.Lines, cDisr.Render("   ✗")+cMuted.Render(" no route to "+t.SSH+" (ssh unreachable, or nothing answering at "+t.Actuator+" there) — press ")+cKey.Render("g")+cMuted.Render(" to change host, ")+cKey.Render("s")+cMuted.Render(" the URL"))
 	} else {
 		p.Lines = append(p.Lines, cDisr.Render("   ✗")+cMuted.Render(" actuator — nothing answering at "+t.Actuator+" (press ")+cKey.Render("s")+cMuted.Render(" to fix the URL/port)"))
 	}
-	if jat {
+	if t.SSH != "" {
+		p.Lines = append(p.Lines, cFaint.Render("   · jattach — staged on "+t.SSH+" at /tmp/jattach when you press ")+cKey.Render("i"))
+	} else if jat {
 		p.Lines = append(p.Lines, cSafe.Render("   ✓")+cMuted.Render(" jattach staged at "+jattachBin()))
 	} else {
 		p.Lines = append(p.Lines, cDisr.Render("   ✗")+cMuted.Render(" jattach — not staged (press ")+cKey.Render("i")+cMuted.Render(" to download it, ~80 KB)"))
 	}
+	// over SSH the actuator route is the gate (jattach we can't verify remotely);
+	// locally either route is enough.
 	p.OK = act || jat
 	return p
 }
