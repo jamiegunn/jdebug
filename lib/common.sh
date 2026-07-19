@@ -312,7 +312,8 @@ jattach_verified_path() {
     case "$os" in
         Linux) plat="linux" ;;
         *) err "no vendored jattach for OS '$os' (only Linux is vendored)."
-           err "  → use the actuator tier (needs no jattach), or set \$JATTACH_BINARY to your own copy."
+           err "  → on macOS you usually don't need it: with a JDK installed, jdebug uses the native jcmd."
+           err "  → or use the actuator tier (needs no jattach), or set \$JATTACH_BINARY to your own copy."
            return 1 ;;
     esac
     case "$arch" in

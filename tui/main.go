@@ -201,7 +201,10 @@ func (m *model) probeRemote(force bool) probe {
 		// the cluster is unreachable, so a down cluster simply doesn't auto-pick.
 		if m.t.Pod == "" && m.t.Selector != "" {
 			if res := podsFn(m.t.Namespace, m.t.Selector); res.err == "" && len(res.items) > 0 {
-				m.t.Pod = strings.Fields(res.items[0])[0]
+				// pick the SICKEST matching pod (most restarts / worst phase), not
+				// whatever kubectl listed first — the read-only checks must land on
+				// the replica that paged you, not an arbitrary healthy one.
+				m.t.Pod = sickestPod(res.items)
 				m.autoPod = len(res.items)
 			}
 		}

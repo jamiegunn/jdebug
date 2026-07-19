@@ -526,6 +526,12 @@ JATTACH_VENDOR_DIR="$JV" JATTACH_BIN="$TMP/staged-jattach" run_case bash ./captu
 assert_rc  "stage-jattach local: verified binary installs" 0
 assert_has "stage-jattach local: says it's checksum-verified" "checksum-verified"
 
+# KS-7: doctor must surface the PINNED jattach version so it can be CVE-tracked,
+# not leave it invisible. (Clean fake vendor, before the tamper below.)
+JATTACH_VENDOR_DIR="$JV" run_case ./jdebug doctor
+assert_has "doctor surfaces the pinned jattach version" "jattach v2.2 vendored"
+assert_has "doctor points at provenance for CVE tracking" "PROVENANCE.md"
+
 # tamper the vendored binary → the gate must refuse (no silent install)
 printf 'EVIL\n' >> "$JV/jattach-linux-$_ta"
 JATTACH_VENDOR_DIR="$JV" JATTACH_BIN="$TMP/staged-jattach2" run_case bash ./capture/stage-jattach.sh local
@@ -642,21 +648,36 @@ assert_has "dumps lists the heap file" "heap-"
 OUT_DIR="$TMP/local-empty" run_case sh -c 'mkdir -p "$OUT_DIR"; sh ./jdebug-local dumps'
 assert_has "dumps empty: threads redirect tip" "threads >"
 
-run_case sh ./jdebug-local jcmd "GC.heap_info"
-assert_rc  "jcmd w/o jattach exits 3" 3
-assert_has "jcmd missing-jattach covers in-pod" "jdebug install-jattach"
-assert_has "jcmd missing-jattach covers bare metal" "bare metal"
+# no route at all (force-skip native jcmd AND no jattach) → the guidance that
+# names how to get a route. JDEBUG_FORCE_JATTACH makes this deterministic even on
+# a host that has a JDK's jcmd.
+JDEBUG_FORCE_JATTACH=1 JATTACH_BIN=/no/such/jattach run_case sh ./jdebug-local jcmd "GC.heap_info"
+assert_rc  "jcmd w/ no route exits 3" 3
+assert_has "no-route guidance mentions native jcmd (JDK)" "install a JDK"
+assert_has "no-route guidance covers in-pod" "jdebug install-jattach"
+assert_has "no-route guidance covers bare metal" "bare metal"
 
-# cross-UID attach: jattach must run as the JVM's user. When it fails and the
-# uids differ, say so precisely instead of a generic "attach failed".
+# KS-6: with a JDK's jcmd on PATH, jdebug uses it natively — no jattach staged,
+# and jcmd is what runs (proven by JDEBUG_FORCE_JATTACH flipping the route).
+if command -v jcmd >/dev/null 2>&1; then
+    JATTACH_BIN=/no/such/jattach run_case sh ./jdebug-local jcmd "VM.version"
+    # native jcmd against our own (non-JVM) shell fails, but the failure is a
+    # jcmd/uid failure — NOT the "no route / stage jattach" guidance.
+    if printf '%s' "$OUT" | grep -q "install a JDK"; then
+        bad "native jcmd is preferred when present" "fell through to stage-jattach guidance despite jcmd on PATH"
+    else ok "native jcmd is preferred when present (no staging needed)"; fi
+fi
+
+# cross-UID attach: the attach route must run as the JVM's user. Force the jattach
+# path so this is deterministic regardless of a local JDK.
 printf '#!/bin/sh\necho "cannot open socket" >&2\nexit 1\n' > "$TMP/fakejattach"; chmod +x "$TMP/fakejattach"
-JATTACH_BIN="$TMP/fakejattach" JVM_PID=$$ JDEBUG_JVM_UID_OVERRIDE=1000 run_case sh ./jdebug-local jcmd "GC.heap_info"
-assert_rc  "jattach uid-mismatch: non-zero exit" 1
-assert_has "jattach uid-mismatch: names the same-user requirement" "SAME user as the JVM"
-assert_has "jattach uid-mismatch: shows both uids" "uid 1000"
+JDEBUG_FORCE_JATTACH=1 JATTACH_BIN="$TMP/fakejattach" JVM_PID=$$ JDEBUG_JVM_UID_OVERRIDE=1000 run_case sh ./jdebug-local jcmd "GC.heap_info"
+assert_rc  "attach uid-mismatch: non-zero exit" 1
+assert_has "attach uid-mismatch: names the same-user requirement" "SAME user as the JVM"
+assert_has "attach uid-mismatch: shows both uids" "uid 1000"
 # same uid (no override) must NOT fabricate a uid gap
-JATTACH_BIN="$TMP/fakejattach" JVM_PID=$$ run_case sh ./jdebug-local jcmd "GC.heap_info"
-assert_has "jattach same-uid failure: falls back to the generic cause list" "common causes"
+JDEBUG_FORCE_JATTACH=1 JATTACH_BIN="$TMP/fakejattach" JVM_PID=$$ run_case sh ./jdebug-local jcmd "GC.heap_info"
+assert_has "attach same-uid failure: falls back to the generic cause list" "common causes"
 
 # jvms lists every JVM on the host (pid<TAB>cmd) so the menu can pick one when
 # several run. Plant a fake `java` process to exercise the listing path.

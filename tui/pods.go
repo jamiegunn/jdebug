@@ -6,11 +6,47 @@ package main
 
 import (
 	"fmt"
+	"strconv"
 	"strings"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/x/ansi"
 )
+
+// sickestPod picks the pod most likely to be the one that paged you, from a pod
+// list whose rows are "name  phase  restarts=N". Ranking: a non-Running phase
+// (CrashLoopBackOff/Pending/…) outranks Running, then the highest restart count
+// wins; first-seen breaks ties. This is what auto-pick uses instead of "the
+// first pod kubectl happened to return" — on a big deployment the first row is
+// almost never the sick replica, and describing a healthy pod as if it were the
+// target is worse than showing nothing.
+func sickestPod(items []string) string {
+	best := ""
+	bestR := -1
+	bestBad := false
+	for _, it := range items {
+		f := strings.Fields(it)
+		if len(f) == 0 {
+			continue
+		}
+		name := f[0]
+		r := 0
+		phase := ""
+		for _, tok := range f[1:] {
+			if strings.HasPrefix(tok, "restarts=") {
+				r, _ = strconv.Atoi(strings.TrimPrefix(tok, "restarts="))
+			} else if phase == "" {
+				phase = tok
+			}
+		}
+		bad := phase != "" && phase != "Running"
+		// prefer a bad phase; within the same phase-class, prefer more restarts
+		if best == "" || (bad && !bestBad) || (bad == bestBad && r > bestR) {
+			best, bestR, bestBad = name, r, bad
+		}
+	}
+	return best
+}
 
 type podsMsg struct {
 	lines []string // "name  phase  restarts=N"

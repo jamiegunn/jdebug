@@ -485,13 +485,14 @@ HINTS
         # download, ever. Verify both binaries against SHA256SUMS right here,
         # so a corrupted/tampered copy is caught BEFORE an incident.
         JAT_VENDOR="${JATTACH_VENDOR_DIR:-$D/vendor/jattach}"
+        : "${JATTACH_VERSION:=v2.2}"   # pinned; surfaced so it can be CVE-tracked
         if ls "$JAT_VENDOR"/jattach-linux-* >/dev/null 2>&1; then
             if [[ -f "$JAT_VENDOR/SHA256SUMS" ]] && command -v sha256sum >/dev/null 2>&1 \
                     && (cd "$JAT_VENDOR" && sha256sum -c SHA256SUMS >/dev/null 2>&1); then
-                chk "jattach vendored + checksums verified ($JAT_VENDOR) — tier 2 needs no network"
+                chk "jattach $JATTACH_VERSION vendored + checksums verified — pinned; CVE-track it via vendor/jattach/PROVENANCE.md"
             elif [[ -f "$JAT_VENDOR/SHA256SUMS" ]] && command -v shasum >/dev/null 2>&1 \
                     && (cd "$JAT_VENDOR" && shasum -a 256 -c SHA256SUMS >/dev/null 2>&1); then
-                chk "jattach vendored + checksums verified ($JAT_VENDOR) — tier 2 needs no network"
+                chk "jattach $JATTACH_VERSION vendored + checksums verified — pinned; CVE-track it via vendor/jattach/PROVENANCE.md"
             elif [[ ! -f "$JAT_VENDOR/SHA256SUMS" ]]; then
                 bad "vendored jattach has no SHA256SUMS ($JAT_VENDOR) — installs will refuse; restore it from git"
             else

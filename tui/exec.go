@@ -102,7 +102,10 @@ func sshBase(host string) string {
 			h, port = host[:i], p
 		}
 	}
-	cmd := "ssh -o BatchMode=yes -o ConnectTimeout=8"
+	// ConnectTimeout bounds dialing; ServerAlive* bounds a wedged CONNECTION
+	// (dead peer / dropped network) to ~60s without killing a slow-but-alive
+	// command like a big heap dump — that one you let run.
+	cmd := "ssh -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=4"
 	if port != "" {
 		cmd += " -p " + shq(port)
 	}

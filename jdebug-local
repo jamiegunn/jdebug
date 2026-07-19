@@ -102,12 +102,23 @@ http_get() {
         else                 wget "$@" -O -   "$_u" 2>/dev/null || wget -q -O -   "$_u"; fi
     fi
 }
+# use_native_jcmd — prefer the JDK's own jcmd unless the operator forced jattach
+# (JDEBUG_FORCE_JATTACH, for when the local jcmd's JDK version mismatches the
+# target JVM and you want the version-agnostic attach binary instead).
+use_native_jcmd() { [ -z "${JDEBUG_FORCE_JATTACH:-}" ] && have jcmd; }
+
+# have_jcmd_route — is there ANY way to run a jcmd/diagnostic against the JVM?
+# The JDK's own jcmd (present on any JDK host, incl. macOS — needs no jattach) or
+# a staged jattach. Preferring native jcmd is why bare-metal on a Mac dev box, or
+# any JRE+JDK host, works without staging a binary at all.
+have_jcmd_route() { use_native_jcmd || [ -x "$JATTACH_BIN" ]; }
+
 need_jattach() {
-    [ -x "$JATTACH_BIN" ] && return 0
-    err "jattach not found at $JATTACH_BIN."
-    err "Stage it first:"
-    err "  in a pod      → from OUTSIDE: jdebug install-jattach  (or kubectl cp a binary to $JATTACH_BIN)"
-    err "  bare metal    → jdebug menu option i (installs the vendored, checksum-verified binary)"
+    have_jcmd_route && return 0
+    err "no JVM-command route: neither the JDK's jcmd nor a staged jattach is available."
+    err "  → install a JDK (gives jcmd/jstack/jmap natively), or stage jattach:"
+    err "    in a pod      → from OUTSIDE: jdebug install-jattach  (or kubectl cp a binary to $JATTACH_BIN)"
+    err "    bare metal    → jdebug menu option i (installs the vendored, checksum-verified binary)"
     exit 3
 }
 
@@ -119,22 +130,27 @@ _jvm_uid() {
     stat -c %u "/proc/$1" 2>/dev/null || printf ''
 }
 
-# run_jattach <pid> <jattach-args…> — invoke jattach and, on failure, diagnose
-# the single most common (and most confusing) cause: jattach's dynamic-attach
-# protocol requires running as the SAME uid as the target JVM. A generic
-# "attach failed" sends people down the wrong path; naming the uid gap is the fix.
-run_jattach() {
-    _p=$1; shift
-    "$JATTACH_BIN" "$_p" "$@" && return 0
-    _rc=$?
+# jcmd_via <pid> <command-string> — run a jcmd/diagnostic against the JVM,
+# PREFERRING the JDK's native jcmd (no jattach, works on macOS), else the staged
+# jattach. On failure, diagnose the single most confusing cause: the attach
+# protocol requires running as the SAME uid as the target JVM.
+jcmd_via() {
+    _p=$1; _c=$2
+    if use_native_jcmd; then
+        jcmd "$_p" "$_c" && return 0; _rc=$?
+    elif [ -x "$JATTACH_BIN" ]; then
+        "$JATTACH_BIN" "$_p" jcmd "$_c" && return 0; _rc=$?
+    else
+        need_jattach   # no route at all → guidance + exit 3
+    fi
     _me=$(id -u 2>/dev/null || printf '')
     _ju=$(_jvm_uid "$_p")
     if [ -n "$_ju" ] && [ -n "$_me" ] && [ "$_me" != "$_ju" ]; then
-        err "jattach couldn't attach — it must run as the SAME user as the JVM."
+        err "couldn't attach — jcmd/jattach must run as the SAME user as the JVM."
         err "  the JVM (pid $_p) runs as uid $_ju; you are uid $_me."
         err "  → run as that user (e.g. sudo -u '#$_ju' …, or exec/ssh in as them), or as root."
     else
-        err "jattach failed (exit $_rc) on pid $_p — the message above says why."
+        err "jcmd/jattach failed (exit $_rc) on pid $_p — the message above says why."
         err "  common causes: the JVM disabled attach (-XX:+DisableAttachMechanism),"
         err "  a uid mismatch, or a stale attach socket in /tmp."
     fi
@@ -174,7 +190,7 @@ cmd_threads() {
     # jstack-format (text/plain) to stdout — redirect to a file for VisualVM
     if HTTP_ACCEPT=text/plain http_get "$ACTUATOR_BASE/threaddump"; then return 0; fi
     err "⚠ actuator threaddump unreachable at $ACTUATOR_BASE — auto-falling back to jattach…"
-    if [ -x "$JATTACH_BIN" ]; then p=$(jvm_pid) || exit 3; run_jattach "$p" jcmd "Thread.print -l"
+    if have_jcmd_route; then p=$(jvm_pid) || exit 3; jcmd_via "$p" "Thread.print -l"
     else actuator_fail "Thread.print -l"; fi
 }
 
@@ -194,11 +210,11 @@ cmd_heap() {
         echo "analyze: Eclipse MAT -> File -> Open Heap Dump -> 'Leak Suspects' (or VisualVM)"
         return 0
     fi
-    err "⚠ actuator heapdump unreachable at $ACTUATOR_BASE — auto-falling back to jattach…"
-    if [ -x "$JATTACH_BIN" ]; then
+    err "⚠ actuator heapdump unreachable at $ACTUATOR_BASE — auto-falling back to jcmd/jattach…"
+    if have_jcmd_route; then
         p=$(jvm_pid) || exit 3
-        run_jattach "$p" jcmd "GC.heap_dump $out" || exit $?
-        echo "wrote $out (via jattach)"
+        jcmd_via "$p" "GC.heap_dump $out" || exit $?
+        echo "wrote $out (via jcmd/jattach)"
         out_hint "$out"
         echo "analyze: Eclipse MAT -> File -> Open Heap Dump -> 'Leak Suspects' (or VisualVM)"
     else actuator_fail "GC.heap_dump $out"; fi
@@ -226,9 +242,9 @@ cmd_memory() {
         echo "  (heap < limit but OOMKilled? look at non-heap, direct buffers, threads — jcmd VM.native_memory)"
     else
         echo "  JVM heap/non-heap : actuator metrics unreachable at $ACTUATOR_BASE"
-        if [ -x "$JATTACH_BIN" ] && p=$(jvm_pid); then
-            echo "  → auto-falling back to jattach GC.heap_info (RSS above is cgroup-real):"
-            "$JATTACH_BIN" "$p" jcmd "GC.heap_info" 2>&1 | sed 's/^/      /'
+        if have_jcmd_route && p=$(jvm_pid); then
+            echo "  → auto-falling back to jcmd GC.heap_info (RSS above is cgroup-real):"
+            jcmd_via "$p" "GC.heap_info" 2>&1 | sed 's/^/      /'
         else
             echo "  (RSS above is straight from cgroup and still valid. For JVM detail without"
             echo "   actuator, stage jattach then: jdebug-local jcmd \"GC.heap_info\")"
@@ -249,9 +265,9 @@ cmd_metrics() {
 
 cmd_jcmd() {
     [ -n "${1:-}" ] || { err 'jcmd needs a command string, e.g.  jdebug-local jcmd "GC.heap_info"'; exit 2; }
-    need_jattach
+    need_jattach          # no jcmd AND no jattach → guidance, exit 3
     p=$(jvm_pid) || exit 3
-    run_jattach "$p" jcmd "$*"
+    jcmd_via "$p" "$*"
 }
 
 cmd_snapshot() {
@@ -272,11 +288,11 @@ cmd_snapshot() {
     HTTP_ACCEPT=text/plain http_get "$ACTUATOR_BASE/threaddump" >"$dir/threads.txt" 2>/dev/null || true
     http_get "$ACTUATOR_BASE/metrics"                         >"$dir/metrics.json"  2>/dev/null || true
     cmd_memory >"$dir/memory.txt" 2>/dev/null || true
-    if [ -x "$JATTACH_BIN" ] && p=$(jvm_pid); then
+    if have_jcmd_route && p=$(jvm_pid); then
         for c in "GC.heap_info" "VM.flags" "Compiler.codecache" "VM.native_memory summary"; do
-            "$JATTACH_BIN" "$p" jcmd "$c" >"$dir/jcmd-$(echo "$c" | tr ' .' '__').txt" 2>/dev/null || true
+            jcmd_via "$p" "$c" >"$dir/jcmd-$(echo "$c" | tr ' .' '__').txt" 2>/dev/null || true
         done
-    else echo "(jattach not staged or no JVM found — skipped jcmd; see: jdebug-local help jcmd)" >"$dir/jcmd-SKIPPED.txt"; fi
+    else echo "(no jcmd/jattach route or no JVM found — skipped jcmd; see: jdebug-local help jcmd)" >"$dir/jcmd-SKIPPED.txt"; fi
     [ "$heap" = 1 ] && { echo "heap dump (pauses JVM)..."; http_get "$ACTUATOR_BASE/heapdump" "$dir/heap.hprof" 2>/dev/null || true; }
     if ( cd "$OUT_DIR" && tar czf "$dir.tar.gz" "$(basename "$dir")" 2>/dev/null ); then
         echo "bundle: $dir.tar.gz"

@@ -1313,32 +1313,60 @@ func TestClickSwitchesPod(t *testing.T) {
 }
 
 // H4: a target with only a selector (no exact pod) must not wall off the
-// read-only checks — jdebug auto-picks the first matching pod and discloses it,
-// instead of forcing a chooser→g→p→picker detour before any signal shows.
-func TestSelectorOnlyAutoPicksFirstPod(t *testing.T) {
+// read-only checks — jdebug auto-picks the SICKEST matching pod (KS-1: not the
+// first kubectl returned) and discloses it, instead of forcing a
+// chooser→g→p→picker detour before any signal shows.
+func TestSelectorOnlyAutoPicksSickestPod(t *testing.T) {
 	saved := podsFn
 	defer func() { podsFn = saved }()
+	// pod-a is first and healthy; pod-c is the crash-looper. Auto-pick must NOT
+	// take the first row — it must land on the replica that paged you.
 	podsFn = func(ns, sel string) enum {
-		return enum{items: []string{"pod-a  Running  restarts=0", "pod-b  Running  restarts=1"}}
+		return enum{items: []string{
+			"pod-a  Running           restarts=0",
+			"pod-b  Running           restarts=2",
+			"pod-c  CrashLoopBackOff   restarts=37",
+		}}
 	}
 	m := readyModel()
 	m.t.Pod = ""
 	m.t.Selector = "app=demo"
 	m.probeRemote(true)
-	if m.t.Pod != "pod-a" {
-		t.Fatalf("a selector with no pod must auto-pick the first match, got %q", m.t.Pod)
+	if m.t.Pod != "pod-c" {
+		t.Fatalf("auto-pick must choose the sickest pod (pod-c), not the first row, got %q", m.t.Pod)
 	}
-	if m.autoPod != 2 {
+	if m.autoPod != 3 {
 		t.Fatalf("autoPod must record the match count, got %d", m.autoPod)
 	}
-	// the auto-pick is disclosed in the header, never a silent guess
-	if h := ansiStrip(m.headerRemote(true)); !strings.Contains(h, "pods the selector matches") {
-		t.Fatalf("the header must disclose the auto-pick:\n%s", h)
+	if h := ansiStrip(m.headerRemote(true)); !strings.Contains(h, "busiest of 3") {
+		t.Fatalf("the header must disclose the sickest-of-N auto-pick:\n%s", h)
 	}
-	// an explicit pod pick supersedes the auto-pick and clears the note
-	sw, _ := m.switchPod("pod-b")
-	if mm := sw.(model); mm.autoPod != 0 || mm.t.Pod != "pod-b" {
+	sw, _ := m.switchPod("pod-a")
+	if mm := sw.(model); mm.autoPod != 0 || mm.t.Pod != "pod-a" {
 		t.Fatalf("an explicit pick must supersede the auto-pick, got pod=%q autoPod=%d", mm.t.Pod, mm.autoPod)
+	}
+}
+
+// sickestPod ranking: worst phase first, then most restarts, first-seen on ties.
+func TestSickestPodRanking(t *testing.T) {
+	cases := []struct {
+		name  string
+		items []string
+		want  string
+	}{
+		{"crash-looper beats a higher-restart Running pod",
+			[]string{"a Running restarts=50", "b CrashLoopBackOff restarts=5"}, "b"},
+		{"among Running, most restarts wins",
+			[]string{"a Running restarts=1", "b Running restarts=9", "c Running restarts=3"}, "b"},
+		{"all healthy, all zero → first",
+			[]string{"a Running restarts=0", "b Running restarts=0"}, "a"},
+		{"missing restart data → first",
+			[]string{"a", "b"}, "a"},
+	}
+	for _, c := range cases {
+		if got := sickestPod(c.items); got != c.want {
+			t.Errorf("%s: sickestPod=%q want %q", c.name, got, c.want)
+		}
 	}
 }
 

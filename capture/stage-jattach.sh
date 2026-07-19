@@ -23,6 +23,14 @@ source "$SCRIPTS_ROOT/lib/common.sh"
 : "${JATTACH_VENDOR_DIR:=$SCRIPTS_ROOT/vendor/jattach}"
 DEST="${JATTACH_BIN:-/tmp/jattach}"
 
+# Policy: JDEBUG_NO_STAGE forbids installing any binary onto the target host —
+# the bare-metal counterpart to the in-pod policy gate.
+if [[ -n "${JDEBUG_NO_STAGE:-}" ]]; then
+    err "jattach staging is disabled by policy (JDEBUG_NO_STAGE) — nothing installed."
+    err "  → use the actuator tier (needs no jattach), or an already-present jattach."
+    exit 1
+fi
+
 stage_local() {
     local dest="${1:-$DEST}" src
     if [[ -n "${JATTACH_BINARY:-}" ]]; then      # operator's own copy — explicit bypass
@@ -51,7 +59,7 @@ stage_ssh() {
         local maybe="${hostspec##*:}"
         if [[ "$maybe" =~ ^[0-9]+$ ]]; then host="${hostspec%:*}"; port="$maybe"; fi
     fi
-    local ssh_opts=(-o BatchMode=yes -o ConnectTimeout=8)
+    local ssh_opts=(-o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=15 -o ServerAliveCountMax=4)
     [[ -n "$port" ]] && ssh_opts+=(-p "$port")
 
     if [[ -n "${JATTACH_BINARY:-}" ]]; then      # operator's own copy — explicit bypass

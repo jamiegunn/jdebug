@@ -39,13 +39,15 @@ type objSize struct {
 }
 
 type heapHistogram struct {
-	classes    []classStat
-	biggest    []objSize // the largest individual objects (newest analysis)
-	totalBytes int64
-	totalObjs  int64
-	dupWaste   int64 // bytes wasted on duplicated small char[]/byte[] (≈ strings)
-	dupGroups  int64 // how many distinct values are duplicated
-	truncated  bool
+	classes     []classStat
+	biggest     []objSize // the largest individual objects (newest analysis)
+	totalBytes  int64
+	totalObjs   int64
+	dupWaste    int64 // bytes wasted on duplicated small char[]/byte[] (≈ strings)
+	dupGroups   int64 // how many distinct values are duplicated
+	truncated   bool
+	fileBytes   int64 // full dump size on disk (0 = unknown)
+	walkedBytes int64 // how many bytes of records we actually walked
 }
 
 var primArrayName = map[byte]string{
@@ -72,6 +74,7 @@ type hprofParser struct {
 	dup         map[uint64]*dupStat // content hash → occurrences (dup-string detect)
 	consumed    int64
 	truncated   bool
+	fileBytes   int64 // total dump size on disk, to honestly frame a truncated walk
 }
 
 const (
@@ -138,6 +141,10 @@ func analyzeHprof(path string) (hist *heapHistogram, err error) {
 		return nil, err
 	}
 	defer f.Close()
+	var fileBytes int64
+	if fi, e := f.Stat(); e == nil {
+		fileBytes = fi.Size()
+	}
 	r := bufio.NewReaderSize(f, 1<<20)
 
 	ver, err := readCString(r)
@@ -159,6 +166,7 @@ func analyzeHprof(path string) (hist *heapHistogram, err error) {
 		byClass:     map[uint64]*classStat{},
 		arrays:      map[string]*classStat{},
 		dup:         map[uint64]*dupStat{},
+		fileBytes:   fileBytes,
 	}
 
 	for {
@@ -256,7 +264,7 @@ func (p *hprofParser) arrayStat(name string) *classStat {
 }
 
 func (p *hprofParser) result() *heapHistogram {
-	h := &heapHistogram{truncated: p.truncated}
+	h := &heapHistogram{truncated: p.truncated, fileBytes: p.fileBytes, walkedBytes: p.consumed}
 	add := func(cs *classStat) {
 		if cs.count == 0 {
 			return
@@ -533,7 +541,14 @@ func renderHistogram(h *heapHistogram, top int) string {
 	fmt.Fprintf(&b, "heap histogram — %s across %s objects (top consumers first)\n",
 		fmtSize(h.totalBytes), humanCount(h.totalObjs))
 	if h.truncated {
-		b.WriteString("  (large dump — sampled the first portion; proportions still indicative)\n")
+		// Be honest: this is the START of the file, not a random sample, and not
+		// the whole heap. A leak living past the walked window is invisible here.
+		scope := fmtSize(analyzeHprofLimit)
+		if h.fileBytes > 0 {
+			scope = fmt.Sprintf("%s of a %s dump", fmtSize(analyzeHprofLimit), fmtSize(h.fileBytes))
+		}
+		b.WriteString("  ⚠ partial: walked the first " + scope + " — a hint from the start of the file, NOT the whole heap.\n")
+		b.WriteString("    a leak outside this window won't show; open the .hprof in Eclipse MAT for the real answer.\n")
 	}
 	cls := h.classes
 	if len(cls) > top {

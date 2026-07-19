@@ -102,7 +102,32 @@ install_jattach() {
         return
     fi
 
-    # Pre-flight: restricted PodSecurity / readOnlyRootFilesystem makes the
+    # Policy gate: some orgs forbid writing ANY binary into a running production
+    # pod. JDEBUG_NO_STAGE honours that — nothing is cp'd in; use the no-binary
+    # tiers instead. (This is the answer to the security-review question "can it
+    # run without dropping a binary into prod?" — yes.)
+    if [ -n "${JDEBUG_NO_STAGE:-}" ]; then
+        err "jattach staging is disabled by policy (JDEBUG_NO_STAGE) — nothing written to $POD."
+        err "  → use the tiers that need no in-pod binary:"
+        err "        jdebug threads -n $NAMESPACE $POD                    # actuator over HTTP"
+        err "        jdebug heap --confirm --via jdk -n $NAMESPACE $POD   # ephemeral JDK container"
+        exit 1
+    fi
+
+    # Pre-flight A: `kubectl cp` rides on `tar` INSIDE the target container
+    # (the tool relies on it below). Distroless / scratch images ship no tar (and
+    # usually no shell), so the cp would fail cryptically. Probe tar directly (no
+    # shell needed) and route to the tiers that need no in-pod binary at all.
+    if ! kubectl -n "$NAMESPACE" exec "$POD" -c "$APP_CONTAINER" -- tar --version >/dev/null 2>&1; then
+        err "can't stage jattach: no 'tar' in $POD/$APP_CONTAINER (distroless or scratch image?)."
+        err "  kubectl cp needs tar in the container, which these images don't ship."
+        err "  → use the tiers that need no in-pod binary:"
+        err "        jdebug threads -n $NAMESPACE $POD                    # actuator over HTTP"
+        err "        jdebug heap --confirm --via jdk -n $NAMESPACE $POD   # ephemeral JDK container"
+        exit 1
+    fi
+
+    # Pre-flight B: restricted PodSecurity / readOnlyRootFilesystem makes the
     # staging dir unwritable, and the `kubectl cp` would then fail opaquely. Use
     # a FUNCTIONAL write probe (the truth — /tmp is often a writable emptyDir even
     # when the root FS is read-only, so a securityContext guess would be wrong)

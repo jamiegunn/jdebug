@@ -74,9 +74,9 @@ func (m model) headerRemote(reachable bool) string {
 	if m.autoPod > 0 {
 		note := "auto-picked the only matching pod — [g] to change target"
 		if m.autoPod > 1 {
-			note = fmt.Sprintf("showing 1 of %d pods the selector matches — [g] p to pick another", m.autoPod)
+			note = fmt.Sprintf("auto-picked the busiest of %d matching pods (most restarts/worst phase) — [g] p to pick another", m.autoPod)
 		}
-		b.WriteString("   " + cFaint.Render(note) + "\n")
+		b.WriteString("   " + cWarn.Render(note) + "\n")
 	}
 	if m.staleP != "" {
 		b.WriteString("   " + cWarn.Render("your previous pin "+m.staleP+" no longer exists — back to auto ([g] to re-pick)") + "\n")

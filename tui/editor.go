@@ -132,7 +132,7 @@ func (m model) editorKey(key string) (tea.Model, tea.Cmd) {
 		base := m.t.Pod
 		if base == "" {
 			if pods := podsFn(m.t.Namespace, m.t.Selector); len(pods.items) > 0 {
-				base = strings.Fields(pods.items[0])[0]
+				base = sickestPod(pods.items) // same "the sick one, not the first" rule
 			}
 		}
 		var conts []string

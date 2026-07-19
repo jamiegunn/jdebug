@@ -255,6 +255,30 @@ func TestClassifyHead(t *testing.T) {
 	}
 }
 
+// KS-2: a truncated large-heap histogram must say so honestly — the bytes it
+// actually read vs the dump size, and "open MAT for the truth" — never the old
+// falsely-reassuring "sampled … proportions still indicative".
+func TestHeapTruncationDisclosureIsHonest(t *testing.T) {
+	h := &heapHistogram{truncated: true, fileBytes: 38 << 30, walkedBytes: analyzeHprofLimit,
+		totalBytes: 100, totalObjs: 5, classes: []classStat{{"byte[]", 2, 100}}}
+	out := renderHistogram(h, 10)
+	for _, want := range []string{"partial", "NOT the whole heap", "Eclipse MAT", "of a "} {
+		if !strings.Contains(out, want) {
+			t.Errorf("truncation disclosure missing %q:\n%s", want, out)
+		}
+	}
+	for _, bad := range []string{"indicative", "sampled"} {
+		if strings.Contains(out, bad) {
+			t.Errorf("disclosure must not falsely reassure with %q:\n%s", bad, out)
+		}
+	}
+	// a complete dump must NOT show the partial warning
+	if full := renderHistogram(&heapHistogram{totalBytes: 100, totalObjs: 5,
+		classes: []classStat{{"byte[]", 2, 100}}}, 10); strings.Contains(full, "partial") {
+		t.Error("a complete dump must not warn about truncation")
+	}
+}
+
 func TestHistogramRichSections(t *testing.T) {
 	// a heap where ONE object dominates → biggest-objects + "ONE object dominates"
 	h := &heapHistogram{
