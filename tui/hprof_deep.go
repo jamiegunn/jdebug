@@ -725,6 +725,106 @@ func pathFromRoot(target int32, parent []int32) []int32 {
 	return rev
 }
 
+// --- leak-pattern recognition ------------------------------------------------
+
+// classCounts tallies reachable instances per class name — the signal several
+// leak SIGNATURES are read from (many ThreadLocalMap entries, many Finalizers,
+// many classloaders), which a retained-size ranking alone doesn't surface.
+func (g *heapGraph) classCounts() map[string]int64 {
+	c := map[string]int64{}
+	for i := 1; i < len(g.shallow); i++ {
+		c[g.names[g.name[i]]]++
+	}
+	return c
+}
+
+// leakPattern is the difference between a dump and a diagnosis: it matches the
+// retained-size ranking + instance counts against the handful of leak shapes
+// that cause most real JVM OOMs, and returns a NAMED pattern with a concrete
+// action — not "open it in MAT". found=false when nothing matches confidently.
+func leakPattern(g *heapGraph, rows []retRow, reachable int64) (title, detail, action string, found bool) {
+	if len(rows) == 0 || reachable == 0 {
+		return "", "", "", false
+	}
+	cnt := g.classCounts()
+	sum := func(names ...string) int64 {
+		var n int64
+		for _, x := range names {
+			n += cnt[x]
+		}
+		return n
+	}
+	pct := func(b int64) float64 { return float64(b) * 100 / float64(reachable) }
+
+	// 1. ThreadLocal leak — entries never removed on POOLED threads (very common
+	// with thread pools + ThreadLocal caches / MDC / SecurityContext).
+	if tl := sum("java.lang.ThreadLocal$ThreadLocalMap$Entry"); tl >= 10_000 {
+		return "ThreadLocal leak",
+			fmt.Sprintf("%s ThreadLocalMap entries are still reachable — on a thread POOL, thread-locals set per request are never cleared, so they pile up.", humanCount(tl)),
+			"call ThreadLocal.remove() in a finally (or a servlet filter / interceptor); never leave a set() on a pooled thread.", true
+	}
+	// 2. Finalizer backlog — the finalizer thread can't keep up, so Finalizer
+	// refs (and everything they hold) pin the heap.
+	if fz := sum("java.lang.ref.Finalizer"); fz >= 50_000 {
+		return "finalizer backlog",
+			fmt.Sprintf("%s java.lang.ref.Finalizer objects are queued — the finalizer thread is behind, pinning everything awaiting finalize().", humanCount(fz)),
+			"stop relying on finalize() (deprecated). Use java.lang.ref.Cleaner or try-with-resources; check for a slow/blocked finalizer.", true
+	}
+	// 3. Classloader / redeploy leak — many live ClassLoaders (each pins its
+	// classes + statics) is the signature of hot-redeploy leaks in app servers.
+	var loaders int64
+	for name, n := range cnt {
+		if strings.HasSuffix(name, "ClassLoader") {
+			loaders += n
+		}
+	}
+	if loaders >= 50 {
+		return "classloader / redeploy leak",
+			fmt.Sprintf("%s live ClassLoaders are retained — each pins all of its classes and their statics. Classic hot-redeploy / hot-reload leak.", humanCount(loaders)),
+			"find what holds the old ClassLoaders alive (a static registry, a ThreadLocal, a JDBC driver, a shutdown hook) and release it on undeploy.", true
+	}
+
+	// 4/5. the single biggest retained holder — is it a growing collection, or a
+	// dominant app object?
+	top := rows[0]
+	topName := g.names[g.name[top.ix]]
+	topPct := pct(top.ret)
+	entries := sum(
+		"java.util.HashMap$Node", "java.util.concurrent.ConcurrentHashMap$Node",
+		"java.util.LinkedHashMap$Entry", "java.util.Hashtable$Entry", "java.util.TreeMap$Entry")
+	if topPct >= 25 && (isCollectionType(topName) || entries >= 500_000) {
+		via := topName
+		if !isCollectionType(topName) {
+			via = fmt.Sprintf("%s (holding ~%s map entries)", topName, humanCount(entries))
+		}
+		return "unbounded collection / cache",
+			fmt.Sprintf("a %s retains %s (%.0f%% of the reachable heap)%s — a collection that grows without a ceiling is the #1 JVM leak.",
+				via, fmtSize(top.ret), topPct, ternary(entries >= 500_000, fmt.Sprintf(", and there are ~%s map entries heap-wide", humanCount(entries)), "")),
+			"bound it: a max size + eviction (Caffeine/Guava LoadingCache), a TTL, or an LRU — and confirm removal actually happens. Its path to GC roots is above; that field is the cache.", true
+	}
+	if topPct >= 30 && !isFrameworkClass(topName) {
+		return "single dominant object",
+			fmt.Sprintf("one %s retains %s (%.0f%% of the reachable heap) — most of the memory hangs off this one object.", topName, fmtSize(top.ret), topPct),
+			"the reference chain above names the field that anchors it — break that reference (clear/scope it) or bound what it accumulates.", true
+	}
+	return "", "", "", false
+}
+
+// isCollectionType reports whether a class name is a JDK collection/map/array
+// container — the usual body of a "growing cache" leak.
+func isCollectionType(n string) bool {
+	switch n {
+	case "java.util.HashMap", "java.util.concurrent.ConcurrentHashMap",
+		"java.util.LinkedHashMap", "java.util.TreeMap", "java.util.Hashtable",
+		"java.util.ArrayList", "java.util.LinkedList", "java.util.Vector",
+		"java.util.HashSet", "java.util.LinkedHashSet", "java.util.TreeSet",
+		"java.util.concurrent.ConcurrentLinkedQueue", "java.util.ArrayDeque",
+		"java.util.HashMap$Node[]", "java.util.concurrent.ConcurrentHashMap$Node[]":
+		return true
+	}
+	return strings.HasPrefix(n, "java.util.") && (strings.HasSuffix(n, "[]") || strings.Contains(n, "Map") || strings.Contains(n, "List") || strings.Contains(n, "Set"))
+}
+
 // --- render ------------------------------------------------------------------
 
 func analyzeHprofDeep(path string) (out string, err error) {
@@ -756,10 +856,20 @@ func analyzeHprofDeep(path string) (out string, err error) {
 	sort.Slice(rows, func(i, j int) bool { return rows[i].ret > rows[j].ret })
 
 	var b strings.Builder
-	fmt.Fprintf(&b, "retained-size analysis (dominator tree — what each object actually keeps alive)\n")
-	fmt.Fprintf(&b, "reachable %s across %s objects · unreachable (garbage, not yet GC'd) %s\n\n",
+	fmt.Fprintf(&b, "heap analysis — retained size (what each object actually KEEPS alive)\n")
+	fmt.Fprintf(&b, "reachable %s across %s objects · unreachable (garbage, not yet GC'd) %s\n",
 		fmtSize(reachable), humanCount(int64(len(rows))), fmtSize(garbage))
-	b.WriteString("top retained holders (retained | shallow | class):\n")
+
+	// LEAD with the diagnosis: a named leak pattern + a concrete fix, when one
+	// matches. This is the "usable, not a dump" part — the holders + paths below
+	// are the evidence for it.
+	if title, detail, action, found := leakPattern(g, rows, reachable); found {
+		b.WriteString("\n⟶ LEAK PATTERN — " + title + "\n")
+		b.WriteString("  " + detail + "\n")
+		b.WriteString("  → fix: " + action + "\n")
+	}
+
+	b.WriteString("\ntop retained holders (retained | shallow | class):\n")
 	top := rows
 	if len(top) > 12 {
 		top = top[:12]
@@ -777,9 +887,13 @@ func analyzeHprofDeep(path string) (out string, err error) {
 		b.WriteString("\n" + pathBlock)
 	}
 
-	b.WriteString("\n" + deepVerdict(rows, g, ret, reachable) + "\n")
-	b.WriteString("that's retained size AND the reference chains MAT is for — no external tool needed.\n")
-	b.WriteString("(Eclipse MAT still adds OQL and side-by-side dump diffs.)")
+	// when no pattern matched, still give a plain-language read of the shape
+	if _, _, _, found := leakPattern(g, rows, reachable); !found {
+		b.WriteString("\n" + deepVerdict(rows, g, ret, reachable) + "\n")
+	}
+	b.WriteString("\nnext: to PROVE it's growing, take a second dump under load and diff:\n")
+	b.WriteString("  jdebug analyze --diff <before.hprof> <after.hprof>\n")
+	b.WriteString("(Eclipse MAT still adds OQL queries and side-by-side dump diffs.)")
 	return b.String(), nil
 }
 

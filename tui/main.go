@@ -637,8 +637,9 @@ func (m model) confirmKeyPress(key string) (tea.Model, tea.Cmd) {
 
 func main() {
 	renderFlag := flag.String("render", "", "print a screen with canned demo state and exit (menu|dashboard|focus|output|gate|local|ssh|help|chooser|editor|wizard)")
-	heapFlag := flag.String("analyze-heap", "", "print a class histogram for an hprof heap dump and exit")
-	deepFlag := flag.Bool("deep", false, "with -analyze-heap: also build the dominator tree for retained sizes")
+	heapFlag := flag.String("analyze-heap", "", "analyze an hprof heap dump (retained-size + leak pattern by default) and exit")
+	deepFlag := flag.Bool("deep", false, "deprecated: retained-size analysis is now the default (kept for compatibility)")
+	shallowFlag := flag.Bool("shallow", false, "with -analyze-heap: only the shallow class histogram (skip the retained-size pass)")
 	diffA := flag.String("diff-a", "", "BEFORE hprof for a two-dump growth diff (with -diff-b)")
 	diffB := flag.String("diff-b", "", "AFTER hprof for a two-dump growth diff (with -diff-a)")
 	startFlag := flag.String("start", "", "open directly on a screen and skip the menu (wizard)")
@@ -666,15 +667,25 @@ func main() {
 			fmt.Fprintln(os.Stderr, "error:", err)
 			os.Exit(1)
 		}
-		fmt.Println(renderHistogram(h, 15))
-		if *deepFlag {
-			deep, derr := analyzeHprofDeep(*heapFlag)
-			if derr != nil {
-				fmt.Println("\n(retained-size pass skipped: " + derr.Error() + ")")
-			} else {
-				fmt.Println("\n" + deep)
-			}
+		// Default is the USABLE analysis: retained size + leak pattern + path to
+		// GC roots. The shallow histogram alone is a dump (byte[]/String top any
+		// Java heap), so it's demoted to supporting detail — or the fallback when
+		// the heap is too big for the in-memory graph. `-shallow` forces it.
+		if *shallowFlag {
+			fmt.Println(renderHistogram(h, 15))
+			return
 		}
+		deep, derr := analyzeHprofDeep(*heapFlag)
+		if derr != nil {
+			fmt.Println(renderHistogram(h, 15))
+			fmt.Println("\n(retained-size analysis unavailable: " + derr.Error() + ")")
+			fmt.Println("the histogram above is shallow leaves; open the dump in Eclipse MAT for retained size + paths.")
+			return
+		}
+		fmt.Println(deep)
+		fmt.Println("\n── supporting detail: shallow histogram (leaves — byte[]/char[]/String top any heap) ──")
+		fmt.Println(renderHistogram(h, 10))
+		_ = deepFlag // deep is now the default; the flag is accepted for compatibility
 		return
 	}
 	if *renderFlag != "" {

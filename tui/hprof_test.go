@@ -359,7 +359,7 @@ func TestHistogramRichSections(t *testing.T) {
 		"duplicate small char[]/byte[]",
 		"your app's classes", "com.example.Cache",
 		"verdict:", "ONE object dominates",
-		"RETAINED size", // still points at MAT for the deep stuff
+		// (retained-size guidance moved to the deep pass, which is now the default)
 	} {
 		if !strings.Contains(out, want) {
 			t.Errorf("rich histogram missing %q:\n%s", want, out)
@@ -382,6 +382,49 @@ func TestIsFrameworkClass(t *testing.T) {
 		if isFrameworkClass(n) {
 			t.Errorf("%q should count as an app/dependency class", n)
 		}
+	}
+}
+
+// leakPattern is the "usable, not a dump" core: it must NAME the leak shape and
+// give a concrete fix. Tested directly on hand-built graphs.
+func TestLeakPatternUnboundedCollection(t *testing.T) {
+	g := &heapGraph{
+		shallow: []int64{0, 100, 100},
+		name:    []int32{0, 1, 2},
+		names:   []string{"<GC roots>", "java.util.concurrent.ConcurrentHashMap", "byte[]"},
+		succ:    [][]int32{{1}, {2}, {}},
+		pred:    [][]int32{{}, {0}, {1}},
+	}
+	rows := []retRow{{1, 600}, {2, 100}} // the map retains 60% of a 1000-byte reachable heap
+	title, _, action, found := leakPattern(g, rows, 1000)
+	if !found || !strings.Contains(title, "unbounded collection") {
+		t.Fatalf("expected an unbounded-collection pattern, got %q (found=%v)", title, found)
+	}
+	if !strings.Contains(action, "evict") && !strings.Contains(action, "bound") && !strings.Contains(action, "LRU") {
+		t.Errorf("the action must be concrete (evict/bound/LRU), got %q", action)
+	}
+}
+
+func TestLeakPatternThreadLocal(t *testing.T) {
+	shallow := []int64{0}
+	name := []int32{0}
+	succ := [][]int32{{}}
+	for i := 0; i < 12000; i++ { // 12k ThreadLocalMap entries → the signature
+		shallow = append(shallow, 40)
+		name = append(name, 1)
+		succ = append(succ, []int32{})
+	}
+	g := &heapGraph{
+		shallow: shallow, name: name,
+		names: []string{"<GC roots>", "java.lang.ThreadLocal$ThreadLocalMap$Entry"},
+		succ:  succ, pred: make([][]int32, len(shallow)),
+	}
+	title, detail, action, found := leakPattern(g, []retRow{{1, 100}}, 480000)
+	if !found || title != "ThreadLocal leak" {
+		t.Fatalf("12k ThreadLocalMap entries must read as a ThreadLocal leak, got %q", title)
+	}
+	if !strings.Contains(action, "remove()") || !strings.Contains(strings.ToLower(detail), "pool") {
+		t.Errorf("ThreadLocal guidance must name remove() + thread pools: %q / %q", detail, action)
 	}
 }
 

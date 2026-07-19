@@ -651,10 +651,7 @@ func renderHistogram(h *heapHistogram, top int) string {
 		b.WriteString("\nno application classes stand out — the heap is dominated by JDK/framework types.\n")
 	}
 
-	b.WriteString("\n" + heapVerdict(h) + "\n")
-	b.WriteString("shallow-size first pass. Go deeper without leaving jdebug:\n")
-	b.WriteString("  jdebug analyze --deep <heap>   RETAINED size + path to GC roots (why each object is kept alive)\n")
-	b.WriteString("  jdebug analyze --diff          diff two dumps to see what GREW under load (leak hunting)")
+	b.WriteString("\n" + heapVerdict(h))
 	return b.String()
 }
 
