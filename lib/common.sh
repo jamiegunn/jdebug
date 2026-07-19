@@ -54,9 +54,19 @@ export ACTUATOR_AUTH
 JDEBUG_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 : "${JDEBUG_DUMPS:=$JDEBUG_ROOT/dumps}"
 
-# NOTE: no automatic KUBECONFIG rewriting. jdebug uses the ambient kubectl
-# context. Point it at a cluster the normal way (KUBECONFIG=... or kubectl config
-# use-context), exactly like kubectl itself.
+# Opt-in, jdebug-scoped kubeconfig. By default jdebug uses the AMBIENT kubectl
+# context (KUBECONFIG=… / kubectl config use-context) and rewrites nothing. But
+# when a cluster won't connect because the kubeconfig is stale/missing, the
+# `jdebug kubeconfig` fixer can import a fresh one JUST FOR JDEBUG: it drops a
+# copy at $JDEBUG_CONFIG_DIR/kubeconfig, and the block below points jdebug's own
+# kubectl at it — WITHOUT touching ~/.kube/config or any other tool. An explicit
+# KUBECONFIG in the environment always wins (so `KUBECONFIG=… jdebug …` and CI
+# override it); `jdebug kubeconfig --forget` deletes the copy to go back.
+JDEBUG_SCOPED_KUBECONFIG="$JDEBUG_CONFIG_DIR/kubeconfig"
+if [[ -z "${KUBECONFIG:-}" && -r "$JDEBUG_SCOPED_KUBECONFIG" ]]; then
+    export KUBECONFIG="$JDEBUG_SCOPED_KUBECONFIG"
+    export JDEBUG_KUBECONFIG_SCOPED=1   # so status/announce can say "jdebug-only"
+fi
 
 err()  { printf 'error: %s\n' "$*" >&2; }
 info() { printf '[%s] %s\n' "$(date +%H:%M:%S)" "$*" >&2; }
@@ -81,9 +91,14 @@ announce_target() {
     [[ -n "${JDEBUG_TARGET_ANNOUNCED:-}" || -n "${JDEBUG_QUIET:-}" ]] && return 0
     export JDEBUG_TARGET_ANNOUNCED=1
     local d="" o=""; [[ -t 2 && -z "${NO_COLOR:-}" ]] && { d=$'\033[2m'; o=$'\033[0m'; }
+    local kc=""
+    if [[ -n "${KUBECONFIG:-}" ]]; then
+        kc="  kubeconfig=$KUBECONFIG"
+        [[ "${JDEBUG_KUBECONFIG_SCOPED:-}" == 1 ]] && kc="$kc (jdebug-only)"
+    fi
     printf '%sjdebug → namespace=%s  selector=%s  container=%s%s%s\n' \
         "$d" "$NAMESPACE" "${SELECTOR:-<any pod>}" "$APP_CONTAINER" \
-        "${KUBECONFIG:+  kubeconfig=$KUBECONFIG}" "$o" >&2
+        "$kc" "$o" >&2
 }
 
 # parse_common_args <args...> — consumes -n/--namespace, -l/--selector,
@@ -479,6 +494,8 @@ check_cluster() {
             err "         EKS: aws sso login  (or aws eks update-kubeconfig --name <cluster>)"
             err "         GKE: gcloud auth login   ·   AKS: az login   ·   OpenShift: oc login"
             err "       switching contexts will NOT fix expired credentials."
+            err "  or:  jdebug kubeconfig  — re-fetch a fresh kubeconfig from your cloud provider"
+            err "       (offers to apply it for THIS jdebug only, or for all sessions)."
             return 1 ;;
     esac
     err "can't reach the Kubernetes cluster  (context: ${ctx:-<none set>})"
@@ -492,6 +509,8 @@ check_cluster() {
             err "       intercepting TLS, a rotated cluster CA, or a stale kubeconfig —"
             err "       fix: re-fetch the kubeconfig (e.g. aws eks update-kubeconfig / gcloud"
             err "       container clusters get-credentials), or ask about the proxy's CA."
+            err "       jdebug kubeconfig  imports a fresh one FOR YOU (a file you point it at, or a"
+            err "       provider re-fetch) — applied to THIS jdebug only, or to all sessions."
             err "       Either way you can also switch to a working context:"
             err "       kubectl config use-context <name>  (jdebug menu: press t)" ;;
         *"connection refused"*|*"i/o timeout"*|*"no such host"*|*"Unable to connect"*|*"context deadline"*)
@@ -501,12 +520,132 @@ check_cluster() {
         *"current-context"*|*"no configuration"*|*"Missing or incomplete"*)
             err "  why: kubectl has no context selected, so it doesn't know which cluster to talk to."
             err "  fix: pick one:  kubectl config use-context <name>   (list: kubectl config get-contexts)"
-            err "       or point KUBECONFIG at the right file." ;;
+            err "       or point KUBECONFIG at the right file."
+            err "       no kubeconfig at all?  jdebug kubeconfig  imports one (file or provider re-fetch)." ;;
         *)
             err "  kubectl's own explanation (first lines):"
             printf '%s\n' "$out" | grep -v '^E[0-9]' | head -3 | sed 's/^/    /' >&2 ;;
     esac
     return 1
+}
+
+# --- kubeconfig import helpers (used by observe/kubeconfig.sh) ----------------
+# The connect problem is almost always a stale/missing kubeconfig. These helpers
+# let the fixer validate a candidate, test that it ACTUALLY connects before
+# committing, and apply it at one of two scopes:
+#   session — jdebug-only: a copy at $JDEBUG_SCOPED_KUBECONFIG; nothing else on
+#             the machine is touched (the safe default; reversible with --forget).
+#   global  — merged into ~/.kube/config for every tool (a timestamped backup is
+#             written first; this is the one that can clobber existing contexts).
+
+# kubeconfig_global_file — the file a system-wide import writes to: the first
+# entry of a KUBECONFIG list if the user runs one, else the standard ~/.kube/config.
+kubeconfig_global_file() {
+    if [[ -n "${KUBECONFIG:-}" && "${JDEBUG_KUBECONFIG_SCOPED:-}" != 1 ]]; then
+        printf '%s\n' "${KUBECONFIG%%:*}"
+    else
+        printf '%s\n' "$HOME/.kube/config"
+    fi
+}
+
+# kubeconfig_looks_valid <file> — a cheap structural gate so we don't copy a
+# random file into place. Prefer kubectl's own parser; fall back to a shape check
+# (kubeconfigs always declare an apiVersion and a clusters: block).
+kubeconfig_looks_valid() {
+    local f="$1"
+    [[ -s "$f" ]] || return 1
+    if command -v kubectl >/dev/null 2>&1 \
+        && kubectl --kubeconfig "$f" config view -o jsonpath='{.clusters[0].name}' >/dev/null 2>&1; then
+        # non-empty cluster list = a real kubeconfig
+        [[ -n "$(kubectl --kubeconfig "$f" config view -o jsonpath='{.clusters[*].name}' 2>/dev/null)" ]] && return 0
+    fi
+    grep -qE '^[[:space:]]*apiVersion:' "$f" 2>/dev/null && grep -qE '^[[:space:]]*clusters:' "$f" 2>/dev/null
+}
+
+# kubeconfig_connects <file> [context] — the decisive test: does this kubeconfig
+# actually reach a cluster? (/version needs no RBAC.) Never commit one that fails
+# this any more silently than the stale one we're replacing.
+kubeconfig_connects() {
+    local f="$1" ctx="${2:-}"
+    command -v kubectl >/dev/null 2>&1 || return 2
+    if [[ -n "$ctx" ]]; then
+        KUBECONFIG="$f" kubectl --context "$ctx" get --raw=/version --request-timeout=6s >/dev/null 2>&1
+    else
+        KUBECONFIG="$f" kubectl get --raw=/version --request-timeout=6s >/dev/null 2>&1
+    fi
+}
+
+# kubeconfig_detect_provider — inspect the ACTIVE kubeconfig's current user and
+# name the managed provider (so re-fetch can suggest the exact command). Echoes
+# one of: eks | gke | aks | openshift | unknown.
+kubeconfig_detect_provider() {
+    command -v kubectl >/dev/null 2>&1 || { echo unknown; return; }
+    local exe server
+    exe="$(kubectl config view -o jsonpath='{.users[*].user.exec.command}' 2>/dev/null)"
+    server="$(kubectl config view --minify -o jsonpath='{.clusters[0].cluster.server}' 2>/dev/null)"
+    case "$exe $server" in
+        *aws-iam-authenticator*|*"aws "*|*eks.amazonaws.com*|*.eks.*) echo eks ;;
+        *gke-gcloud-auth-plugin*|*gcloud*|*.gke.*|*container.googleapis*) echo gke ;;
+        *kubelogin*|*azure*|*.azmk8s.io*) echo aks ;;
+        *oc\ *|*openshift*) echo openshift ;;
+        *) echo unknown ;;
+    esac
+}
+
+# kubeconfig_provider_hint <provider> — the canonical re-fetch command template.
+kubeconfig_provider_hint() {
+    case "$1" in
+        eks) echo "aws eks update-kubeconfig --name <cluster> [--region <r>] [--profile <p>]" ;;
+        gke) echo "gcloud container clusters get-credentials <cluster> --region <r> [--project <p>]" ;;
+        aks) echo "az aks get-credentials --name <cluster> --resource-group <rg>" ;;
+        openshift) echo "oc login <api-url> -u <user>" ;;
+        *)   echo "your provider's 'update-kubeconfig' / 'get-credentials' command" ;;
+    esac
+}
+
+# kubeconfig_apply_session <file> — jdebug-only import: copy to the scoped path,
+# 0600. Nothing else on the machine changes. Prints where it landed.
+kubeconfig_apply_session() {
+    local f="$1"
+    mkdir -p "$JDEBUG_CONFIG_DIR" || { err "can't create $JDEBUG_CONFIG_DIR"; return 1; }
+    # write to a temp in the same dir then mv, so a half-copy can never shadow.
+    local tmp; tmp="$(mktemp "$JDEBUG_CONFIG_DIR/kubeconfig.XXXXXX")" || return 1
+    cat "$f" > "$tmp" && chmod 600 "$tmp" && mv "$tmp" "$JDEBUG_SCOPED_KUBECONFIG" || { rm -f "$tmp"; return 1; }
+    printf '%s\n' "$JDEBUG_SCOPED_KUBECONFIG"
+}
+
+# kubeconfig_apply_global <file> — system-wide import: back up the current
+# ~/.kube/config, then MERGE (flatten) the new one in so existing contexts are
+# preserved rather than blown away. Echoes the backup path (empty if none existed).
+kubeconfig_apply_global() {
+    local f="$1" dest backup=""
+    dest="$(kubeconfig_global_file)"
+    mkdir -p "$(dirname "$dest")" || { err "can't create $(dirname "$dest")"; return 1; }
+    if [[ -f "$dest" ]]; then
+        backup="$dest.jdebug-bak-$(date +%Y%m%d-%H%M%S)"
+        cp "$dest" "$backup" || { err "couldn't back up $dest — refusing to overwrite it"; return 1; }
+    fi
+    local tmp; tmp="$(mktemp)" || return 1
+    if command -v kubectl >/dev/null 2>&1; then
+        # flatten-merge: existing contexts kept, new ones added; new file's
+        # current-context wins (KUBECONFIG list is last-wins for current-context).
+        if KUBECONFIG="${dest}:${f}" kubectl config view --flatten > "$tmp" 2>/dev/null && [[ -s "$tmp" ]]; then
+            chmod 600 "$tmp" && mv "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+        else
+            rm -f "$tmp"; err "kubectl couldn't merge the kubeconfigs"; return 1
+        fi
+    else
+        cat "$f" > "$tmp" && chmod 600 "$tmp" && mv "$tmp" "$dest" || { rm -f "$tmp"; return 1; }
+    fi
+    printf '%s\n' "$backup"
+}
+
+# kubeconfig_forget — drop the jdebug-scoped copy, back to the ambient config.
+kubeconfig_forget() {
+    if [[ -e "$JDEBUG_SCOPED_KUBECONFIG" ]]; then
+        rm -f "$JDEBUG_SCOPED_KUBECONFIG" && return 0 || return 1
+    fi
+    return 2 # nothing to forget
 }
 
 # explain_kubectl_error <first-stderr-line> [what] — turn a failed kubectl

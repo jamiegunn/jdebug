@@ -59,6 +59,10 @@
 #     doctor            check everything BEFORE an incident: host tools, cluster
 #                       reachability, target pods, container name, actuator
 #                       capture endpoint, vendored jattach/core/TUI binaries
+#     kubeconfig        can't connect? diagnose why, then import a working
+#                       kubeconfig (a file, or a provider re-fetch) — applied to
+#                       THIS jdebug only (safe) or to all sessions. --status,
+#                       --forget, --file <path>, --refetch, --scope session|global
 #     install-jattach   pre-stage jattach into the pod before an incident
 #     push-local        copy the in-pod tool (jdebug-local) into the pod, for
 #                       when you'll have a shell but no kubectl (JRE-only image)
@@ -390,6 +394,7 @@ case "$cmd" in
     # for anyone who wants just one half.
     workload)        fwd "$D/observe/topology.sh"; echo; fwd "$D/observe/why.sh" ;;
     context|wiring)  fwd "$D/observe/context.sh" ;;
+    kubeconfig|fix-kubeconfig|import-kubeconfig) fwd "$D/observe/kubeconfig.sh" ;;
     escalate|handoff) fwd "$D/observe/escalate.sh" ;;
     timeline)        fwd "$D/observe/timeline.sh" ;;
     what-changed|changed) fwd "$D/observe/what-changed.sh" ;;
@@ -586,6 +591,8 @@ HINTS
             fi
         else
             bad "cluster unreachable — run any command (e.g. jdebug status) for the full why + fix"
+            printf '      → often a stale/missing kubeconfig. jdebug kubeconfig diagnoses it and\n'
+            printf '        imports a working one (file or provider re-fetch), for this jdebug or all sessions.\n'
         fi
         echo
         if [[ $FAILS -gt 0 ]]; then

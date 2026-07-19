@@ -21,8 +21,16 @@
 #   MOCK_TOP       absent — `kubectl top` fails like a missing metrics-server
 #   MOCK_CONTEXT   1 — `get pod -o json` returns the rich pod for `jdebug context`
 #   MOCK_RBAC      forbidden — namespace/pod enumeration fails like real RBAC
+#   MOCK_PROVIDER_EXE  the users[].user.exec.command a `config view` reports —
+#                  drives kubeconfig provider detection (e.g. aws / gke-gcloud-auth-plugin)
+#   MOCK_SERVER    the cluster server URL a `config view` reports
 #   MOCK_LOG       file to append every invocation to (for asserting calls)
 [ -n "${MOCK_LOG:-}" ] && printf '%s\n' "$*" >> "$MOCK_LOG"
+
+# Capture an explicit --kubeconfig <file> so `config view` can reflect the REAL
+# file's shape (a non-kubeconfig must not validate as one).
+KF=""; _prev=""
+for _a in "$@"; do [ "$_prev" = "--kubeconfig" ] && KF="$_a"; _prev="$_a"; done
 
 if [ "${MOCK_RBAC:-}" = forbidden ]; then
     case "$*" in
@@ -48,6 +56,21 @@ case "$*" in
         printf 'ctx-a\nmock-ctx\n' ;;
     *"config use-context"*)
         echo "Switched to context." ;;
+    *"config view"*"--flatten"*)
+        # a merge/flatten: emit a plausible combined kubeconfig
+        printf 'apiVersion: v1\nkind: Config\ncurrent-context: merged\nclusters:\n- name: merged\n  cluster: {server: https://merged.example:6443}\ncontexts:\n- name: merged\n  context: {cluster: merged, user: merged}\nusers:\n- name: merged\n  user: {}\n' ;;
+    *"config view"*)
+        # if pointed at a specific file that ISN'T a kubeconfig, report nothing —
+        # exactly how real kubectl yields an empty cluster list for junk.
+        if [ -n "$KF" ] && ! grep -qE '^[[:space:]]*clusters:' "$KF" 2>/dev/null; then
+            exit 0
+        fi
+        case "$*" in
+            *"exec.command"*)          printf '%s\n' "${MOCK_PROVIDER_EXE:-}" ;;
+            *"cluster.server"*)        printf '%s\n' "${MOCK_SERVER:-https://demo.example:6443}" ;;
+            *"clusters[0].name"*|*"clusters[*].name"*) echo 'demo-cluster' ;;
+            *)                         printf 'apiVersion: v1\nkind: Config\n' ;;
+        esac ;;
     *"get namespaces"*)
         printf 'default\npayments\n' ;;
     *"labels.app"*)

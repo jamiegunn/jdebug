@@ -72,6 +72,7 @@ assert_rc  "stale cert: exits 3" 3
 assert_has "stale cert: plain-language why" "TLS certificate isn't trusted"
 assert_has "stale cert: names the usual suspects" "Rancher Desktop"
 assert_has "stale cert: gives the fix" "kubectl config use-context"
+assert_has "stale cert: offers the kubeconfig importer" "jdebug kubeconfig"
 assert_not "stale cert: raw x509 wall suppressed" "Unhandled Error"
 
 MOCK_KUBECTL=refused run_case ./jdebug memory
@@ -81,6 +82,7 @@ assert_has "cluster off: says nothing answered" "nothing answered"
 MOCK_KUBECTL=noctx run_case ./jdebug threads
 assert_rc  "no context: exits 3" 3
 assert_has "no context: explains" "no context selected"
+assert_has "no context: offers the kubeconfig importer" "jdebug kubeconfig"
 
 # expired token (EKS/GKE SSO) is NOT "unreachable" — it needs re-auth, and
 # "switch context" is the WRONG fix. The most common junior failure mode.
@@ -89,7 +91,81 @@ assert_rc  "expired creds: exits 3" 3
 assert_has "expired creds: says rejected, not unreachable" "REJECTED your credentials"
 assert_has "expired creds: names the fix" "re-authenticate"
 assert_has "expired creds: warns off the wrong fix" "switching contexts will NOT fix"
+assert_has "expired creds: offers a provider re-fetch via kubeconfig" "jdebug kubeconfig"
 assert_not "expired creds: no 'can't reach' misdiagnosis" "can't reach the Kubernetes cluster"
+
+# --- jdebug kubeconfig: diagnose + import a working kubeconfig -----------------
+# The connect problem is nearly always a stale/missing kubeconfig. This verb
+# reasons through WHY, then imports one — scoped to jdebug only (safe) or global.
+section "jdebug kubeconfig (import + scope)"
+KC_GOOD="$TMP/good-kubeconfig.yaml"
+cat > "$KC_GOOD" <<'YAML'
+apiVersion: v1
+kind: Config
+clusters:
+- name: demo
+  cluster: {server: https://demo.example:6443}
+contexts:
+- name: demo
+  context: {cluster: demo, user: demo}
+current-context: demo
+users:
+- name: demo
+  user: {}
+YAML
+printf 'this is not a kubeconfig\n' > "$TMP/bad-kubeconfig.yaml"
+
+# status on a fresh (ambient) setup
+run_case env JDEBUG_CONFIG_DIR="$TMP/kc1" ./jdebug kubeconfig --status
+assert_rc  "kubeconfig --status exits 0" 0
+assert_has "status: reports the ambient source" "ambient default"
+
+# import a VALID kubeconfig, jdebug-only scope — the safe, non-clobbering default
+run_case env JDEBUG_CONFIG_DIR="$TMP/kc1" ./jdebug kubeconfig --file "$KC_GOOD" --scope session --yes
+assert_rc  "session import exits 0" 0
+assert_has "session import: connection tested first" "it connects"
+assert_has "session import: says jdebug-only" "imported for THIS jdebug only"
+assert_has "session import: promises ~/.kube/config untouched" "untouched"
+[ -f "$TMP/kc1/kubeconfig" ] && ok "session import: scoped kubeconfig written" \
+    || bad "session import: scoped kubeconfig written" "no file at $TMP/kc1/kubeconfig"
+
+# status now reflects the jdebug-only source
+run_case env JDEBUG_CONFIG_DIR="$TMP/kc1" ./jdebug kubeconfig --status
+assert_has "status: now reports jdebug-only" "jdebug-only kubeconfig"
+
+# --forget reverts to ambient
+run_case env JDEBUG_CONFIG_DIR="$TMP/kc1" ./jdebug kubeconfig --forget
+assert_has "forget: back to ambient" "back to your ambient"
+[ ! -f "$TMP/kc1/kubeconfig" ] && ok "forget: scoped kubeconfig removed" \
+    || bad "forget: scoped kubeconfig removed" "file still present"
+
+# a file that isn't a kubeconfig is refused BEFORE anything is written
+run_case env JDEBUG_CONFIG_DIR="$TMP/kc2" ./jdebug kubeconfig --file "$TMP/bad-kubeconfig.yaml" --scope session --yes
+assert_rc  "invalid file: refused (nonzero)" 1
+assert_has "invalid file: says why" "doesn't look like a kubeconfig"
+[ ! -f "$TMP/kc2/kubeconfig" ] && ok "invalid file: nothing written" \
+    || bad "invalid file: nothing written" "a scoped file was written from junk"
+
+# a kubeconfig that STILL can't connect is flagged (not silently imported) —
+# --yes proceeds, but the warning must be present so it never reads as fixed
+MOCK_KUBECTL=refused run_case env JDEBUG_CONFIG_DIR="$TMP/kc3" ./jdebug kubeconfig --file "$KC_GOOD" --scope session --yes
+assert_has "dead kubeconfig: warns it still doesn't connect" "does NOT connect"
+
+# GLOBAL scope merges into ~/.kube/config with a backup first (the clobber path,
+# made safe). Sandbox HOME so the real ~/.kube/config is never touched.
+mkdir -p "$TMP/khome/.kube"
+printf 'apiVersion: v1\nkind: Config\ncurrent-context: old\nclusters: []\n' > "$TMP/khome/.kube/config"
+run_case env -u KUBECONFIG HOME="$TMP/khome" JDEBUG_CONFIG_DIR="$TMP/kc4" ./jdebug kubeconfig --file "$KC_GOOD" --scope global --yes
+assert_rc  "global import exits 0" 0
+assert_has "global import: merged into ~/.kube/config" "merged into"
+assert_has "global import: backed up the old config first" "backed up"
+ls "$TMP/khome/.kube/"config.jdebug-bak-* >/dev/null 2>&1 && ok "global import: a real backup file exists" \
+    || bad "global import: a real backup file exists" "no backup written"
+
+# non-interactive re-fetch names the provider and refuses to guess a command
+MOCK_PROVIDER_EXE='gke-gcloud-auth-plugin' run_case env JDEBUG_CONFIG_DIR="$TMP/kc5" ./jdebug kubeconfig --refetch
+assert_has "refetch: detects the provider (gke)" "gke"
+assert_has "refetch: needs a terminal to run the provider command" "interactive terminal"
 
 run_case ./jdebug dumps
 assert_rc  "dumps needs no cluster (no preflight)" 0

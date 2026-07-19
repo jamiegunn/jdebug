@@ -39,7 +39,7 @@ func (m model) blockers() []blocker {
 		if !m.remote.Cluster {
 			return []blocker{{"blocked by cluster unreachable",
 				"kubectl can't reach the cluster API, so nothing downstream can run",
-				"press c for the full why + fix, or g to switch to a context that's up"}}
+				"press c for the full why + fix (often a stale kubeconfig: run 'jdebug kubeconfig' to import a fresh one — this session or all), or g to switch context"}}
 		}
 		if m.t.Selector == "" {
 			b = append(b, blocker{"blocked by no selector",

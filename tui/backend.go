@@ -385,6 +385,7 @@ func remoteProbe(t target) probe {
 		p.Lines = append(p.Lines, cMuted.Render("     (aws sso login · gcloud auth login · az login · oc login) — switching contexts won't fix this"))
 	default:
 		p.Lines = append(p.Lines, cDisr.Render("   ✗")+cMuted.Render(" cluster — not reachable (press ")+cKey.Render("c")+cMuted.Render(" for the full why + fix, or ")+cKey.Render("g")+cMuted.Render(" to switch context)"))
+		p.Lines = append(p.Lines, cFaint.Render("       often a stale kubeconfig — ")+cKey.Render("jdebug kubeconfig")+cFaint.Render(" imports a fresh one (this session, or all)"))
 		bad = true
 	}
 	switch {
