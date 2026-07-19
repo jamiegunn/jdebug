@@ -675,7 +675,7 @@ func main() {
 			fmt.Println(renderHistogram(h, 15))
 			return
 		}
-		deep, derr := analyzeHprofDeep(*heapFlag)
+		deep, derr := analyzeHprofDeep(*heapFlag, h)
 		if derr != nil {
 			fmt.Println(renderHistogram(h, 15))
 			fmt.Println("\n(retained-size analysis unavailable: " + derr.Error() + ")")

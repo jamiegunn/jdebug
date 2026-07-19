@@ -720,6 +720,14 @@ func readU4(r *bufio.Reader) (uint32, error) {
 	return binary.BigEndian.Uint32(b[:]), nil
 }
 
+func readU8(r *bufio.Reader) (uint64, error) {
+	var b [8]byte
+	if _, err := readFull(r, b[:]); err != nil {
+		return 0, err
+	}
+	return binary.BigEndian.Uint64(b[:]), nil
+}
+
 func readIDN(r *bufio.Reader, idSize int) (uint64, error) {
 	var b [8]byte
 	if _, err := readFull(r, b[:idSize]); err != nil {

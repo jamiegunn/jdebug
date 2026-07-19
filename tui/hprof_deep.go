@@ -29,6 +29,18 @@ type finfo struct {
 	typ  byte
 }
 
+// collInfo is what jdebug measures about ONE collection instance — the exact
+// entry count read from its own `size`/`baseCount` field, and the length of its
+// backing array (capacity). Together they give "N entries in a table sized for
+// M" — the specific-collection size + wasted capacity MAT reports, not a
+// heap-wide HashMap$Node proxy.
+type collInfo struct {
+	entries      int64
+	entriesKnown bool
+	tableNode    int32 // backing-array node (-1 until linked in pass 2)
+	capacity     int64 // backing-array element count (buckets/slots), resolved after pass 2
+}
+
 type classLayout struct {
 	superID uint64
 	fnameID []uint64 // own instance-field name ids (parallel to ftype)
@@ -42,6 +54,7 @@ type heapGraph struct {
 	names   []string
 	succ    [][]int32
 	pred    [][]int32
+	coll    map[int32]*collInfo // measured collections: node -> entries + capacity
 }
 
 // --- build -------------------------------------------------------------------
@@ -57,6 +70,7 @@ func buildHeapGraph(path string) (*heapGraph, *deepParser, error) {
 		idOf: map[uint64]int32{}, layouts: map[uint64]*classLayout{},
 		strs: map[uint64]string{}, classNameID: map[uint64]uint64{},
 		nameIdx: map[string]int32{},
+		arrLen:  map[int32]int64{}, collOf: map[int32]*collInfo{},
 	}
 	p.g = &heapGraph{names: []string{"<GC roots>"}, shallow: []int64{0}, name: []int32{0}}
 	p.nameIdx["<GC roots>"] = 0
@@ -70,12 +84,27 @@ func buildHeapGraph(path string) (*heapGraph, *deepParser, error) {
 	for id, cl := range p.layouts {
 		cl.chain = p.fieldChain(id, map[uint64]bool{})
 	}
+	// mark which classes are JDK collections, so pass 2 can measure their exact
+	// entry count + backing-array capacity (a HashMap's real size, not a proxy).
+	p.collClassIDs = map[uint64]bool{}
+	for cid := range p.layouts {
+		if isCollectionType(p.classDisplayName(cid)) {
+			p.collClassIDs[cid] = true
+		}
+	}
 	// pass 2: edges
 	p.g.succ = make([][]int32, len(p.g.shallow))
 	p.g.pred = make([][]int32, len(p.g.shallow))
 	if err := p.scan(path, 2); err != nil {
 		return nil, nil, err
 	}
+	// resolve each measured collection's capacity from its backing-array length
+	for _, ci := range p.collOf {
+		if ci.tableNode >= 0 {
+			ci.capacity = p.arrLen[ci.tableNode]
+		}
+	}
+	p.g.coll = p.collOf
 	// resolve GC-root ids → nodes and wire them as edges from the synthetic
 	// root (node 0), de-duped
 	seen := map[int32]bool{}
@@ -117,6 +146,10 @@ type deepParser struct {
 	classNameID map[uint64]uint64
 	nameIdx     map[string]int32
 	rootRaw     []uint64 // GC-root object ids, resolved to nodes after pass 1
+	// exact-collection sizing (#1/#2): backing-array lengths + per-collection stats
+	arrLen       map[int32]int64     // object-array node -> element count (capacity)
+	collOf       map[int32]*collInfo // collection node -> its measured size + backing array
+	collClassIDs map[uint64]bool     // class ids whose display name is a JDK collection
 	// pass 3 (path-label recovery): which edges we need field names for
 	wantFrom map[int32]map[int32]bool
 	labels   map[[2]int32]string
@@ -303,7 +336,8 @@ func (p *deepParser) walk(r *bufio.Reader, length int64, pass int) error {
 				if name == "unknown" {
 					name = "java.lang.Object[]"
 				}
-				p.node(oid, int64(n)*int64(id)+16, name)
+				ix := p.node(oid, int64(n)*int64(id)+16, name)
+				p.arrLen[ix] = int64(n) // capacity of any collection backed by this array
 				if err := skip(int(n) * id); err != nil {
 					return err
 				}
@@ -391,28 +425,56 @@ func (p *deepParser) walk(r *bufio.Reader, length int64, pass int) error {
 }
 
 // parseBody walks an instance's field chain, adding an edge for every non-null
-// object reference field.
+// object reference field. For JDK collections it ALSO reads (instead of
+// discarding) the instance's own `size`/`baseCount` field and links its backing
+// array — so we can report a specific collection's exact entry count and wasted
+// capacity, not a heap-wide HashMap$Node estimate.
 func (p *deepParser) parseBody(r *bufio.Reader, classID uint64, nbytes int, from int32, rem *int64) error {
 	cl := p.layouts[classID]
 	var chain []finfo
 	if cl != nil {
 		chain = cl.chain
 	}
+	var ci *collInfo
+	if p.collClassIDs[classID] {
+		ci = &collInfo{tableNode: -1}
+	}
 	read := 0
 	for _, fd := range chain {
 		if read >= nbytes {
 			break
 		}
-		if fd.typ == 2 { // object reference
+		switch {
+		case fd.typ == 2: // object reference
 			ref, err := readIDN(r, p.idSize)
 			if err != nil {
 				return err
 			}
 			read += p.idSize
-			if to, ok := p.idOf[ref]; ok && ref != 0 {
+			to, ok := p.idOf[ref]
+			if ok && ref != 0 {
 				p.addEdge(from, to)
 			}
-		} else {
+			if ci != nil && ci.tableNode < 0 && ok && ref != 0 && isBackingArrayField(fd.name) {
+				ci.tableNode = to
+			}
+		case ci != nil && !ci.entriesKnown && fd.typ == 10 && fd.name == "size": // int size
+			v, err := readU4(r)
+			if err != nil {
+				return err
+			}
+			read += 4
+			ci.entries = int64(int32(v))
+			ci.entriesKnown = true
+		case ci != nil && !ci.entriesKnown && fd.typ == 11 && fd.name == "baseCount": // ConcurrentHashMap
+			v, err := readU8(r)
+			if err != nil {
+				return err
+			}
+			read += 8
+			ci.entries = int64(v)
+			ci.entriesKnown = true
+		default:
 			s := basicTypeSize(fd.typ, p.idSize)
 			if _, err := discard(r, s); err != nil {
 				return err
@@ -425,8 +487,21 @@ func (p *deepParser) parseBody(r *bufio.Reader, classID uint64, nbytes int, from
 			return err
 		}
 	}
+	if ci != nil {
+		p.collOf[from] = ci
+	}
 	*rem -= int64(nbytes)
 	return nil
+}
+
+// isBackingArrayField names the field that holds a collection's backing array —
+// the one whose length is the collection's capacity.
+func isBackingArrayField(n string) bool {
+	switch n {
+	case "table", "elementData", "elements", "queue", "items":
+		return true
+	}
+	return false
 }
 
 // parseBodyLabeled (pass 3) walks an instance's fields and records, for each
@@ -550,7 +625,7 @@ func (p *deepParser) classDump(r *bufio.Reader, rem *int64, pass int) error {
 		return err
 	}
 	for i := 0; i < sf; i++ {
-		if err := skip(id); err != nil {
+		if err := skip(id); err != nil { // static field name id
 			return err
 		}
 		t, err := r.ReadByte()
@@ -558,7 +633,21 @@ func (p *deepParser) classDump(r *bufio.Reader, rem *int64, pass int) error {
 			return err
 		}
 		*rem--
-		if err := skip(basicTypeSize(t, id)); err != nil {
+		// A class's OBJECT-typed static fields are GC roots (the loaded class
+		// holds them). Following them is essential: a static cache/registry is
+		// the single most common real leak, and without this edge everything it
+		// holds looks like garbage. So in pass 2 we read the value and wire an
+		// edge from the synthetic root to it, rather than discarding it.
+		if pass == 2 && t == 2 {
+			ref, err := readIDN(r, id)
+			if err != nil {
+				return err
+			}
+			*rem -= int64(id)
+			if to, ok := p.idOf[ref]; ok && ref != 0 {
+				p.addEdge(0, to)
+			}
+		} else if err := skip(basicTypeSize(t, id)); err != nil {
 			return err
 		}
 	}
@@ -742,7 +831,7 @@ func (g *heapGraph) classCounts() map[string]int64 {
 // retained-size ranking + instance counts against the handful of leak shapes
 // that cause most real JVM OOMs, and returns a NAMED pattern with a concrete
 // action — not "open it in MAT". found=false when nothing matches confidently.
-func leakPattern(g *heapGraph, rows []retRow, reachable int64) (title, detail, action string, found bool) {
+func leakPattern(g *heapGraph, rows []retRow, reachable int64, h *heapHistogram) (title, detail, action string, found bool) {
 	if len(rows) == 0 || reachable == 0 {
 		return "", "", "", false
 	}
@@ -784,8 +873,24 @@ func leakPattern(g *heapGraph, rows []retRow, reachable int64) (title, detail, a
 			"find what holds the old ClassLoaders alive (a static registry, a ThreadLocal, a JDBC driver, a shutdown hook) and release it on undeploy.", true
 	}
 
-	// 4/5. the single biggest retained holder — is it a growing collection, or a
-	// dominant app object?
+	// 4. unbounded collection / cache — the #1 JVM leak. Prefer an EXACT
+	// measurement of the biggest collection we sized (its own entry count +
+	// backing-array capacity) over the old heap-wide HashMap$Node proxy.
+	for _, rw := range rows {
+		rp := pct(rw.ret)
+		if rp < 25 {
+			break // rows are sorted by retained desc — nothing above the bar left
+		}
+		ci, ok := g.coll[rw.ix]
+		if !ok {
+			continue
+		}
+		name := g.names[g.name[rw.ix]]
+		return "unbounded collection / cache", collDetail(name, rw.ret, rp, ci), collAction(ci), true
+	}
+
+	// 5b. fallback when we couldn't size the specific collection: the old
+	// name/heap-wide-proxy heuristic still catches the shape.
 	top := rows[0]
 	topName := g.names[g.name[top.ix]]
 	topPct := pct(top.ret)
@@ -807,7 +912,58 @@ func leakPattern(g *heapGraph, rows []retRow, reachable int64) (title, detail, a
 			fmt.Sprintf("one %s retains %s (%.0f%% of the reachable heap) — most of the memory hangs off this one object.", topName, fmtSize(top.ret), topPct),
 			"the reference chain above names the field that anchors it — break that reference (clear/scope it) or bound what it accumulates.", true
 	}
+
+	// 6. Duplicate strings — the same char[]/byte[] content held many times over.
+	// Checked LAST, as a fallback: when no single holder dominates but a big share
+	// of the heap is identical String content, that IS the diagnosis. (When a
+	// collection/object already dominated above, that's the better headline.)
+	if h != nil && h.dupWaste > 0 {
+		dupPct := float64(h.dupWaste) * 100 / float64(reachable)
+		if dupPct >= 20 || (h.dupWaste >= 16<<20 && dupPct >= 10) {
+			return "duplicate strings",
+				fmt.Sprintf("~%s is wasted on %s repeated char[]/byte[] value(s) (%.0f%% of the reachable heap) — identical String content is held many times instead of once.",
+					fmtSize(h.dupWaste), humanCount(h.dupGroups), dupPct),
+				"deduplicate: intern hot values (String.intern or a canonicalizing cache), or enable -XX:+UseStringDeduplication on G1.", true
+		}
+	}
 	return "", "", "", false
+}
+
+// collDetail renders the EXACT size of a specific leaking collection: how many
+// entries it holds, and how big its backing table is (capacity) — so "wasted
+// capacity" (a HashMap sized for 1M holding 3) is visible, the way MAT shows it,
+// rather than a heap-wide guess.
+func collDetail(name string, ret int64, pctOfHeap float64, ci *collInfo) string {
+	base := fmt.Sprintf("a %s retains %s (%.0f%% of the reachable heap)", name, fmtSize(ret), pctOfHeap)
+	if !ci.entriesKnown {
+		if ci.capacity > 0 {
+			return fmt.Sprintf("%s — its backing table is sized for %s slots. A collection that grows without a ceiling is the #1 JVM leak.",
+				base, humanCount(ci.capacity))
+		}
+		return base + " — a collection that grows without a ceiling is the #1 JVM leak."
+	}
+	if ci.capacity <= 0 {
+		return fmt.Sprintf("%s — it holds %s entries. A collection that grows without a ceiling is the #1 JVM leak.",
+			base, humanCount(ci.entries))
+	}
+	fill := float64(ci.entries) * 100 / float64(ci.capacity)
+	s := fmt.Sprintf("%s — it holds %s entries in a table sized for %s (%.0f%% full)",
+		base, humanCount(ci.entries), humanCount(ci.capacity), fill)
+	// wasted capacity: a big, mostly-empty table is memory spent on slack.
+	if ci.capacity >= 1024 && fill < 25 {
+		s += fmt.Sprintf(", so ~%s of that table is empty slack", humanCount(ci.capacity-ci.entries))
+	}
+	return s + ". A collection that grows without a ceiling is the #1 JVM leak."
+}
+
+// collAction gives the fix, split by whether the collection is also oversized.
+func collAction(ci *collInfo) string {
+	if ci.entriesKnown && ci.capacity >= 1024 {
+		if fill := float64(ci.entries) * 100 / float64(ci.capacity); fill < 25 {
+			return "two issues: it's OVERSIZED (a table mostly empty — presize correctly or drop a bad initialCapacity), and if entries only ever climb, BOUND it — max size + eviction (Caffeine/Guava), a TTL, or an LRU. Its path to GC roots is above."
+		}
+	}
+	return "bound it: a max size + eviction (Caffeine/Guava LoadingCache), a TTL, or an LRU — and confirm removal actually happens. Its path to GC roots is above; that field is the cache."
 }
 
 // isCollectionType reports whether a class name is a JDK collection/map/array
@@ -827,7 +983,7 @@ func isCollectionType(n string) bool {
 
 // --- render ------------------------------------------------------------------
 
-func analyzeHprofDeep(path string) (out string, err error) {
+func analyzeHprofDeep(path string, h *heapHistogram) (out string, err error) {
 	// same contract as analyzeHprof: a corrupt dump yields a message, not a
 	// Go stack trace (the caller prints "(retained-size pass skipped: …)").
 	defer func() {
@@ -863,10 +1019,27 @@ func analyzeHprofDeep(path string) (out string, err error) {
 	// LEAD with the diagnosis: a named leak pattern + a concrete fix, when one
 	// matches. This is the "usable, not a dump" part — the holders + paths below
 	// are the evidence for it.
-	if title, detail, action, found := leakPattern(g, rows, reachable); found {
+	if title, detail, action, found := leakPattern(g, rows, reachable, h); found {
 		b.WriteString("\n⟶ LEAK PATTERN — " + title + "\n")
 		b.WriteString("  " + detail + "\n")
 		b.WriteString("  → fix: " + action + "\n")
+	}
+
+	// accumulation point (single-dump growth evidence): of everything the top
+	// holder dominates, which class piles up the most. One dump can't watch it
+	// grow, but "N instances of X accumulate under one holder" is the same
+	// signature MAT's leak-suspect report keys on — an automatic answer, not a
+	// hand-off to a two-dump diff.
+	if len(rows) > 0 {
+		ch := dominatorChildren(idom)
+		if cls, n := g.accumulationPoint(rows[0].ix, ch); n >= 1000 && cls != "" {
+			hint := ""
+			if isFrameworkClass(cls) {
+				hint = "  (a JDK/framework type — trace it to the app object that owns them)"
+			}
+			fmt.Fprintf(&b, "\n⟶ ACCUMULATION POINT — %s instances of %s pile up under the top holder.\n"+
+				"  that one growing set is the leak's body%s.\n", humanCount(n), cls, hint)
+		}
 	}
 
 	b.WriteString("\ntop retained holders (retained | shallow | class):\n")
@@ -888,13 +1061,53 @@ func analyzeHprofDeep(path string) (out string, err error) {
 	}
 
 	// when no pattern matched, still give a plain-language read of the shape
-	if _, _, _, found := leakPattern(g, rows, reachable); !found {
+	if _, _, _, found := leakPattern(g, rows, reachable, h); !found {
 		b.WriteString("\n" + deepVerdict(rows, g, ret, reachable) + "\n")
 	}
-	b.WriteString("\nnext: to PROVE it's growing, take a second dump under load and diff:\n")
+	b.WriteString("\nnext: this is ONE dump — to prove the set is growing over TIME, take a\n")
+	b.WriteString("second dump under load and diff (jdebug fills in both paths for you):\n")
 	b.WriteString("  jdebug analyze --diff <before.hprof> <after.hprof>\n")
 	b.WriteString("(Eclipse MAT still adds OQL queries and side-by-side dump diffs.)")
 	return b.String(), nil
+}
+
+// dominatorChildren builds the child adjacency of the dominator tree from idom.
+func dominatorChildren(idom []int32) [][]int32 {
+	ch := make([][]int32, len(idom))
+	for v := 1; v < len(idom); v++ {
+		d := idom[v]
+		if d >= 0 && int(d) != v {
+			ch[d] = append(ch[d], int32(v))
+		}
+	}
+	return ch
+}
+
+// accumulationPoint returns the most frequent class among all objects DOMINATED
+// by holder (its retained set) and that class's count — the accumulating type
+// that makes the holder heavy. Iterative DFS of the dominator subtree so a deep
+// heap can't blow the Go stack.
+func (g *heapGraph) accumulationPoint(holder int32, ch [][]int32) (cls string, count int64) {
+	counts := map[int32]int64{} // name index -> count
+	stack := []int32{holder}
+	for len(stack) > 0 {
+		v := stack[len(stack)-1]
+		stack = stack[:len(stack)-1]
+		for _, c := range ch[v] {
+			counts[g.name[c]]++
+			stack = append(stack, c)
+		}
+	}
+	var bestIx int32 = -1
+	for ix, n := range counts {
+		if bestIx < 0 || n > count || (n == count && ix < bestIx) {
+			bestIx, count = ix, n
+		}
+	}
+	if bestIx < 0 {
+		return "", 0
+	}
+	return g.names[bestIx], count
 }
 
 // renderPaths shows, for the biggest few retained holders, the shortest chain of

@@ -396,7 +396,7 @@ func TestLeakPatternUnboundedCollection(t *testing.T) {
 		pred:    [][]int32{{}, {0}, {1}},
 	}
 	rows := []retRow{{1, 600}, {2, 100}} // the map retains 60% of a 1000-byte reachable heap
-	title, _, action, found := leakPattern(g, rows, 1000)
+	title, _, action, found := leakPattern(g, rows, 1000, nil)
 	if !found || !strings.Contains(title, "unbounded collection") {
 		t.Fatalf("expected an unbounded-collection pattern, got %q (found=%v)", title, found)
 	}
@@ -419,12 +419,102 @@ func TestLeakPatternThreadLocal(t *testing.T) {
 		names: []string{"<GC roots>", "java.lang.ThreadLocal$ThreadLocalMap$Entry"},
 		succ:  succ, pred: make([][]int32, len(shallow)),
 	}
-	title, detail, action, found := leakPattern(g, []retRow{{1, 100}}, 480000)
+	title, detail, action, found := leakPattern(g, []retRow{{1, 100}}, 480000, nil)
 	if !found || title != "ThreadLocal leak" {
 		t.Fatalf("12k ThreadLocalMap entries must read as a ThreadLocal leak, got %q", title)
 	}
 	if !strings.Contains(action, "remove()") || !strings.Contains(strings.ToLower(detail), "pool") {
 		t.Errorf("ThreadLocal guidance must name remove() + thread pools: %q / %q", detail, action)
+	}
+}
+
+// TestLeakPatternExactCollectionSize proves #1: when the leaking collection was
+// measured, the diagnosis reports ITS entry count, not a heap-wide proxy.
+func TestLeakPatternExactCollectionSize(t *testing.T) {
+	g := &heapGraph{
+		shallow: []int64{0, 100, 100},
+		name:    []int32{0, 1, 2},
+		names:   []string{"<GC roots>", "java.util.HashMap", "byte[]"},
+		succ:    [][]int32{{1}, {2}, {}},
+		pred:    [][]int32{{}, {0}, {1}},
+		coll: map[int32]*collInfo{
+			1: {entries: 1_200_000, entriesKnown: true, tableNode: -1, capacity: 2_097_152},
+		},
+	}
+	rows := []retRow{{1, 600}, {2, 100}}
+	title, detail, action, found := leakPattern(g, rows, 1000, nil)
+	if !found || !strings.Contains(title, "unbounded collection") {
+		t.Fatalf("expected unbounded-collection, got %q (found=%v)", title, found)
+	}
+	if !strings.Contains(detail, "1.2M entries") || !strings.Contains(detail, "2.1M") {
+		t.Errorf("detail must name the collection's EXACT entry count + capacity, got %q", detail)
+	}
+	_ = action
+}
+
+// TestLeakPatternWastedCapacity proves #2: an oversized, mostly-empty table is
+// called out as wasted capacity with the oversize fix.
+func TestLeakPatternWastedCapacity(t *testing.T) {
+	g := &heapGraph{
+		shallow: []int64{0, 100},
+		name:    []int32{0, 1},
+		names:   []string{"<GC roots>", "java.util.HashMap"},
+		succ:    [][]int32{{1}, {}},
+		pred:    [][]int32{{}, {0}},
+		coll: map[int32]*collInfo{
+			1: {entries: 3, entriesKnown: true, tableNode: -1, capacity: 16384},
+		},
+	}
+	_, detail, action, found := leakPattern(g, []retRow{{1, 400}}, 1000, nil)
+	if !found {
+		t.Fatal("expected a pattern for an oversized table")
+	}
+	if !strings.Contains(detail, "empty slack") {
+		t.Errorf("wasted-capacity detail must flag empty slack, got %q", detail)
+	}
+	if !strings.Contains(strings.ToLower(action), "oversized") {
+		t.Errorf("action must mention the oversize fix, got %q", action)
+	}
+}
+
+// TestLeakPatternDuplicateStrings proves #3: a big duplicate-string estimate is
+// promoted to the HEADLINE diagnosis (not just supporting detail).
+func TestLeakPatternDuplicateStrings(t *testing.T) {
+	g := &heapGraph{
+		shallow: []int64{0, 100},
+		name:    []int32{0, 1},
+		names:   []string{"<GC roots>", "char[]"},
+		succ:    [][]int32{{1}, {}},
+		pred:    [][]int32{{}, {0}},
+	}
+	h := &heapHistogram{dupWaste: 40 << 20, dupGroups: 1200}
+	title, detail, action, found := leakPattern(g, []retRow{{1, 100}}, 100<<20, h)
+	if !found || title != "duplicate strings" {
+		t.Fatalf("a 40MB dup-string waste on a 100MB heap must headline as duplicate strings, got %q", title)
+	}
+	if !strings.Contains(detail, "wasted") || !strings.Contains(action, "intern") {
+		t.Errorf("dup-string guidance must name the waste + interning, got %q / %q", detail, action)
+	}
+}
+
+// TestAccumulationPoint proves #4: from a single dump, the dominant accumulating
+// class under a holder is identified (root→holder(1)→ many Session instances).
+func TestAccumulationPoint(t *testing.T) {
+	names := []string{"<GC roots>", "com.app.Cache", "com.app.Session"}
+	shallow := []int64{0, 10}
+	name := []int32{0, 1}
+	// idom: node 0 root, node 1 dominated by 0, nodes 2.. dominated by 1
+	idom := []int32{0, 0}
+	for i := 0; i < 5000; i++ {
+		shallow = append(shallow, 10)
+		name = append(name, 2)
+		idom = append(idom, 1)
+	}
+	g := &heapGraph{shallow: shallow, name: name, names: names}
+	ch := dominatorChildren(idom)
+	cls, n := g.accumulationPoint(1, ch)
+	if cls != "com.app.Session" || n != 5000 {
+		t.Fatalf("expected 5000 com.app.Session accumulating under the holder, got %d %q", n, cls)
 	}
 }
 
