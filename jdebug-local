@@ -75,18 +75,30 @@ cmd_jvms() {
                 printf '%s\t%s\n' "$_pid" "$_cl" >> "$_tmp"
             fi
         done
-    elif have ps; then
-        # No /proc (macOS/BSD bare metal). Two portability traps here:
-        #   1. -A = ALL processes. On BSD/macOS ps, -e means "show environment",
-        #      NOT "all" — the procps `-eo` habit silently lists nothing. -A is
-        #      POSIX and works on Linux too. Keep -A and -o UNBUNDLED (macOS ps
-        #      is fussy about `-Ao`).
-        #   2. Match the executable's BASENAME from args= (the full command line),
-        #      not comm= — `comm` means different things across platforms, but
-        #      args[0] is reliably the executable everywhere.
-        ps -A -o pid=,args= 2>/dev/null | awk '
-            { exe=$2; n=split(exe, a, "/");
-              if (a[n] == "java") { pid=$1; $1=""; sub(/^[ \t]+/,""); print pid "\t" $0 } }' >> "$_tmp"
+    elif have ps || have pgrep; then
+        # No /proc (macOS/BSD bare metal). ps builds disagree on what `comm` and
+        # `args` show and how `-A`/`-e` select, so don't bet on ONE recipe —
+        # detect JVMs several independent ways and union by pid (first line per
+        # pid wins). pgrep -x java matches the kernel command name and is the most
+        # reliable on macOS; the ps pass adds the full command line where it can.
+        {
+            # (a) ps: match the executable's BASENAME from the full arg list.
+            #     -A = ALL procs (BSD -e means "environment"!); -A/-o UNBUNDLED
+            #     (macOS ps dislikes `-Ao`); args[0] is reliably the executable.
+            if have ps; then
+                ps -A -o pid=,args= 2>/dev/null | awk '
+                    { exe=$2; n=split(exe, a, "/");
+                      if (a[n] == "java") { pid=$1; $1=""; sub(/^[ \t]+/,""); print pid "\t" $0 } }'
+            fi
+            # (b) pgrep by command name, then resolve each pid to its command line.
+            if have pgrep; then
+                for _p in $(pgrep -x java 2>/dev/null); do
+                    _cl=$(ps -o args= -p "$_p" 2>/dev/null | sed 's/^[[:space:]]*//')
+                    [ -n "$_cl" ] || _cl="java (pid $_p)"
+                    printf '%s\t%s\n' "$_p" "$_cl"
+                done
+            fi
+        } | awk -F'\t' '$1 != "" && !seen[$1]++' >> "$_tmp"
     fi
     if [ -s "$_tmp" ]; then sort -n "$_tmp"; rm -f "$_tmp"; return 0; fi
     rm -f "$_tmp"
