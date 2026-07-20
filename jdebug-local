@@ -76,11 +76,17 @@ cmd_jvms() {
             fi
         done
     elif have ps; then
-        # No /proc (macOS bare metal). Use -A = ALL processes: on BSD/macOS ps,
-        # -e means "show environment", NOT "all" (that's -A) — the procps -eo
-        # habit silently lists nothing here. -A is POSIX and works on Linux too.
-        ps -Ao pid=,comm=,args= 2>/dev/null | awk '
-            $2 ~ /(^|\/)java$/ { pid=$1; $1=""; $2=""; sub(/^[ \t]+/,""); print pid "\t" $0 }' >> "$_tmp"
+        # No /proc (macOS/BSD bare metal). Two portability traps here:
+        #   1. -A = ALL processes. On BSD/macOS ps, -e means "show environment",
+        #      NOT "all" — the procps `-eo` habit silently lists nothing. -A is
+        #      POSIX and works on Linux too. Keep -A and -o UNBUNDLED (macOS ps
+        #      is fussy about `-Ao`).
+        #   2. Match the executable's BASENAME from args= (the full command line),
+        #      not comm= — `comm` means different things across platforms, but
+        #      args[0] is reliably the executable everywhere.
+        ps -A -o pid=,args= 2>/dev/null | awk '
+            { exe=$2; n=split(exe, a, "/");
+              if (a[n] == "java") { pid=$1; $1=""; sub(/^[ \t]+/,""); print pid "\t" $0 } }' >> "$_tmp"
     fi
     if [ -s "$_tmp" ]; then sort -n "$_tmp"; rm -f "$_tmp"; return 0; fi
     rm -f "$_tmp"
