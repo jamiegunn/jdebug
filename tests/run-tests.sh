@@ -33,7 +33,11 @@ OUT=""; RC=0
 # remembered-target config in a sandbox (never the user's real ~/.config).
 ENV=(env "PATH=$MOCKS:$PATH" NO_COLOR=1 "JDEBUG_DUMPS=$TMP/dumps" "JDEBUG_CONFIG_DIR=$TMP/config" JDEBUG_QUIET=1)
 
-run_case()  { OUT="$("${ENV[@]}" "$@" 2>&1)"; RC=$?; }                       # capture out+err+rc
+# stdin is /dev/null so a case can NEVER block on an interactive read — the
+# suite must behave identically whether launched from a terminal or a pipe/CI.
+# (Interactive flows like `jdebug kubeconfig --refetch` detect a non-TTY here and
+# print their non-interactive guidance instead of prompting.)
+run_case()  { OUT="$("${ENV[@]}" "$@" </dev/null 2>&1)"; RC=$?; }             # capture out+err+rc
 
 ok()  { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
 bad() { FAIL=$((FAIL+1)); FAILED+=("$1"); printf '  FAIL %s\n       %s\n' "$1" "$2"; }
