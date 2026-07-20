@@ -802,15 +802,18 @@ assert_has "attach same-uid failure: falls back to the generic cause list" "comm
 
 # jvms lists every JVM on the host (pid<TAB>cmd) so the menu can pick one when
 # several run. Plant a fake `java` process to exercise the listing path.
+# We DON'T copy /bin/sleep to a file named java: macOS code-signing (AMFI)
+# SIGKILLs a copied Apple-signed binary, so the fake would never run there.
+# Instead run the real sleep IN PLACE with argv[0] spoofed to "java" — valid
+# signature, detected by name on both Linux (argv[0]) and macOS (ps args).
 run_case sh ./jdebug-local help
 assert_has "usage lists the jvms command" "jvms"
-cp /bin/sleep "$TMP/java" 2>/dev/null
-"$TMP/java" 5 & FAKEJVM=$!   # $! is now the java process itself, not a subshell
+( exec -a java sleep 30 ) & FAKEJVM=$!   # $! is the exec'd sleep, argv[0]=java
 sleep 0.3
 run_case sh ./jdebug-local jvms
 assert_rc  "jvms finds the running JVM" 0
 assert_has "jvms lists the fake JVM's pid" "$FAKEJVM"
-kill "$FAKEJVM" 2>/dev/null; wait "$FAKEJVM" 2>/dev/null; rm -f "$TMP/java"
+kill "$FAKEJVM" 2>/dev/null; wait "$FAKEJVM" 2>/dev/null
 
 MOCK_HTTP=fail run_case sh ./jdebug-local health
 assert_rc  "actuator down: health fails" 1

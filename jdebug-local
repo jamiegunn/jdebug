@@ -69,7 +69,11 @@ cmd_jvms() {
         for d in /proc/[0-9]*; do
             [ -r "$d/comm" ] || continue
             _pid=${d#/proc/}
-            if [ "$(cat "$d/comm" 2>/dev/null)" = java ] || grep -q libjvm "$d/maps" 2>/dev/null; then
+            # Match on the kernel comm, the ARGV[0] basename (catches JVMs launched
+            # through a wrapper whose comm isn't "java"), or a mapped libjvm.
+            _argv0=$(tr '\0' '\n' < "$d/cmdline" 2>/dev/null | head -n1)
+            if [ "$(cat "$d/comm" 2>/dev/null)" = java ] || [ "${_argv0##*/}" = java ] \
+                    || grep -q libjvm "$d/maps" 2>/dev/null; then
                 _cl=$(tr '\0' ' ' < "$d/cmdline" 2>/dev/null | sed 's/[[:space:]]*$//')
                 [ -z "$_cl" ] && _cl="java (pid $_pid)"
                 printf '%s\t%s\n' "$_pid" "$_cl" >> "$_tmp"
