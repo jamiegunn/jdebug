@@ -8,7 +8,7 @@ assertions hold.
 
 Usage: pty-drive.py <kit-dir> <sandbox-dir>   (sandbox gets config/ + dumps/)
 """
-import glob, os, pty, sys, time, select, fcntl, struct, termios
+import glob, os, pty, sys, time, select, fcntl, struct, termios, signal
 
 kit, sandbox = sys.argv[1], sys.argv[2]
 os.makedirs(sandbox + "/config", exist_ok=True)
@@ -51,22 +51,50 @@ def press(k, wait=1.0):
     os.write(fd, k.encode())
     drain(wait)
 
-drain(4)                # startup; auto-status fires itself at the 2s mark
-press("\x1b", 1)        # esc dismisses the auto-status pane
-press("s", 4)           # quick read → streams into the bottom OUTPUT pane
-press("\x1b", 1)        # esc dismisses back to the live logs
-press("l", 4)           # logs stream into the pane too
-press("\x1b", 1)        # esc back
-press("w", 1)           # guided diagnosis…
-press("2", 8)           #   …streams BOTH steps + wrap-up into the pane
-press("\x1b", 1)        # esc back to the live logs
-press("y", 4)           # workload deep-dive (y is an alias for W) streams into the pane
-press("\x1b", 1)        # esc back
-press("S", 4)           # security posture streams into the pane
-press("\x1b", 1)        # esc back
-press("T", 4)           # pod terminal (mock exec exits at once) → auto-status
-press("q", 1)           # quit → confirm
-press("y", 2)
+# Watchdog: a test must FAIL fast, never hang the whole suite. If the TUI ever
+# fails to reach the next state (a timing/quirk difference — e.g. on macOS the
+# final quit may not tear the child down, and bash's $() then waits on it
+# forever), the alarm fires, we fall through to the checks, and the finally
+# below KILLS the child so the parent pipe closes and $() returns.
+TIMED_OUT = False
+def _watchdog(signum, frame):
+    global TIMED_OUT
+    TIMED_OUT = True
+    raise TimeoutError("pty-drive watchdog fired")
+signal.signal(signal.SIGALRM, _watchdog)
+signal.alarm(120)       # generous: the scripted drives total ~45s
+
+try:
+    drain(4)                # startup; auto-status fires itself at the 2s mark
+    press("\x1b", 1)        # esc dismisses the auto-status pane
+    press("s", 4)           # quick read → streams into the bottom OUTPUT pane
+    press("\x1b", 1)        # esc dismisses back to the live logs
+    press("l", 4)           # logs stream into the pane too
+    press("\x1b", 1)        # esc back
+    press("w", 1)           # guided diagnosis…
+    press("2", 8)           #   …streams BOTH steps + wrap-up into the pane
+    press("\x1b", 1)        # esc back to the live logs
+    press("y", 4)           # workload deep-dive (y is an alias for W) streams into the pane
+    press("\x1b", 1)        # esc back
+    press("S", 4)           # security posture streams into the pane
+    press("\x1b", 1)        # esc back
+    press("T", 4)           # pod terminal (mock exec exits at once) → auto-status
+    press("q", 1)           # quit → confirm
+    press("y", 2)
+except TimeoutError:
+    pass                    # checks below run against whatever we captured
+finally:
+    signal.alarm(0)
+    # ALWAYS reap the child TUI. A lingering child keeps the pty (and, on some
+    # platforms, the parent's captured pipe) open — the exact shape of the hang.
+    try:
+        os.kill(pid, signal.SIGKILL)
+    except (ProcessLookupError, OSError):
+        pass
+    try:
+        os.waitpid(pid, 0)
+    except (ChildProcessError, OSError):
+        pass
 
 txt = buf.decode("utf-8", "replace")
 
@@ -94,8 +122,7 @@ fail = 0
 for name, ok in checks.items():
     print(("  ok   " if ok else "  FAIL ") + "pty: " + name)
     fail += 0 if ok else 1
-try:
-    os.waitpid(pid, os.WNOHANG)
-except ChildProcessError:
-    pass
+if TIMED_OUT:
+    print("  FAIL pty: interactive round-trip timed out (watchdog) — the TUI stalled; see checks above")
+    fail += 1
 sys.exit(1 if fail else 0)

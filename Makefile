@@ -2,7 +2,10 @@
 # is the interactive frontend (a dev build via `make tui`, or the vendored,
 # hash-verified binaries under vendor/tui/ kept fresh by the git hooks).
 
-.PHONY: tui core vendor-tui vendor-core hooks test clean
+.PHONY: build tui core vendor-tui vendor-core hooks test clean
+
+build:          ## rebuild both Go binaries for THIS machine (wrapper: ./build.sh; --test/--vendor for more)
+	./build.sh
 
 tui:            ## build the Go TUI for THIS machine (jdebug prefers tui/jdebug-tui)
 	cd tui && go build -o jdebug-tui .
