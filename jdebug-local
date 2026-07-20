@@ -76,7 +76,10 @@ cmd_jvms() {
             fi
         done
     elif have ps; then
-        ps -eo pid=,comm=,args= 2>/dev/null | awk '
+        # No /proc (macOS bare metal). Use -A = ALL processes: on BSD/macOS ps,
+        # -e means "show environment", NOT "all" (that's -A) — the procps -eo
+        # habit silently lists nothing here. -A is POSIX and works on Linux too.
+        ps -Ao pid=,comm=,args= 2>/dev/null | awk '
             $2 ~ /(^|\/)java$/ { pid=$1; $1=""; $2=""; sub(/^[ \t]+/,""); print pid "\t" $0 }' >> "$_tmp"
     fi
     if [ -s "$_tmp" ]; then sort -n "$_tmp"; rm -f "$_tmp"; return 0; fi

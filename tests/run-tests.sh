@@ -26,7 +26,7 @@ TMP="$(mktemp -d -t jdebug-tests.XXXXXX)"
 trap 'rm -rf "$TMP"' EXIT
 chmod +x "$MOCKS"/*
 
-PASS=0; FAIL=0; FAILED=()
+PASS=0; FAIL=0; SKIP=0; FAILED=()
 OUT=""; RC=0
 
 # All tests run with mocks first on PATH, colors off, and dumps + the
@@ -39,8 +39,12 @@ ENV=(env "PATH=$MOCKS:$PATH" NO_COLOR=1 "JDEBUG_DUMPS=$TMP/dumps" "JDEBUG_CONFIG
 # print their non-interactive guidance instead of prompting.)
 run_case()  { OUT="$("${ENV[@]}" "$@" </dev/null 2>&1)"; RC=$?; }             # capture out+err+rc
 
-ok()  { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
-bad() { FAIL=$((FAIL+1)); FAILED+=("$1"); printf '  FAIL %s\n       %s\n' "$1" "$2"; }
+ok()   { PASS=$((PASS+1)); printf '  ok   %s\n' "$1"; }
+bad()  { FAIL=$((FAIL+1)); FAILED+=("$1"); printf '  FAIL %s\n       %s\n' "$1" "$2"; }
+# skip a case that can't apply on THIS host (e.g. a Linux-only capability run on
+# macOS) — counted separately so it reads as "n/a here", never as pass or fail.
+skip() { SKIP=$((SKIP+1)); printf '  skip %s\n         (%s)\n' "$1" "$2"; }
+HOST_KERNEL="$(uname -s)"   # Linux | Darwin | … — gates host-platform-only cases
 assert_rc()  { [[ $RC -eq $2 ]] && ok "$1" || bad "$1" "expected exit $2, got $RC | $(printf '%s' "$OUT" | head -2 | tr '\n' ' ')"; }
 assert_has() { [[ "$OUT" == *"$2"* ]] && ok "$1" || bad "$1" "output missing: '$2'"; }
 assert_not() { [[ "$OUT" != *"$2"* ]] && ok "$1" || bad "$1" "output should NOT contain: '$2'"; }
@@ -625,9 +629,17 @@ _ta=x64; case "$(uname -m)" in aarch64|arm64) _ta=arm64 ;; esac
 printf 'FAKE-JATTACH\n' > "$JV/jattach-linux-$_ta"
 ( cd "$JV" && { sha256sum "jattach-linux-$_ta" 2>/dev/null || shasum -a 256 "jattach-linux-$_ta"; } > SHA256SUMS )
 
+# jattach ships Linux-only (linux-x64/arm64), so a LOCAL stage can only succeed
+# on a Linux host — staging its own-platform binary. On macOS/other the gate
+# correctly refuses (there is no host jattach), so these are skipped, not failed.
 JATTACH_VENDOR_DIR="$JV" JATTACH_BIN="$TMP/staged-jattach" run_case bash ./capture/stage-jattach.sh local
-assert_rc  "stage-jattach local: verified binary installs" 0
-assert_has "stage-jattach local: says it's checksum-verified" "checksum-verified"
+if [ "$HOST_KERNEL" = Linux ]; then
+    assert_rc  "stage-jattach local: verified binary installs" 0
+    assert_has "stage-jattach local: says it's checksum-verified" "checksum-verified"
+else
+    skip "stage-jattach local: verified binary installs" "jattach is Linux-only; $HOST_KERNEL has no host binary to stage"
+    skip "stage-jattach local: says it's checksum-verified" "jattach is Linux-only; not stageable on $HOST_KERNEL"
+fi
 
 # KS-7: doctor must surface the PINNED jattach version so it can be CVE-tracked,
 # not leave it invisible. (Clean fake vendor, before the tamper below.)
@@ -635,11 +647,17 @@ JATTACH_VENDOR_DIR="$JV" run_case ./jdebug doctor
 assert_has "doctor surfaces the pinned jattach version" "jattach v2.2 vendored"
 assert_has "doctor points at provenance for CVE tracking" "PROVENANCE.md"
 
-# tamper the vendored binary → the gate must refuse (no silent install)
+# tamper the vendored binary → the gate must refuse (no silent install). Both
+# hosts refuse (exit 1); only a Linux host reaches the CHECKSUM check and names
+# it (elsewhere it's refused earlier for having no host-platform binary).
 printf 'EVIL\n' >> "$JV/jattach-linux-$_ta"
 JATTACH_VENDOR_DIR="$JV" JATTACH_BIN="$TMP/staged-jattach2" run_case bash ./capture/stage-jattach.sh local
 assert_rc  "stage-jattach local: tampered binary is refused" 1
-assert_has "stage-jattach local: names the checksum failure" "FAILED its checksum"
+if [ "$HOST_KERNEL" = Linux ]; then
+    assert_has "stage-jattach local: names the checksum failure" "FAILED its checksum"
+else
+    skip "stage-jattach local: names the checksum failure" "jattach is Linux-only; $HOST_KERNEL refuses before the checksum step"
+fi
 
 # an OS with no vendored binary must refuse and point at the actuator tier —
 # never fall back to an unverified download
@@ -1080,7 +1098,12 @@ run_case ./install.sh --prefix "$TMP/bin" --uninstall
 [[ ! -e "$TMP/bin/jdebug" ]] && ok "uninstall removes symlink" || bad "uninstall removes symlink" "still there"
 
 # --- summary --------------------------------------------------------------------------
-printf '\n%d passed, %d failed  (MOCK layer — contracts + text, not real-cluster behavior)\n' "$PASS" "$FAIL"
+if [[ $SKIP -gt 0 ]]; then
+    printf '\n%d passed, %d failed, %d skipped  (MOCK layer — contracts + text, not real-cluster behavior)\n' "$PASS" "$FAIL" "$SKIP"
+    printf '  (skipped = not applicable on this host, e.g. Linux-only jattach staging on %s)\n' "$HOST_KERNEL"
+else
+    printf '\n%d passed, %d failed  (MOCK layer — contracts + text, not real-cluster behavior)\n' "$PASS" "$FAIL"
+fi
 printf 'for real-JVM/real-cluster proof, also run:\n'
 printf '  tests/live/run-live-tests.sh        (a real HotSpot JVM on this host)\n'
 printf '  tests/integration/run-kind-tests.sh (a real cluster: exec/cp + ephemeral debug attach)\n'
